@@ -1,0 +1,15 @@
+{
+  "check_passed": true,
+  "message_conversion_preserves_header_pose": true,
+  "odom_max_hz": 5,
+  "pose_max_hz": 1,
+  "changed_states_latched": true,
+  "waypoints_save_only_test": true,
+  "cross_radio_tested": false,
+  "existing_containers_restarted": false,
+  "uav_modified": false,
+  "images": {
+    "workspace2-communication:local": "sha256:85dedf15269166d62e5351ab25b63fb9f10887ddf83cf548cfcc277ca88b7415"
+  },
+  "source_unchanged": true
+}

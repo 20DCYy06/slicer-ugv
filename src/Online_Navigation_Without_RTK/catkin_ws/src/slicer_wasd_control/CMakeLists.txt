@@ -1,0 +1,7 @@
+cmake_minimum_required(VERSION 3.0.2)
+project(slicer_wasd_control)
+find_package(catkin REQUIRED COMPONENTS rospy geometry_msgs nav_msgs std_msgs tf2_ros)
+catkin_package()
+catkin_install_python(PROGRAMS scripts/c30d_driver_node.py scripts/velocity_mux.py DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION})
+install(FILES scripts/driver_core.py scripts/control_core.py DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION})
+install(DIRECTORY launch config DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION})

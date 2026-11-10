@@ -1,0 +1,14 @@
+<launch>
+  <arg name="root" default="/slicer"/>
+  <arg name="config" default="$(arg root)/config/slicer_config.yaml"/>
+  <arg name="publish_tf" default="true"/>
+  <arg name="odom_topic" default="/odom"/>
+  <node pkg="slicer_chassis" type="cmd_vel_mux.py" name="slicer_cmd_vel_mux" output="screen" required="true">
+    <param name="config_file" value="$(arg config)"/>
+  </node>
+  <node pkg="slicer_chassis" type="chassis_driver.py" name="slicer_chassis" output="screen" required="true">
+    <param name="config_file" value="$(arg config)"/>
+    <param name="publish_tf" value="$(arg publish_tf)"/>
+    <param name="odom_topic" value="$(arg odom_topic)"/>
+  </node>
+</launch>

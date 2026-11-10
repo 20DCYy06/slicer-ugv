@@ -1,0 +1,24 @@
+control_mode: body_speed
+base_frame: base_link
+odom_frame: odom
+publish_tf: false
+output_topic: /cmd_vel
+nav_topic: /cmd_vel/nav
+mission_topic: /cmd_vel/mission
+teleop_topic: /teleop/cmd_vel
+odom_topic: /wheel/odom
+publish_hz: 20.0
+command_timeout_s: 0.25
+telemetry_timeout_s: 1.0
+max_linear: 0.6
+max_angular: 2.4725146199
+wheel_diameter: 0.065
+track_width: 0.179
+wheelbase: 0.13
+counts_per_revolution: 60000
+encoder_signs:
+- 1
+- -1
+- 1
+- -1
+serial_number: 5CF0016129

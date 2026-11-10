@@ -1,0 +1,22 @@
+<launch>
+  <arg name="root" default="/slicer"/><arg name="rviz" default="false"/>
+  <arg name="gui" default="$(arg rviz)"/>
+  <arg name="wasd" default="$(arg gui)"/>
+  <arg name="start_sensors" default="true"/>
+  <arg name="start_control" default="false"/>
+  <node pkg="slicer_navigation" type="navigation_visuals.py" name="slicer_navigation_visuals" output="screen">
+    <param name="config_file" value="$(arg root)/config/slicer_config.yaml"/>
+  </node>
+  <include if="$(arg start_sensors)" file="$(find slicer_bringup)/launch/sensors.launch"><arg name="root" value="$(arg root)"/><arg name="rviz" value="false"/></include>
+  <include if="$(arg start_control)" file="$(find slicer_wasd_control)/launch/slicer_wasd_teleop.launch">
+    <arg name="keyboard" value="false"/><arg name="publish_tf" value="false"/>
+  </include>
+  <node pkg="gmapping" type="slam_gmapping" name="slam_gmapping" output="screen" required="true">
+    <rosparam command="load" file="$(arg root)/.generated/gmapping.yaml"/>
+    <remap from="scan" to="/scan"/>
+  </node>
+  <include if="$(arg gui)" file="$(find slicer_navigation)/launch/rviz.launch">
+    <arg name="config" value="$(find slicer_navigation)/rviz/mapping_template.rviz"/>
+  </include>
+  <node if="$(arg wasd)" pkg="slicer_navigation" type="wasd_panel.py" name="slicer_wasd_panel" output="screen"/>
+</launch>

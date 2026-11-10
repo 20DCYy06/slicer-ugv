@@ -1,0 +1,16 @@
+# GlobalPlanner/B样条、TEB、Recovery来自原slicer_navigation，不另抄一套权重。
+global_costmap:
+  global_frame: map
+  rolling_window: false
+  publish_frequency: 0.5
+  always_send_full_costmap: false
+local_costmap:
+  global_frame: odom
+  rolling_window: true
+  publish_frequency: 1.0
+  # 原速度出口订阅完整局部地图，保留其接口；仅降低可视化发布频率。
+  always_send_full_costmap: true
+# 只微调在线导航转向：保留现场线速度、加速度和零转弯半径。
+TebLocalPlannerROS:
+  max_vel_theta: 1.2              # 原2.47 rad/s，避免高角速度请求反复大幅换向。
+  weight_acc_lim_theta: 3.0      # 原1.0，提高已有角加速度约束的优化权重。

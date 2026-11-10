@@ -1,0 +1,1 @@
+<launch><include file="$(dirname)/../launch/fkie_ugv_sync.launch"/></launch>

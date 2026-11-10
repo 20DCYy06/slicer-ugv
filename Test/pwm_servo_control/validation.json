@@ -1,0 +1,31 @@
+{
+  "device": {
+    "usb_id": "0483:5750",
+    "manufacturer": "MindMotion SOC Solutions",
+    "product": "Hiwonder",
+    "serial": "MM32F103RB",
+    "node_at_check": "/dev/hidraw1"
+  },
+  "voltage_query_mv": 6592,
+  "hardware_motion_sent": false,
+  "unit_tests": 7,
+  "unit_tests_passed": true,
+  "tk_gui_test_passed": true,
+  "initial_moves": 0,
+  "old_workspace_written": false,
+  "existing_services_restarted": false,
+  "transport": "64-byte HID output with zero report ID",
+  "files": {
+    "README.md": "7d4dea404e66dfa3182e87c3d45395fad6d1f6c9bdf13f4b44466430b2213255",
+    "config.json": "35a0002888d9215b4f505ed28563fc10fc495d8f2dc76d490ebcdc60f9995a12",
+    "run.sh": "61d22a628aeb1434d4d622cc4d1b441dc7176b065881bcea94b6eacba0bd3187",
+    "protocol.py": "6f5d530722ee3aa6a1cc80732e8e744c7e127bd278c27165d119264ffc2a3a9a",
+    "hid_bridge.py": "cb927dc7c523492957b8b368ee82cb205a61fa08b34bc38aa57c7187ccf18fca",
+    "test_protocol.py": "bc304da087d6d24edec3b46f91d6bc31dfda0c89a57ddaeaace241966d7a3f25",
+    "test_bridge.py": "1b041ad5e9864a1b9909c59152a079686543b5280670bb70f78e33f94b414661",
+    "ui.py": "dcc95a155f1381aaad7b51deff182ee0944a7ea092267f945a337eb26bc68d9d"
+  },
+  "channel8_control": "hold_buttons_cw_ccw",
+  "release_neutral_duration_ms": 0,
+  "hold_button_tests": 4
+}

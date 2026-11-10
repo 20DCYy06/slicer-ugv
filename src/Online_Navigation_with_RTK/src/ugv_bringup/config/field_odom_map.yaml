@@ -1,0 +1,12 @@
+# Odom bootstrap map and validated goal tolerances only.
+# Speed/acceleration remain in dwa.yaml; this map profile never overrides them.
+global_costmap:
+  width: 24.0
+  height: 16.0
+  resolution: 0.05
+  rolling_window: true
+GlobalPlanner:
+  allow_unknown: true
+DWAPlannerROS:
+  yaw_goal_tolerance: 0.12
+  xy_goal_tolerance: 0.10

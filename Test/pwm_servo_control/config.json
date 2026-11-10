@@ -1,0 +1,17 @@
+{
+  "move_time_ms": 300,
+  "channel8": {
+    "negative_us": 1000,
+    "neutral_us": 1500,
+    "positive_us": 2000,
+    "direction": 1,
+    "hold_speed_percent": 100
+  },
+  "channel9": {
+    "min_us": 500,
+    "max_us": 2500,
+    "angle_min_deg": 0,
+    "angle_max_deg": 180,
+    "direction": 1
+  }
+}

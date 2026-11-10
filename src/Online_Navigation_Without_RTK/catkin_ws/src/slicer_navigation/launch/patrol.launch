@@ -1,0 +1,10 @@
+<launch>
+  <arg name="file" default="$(find slicer_navigation)/config/waypoints.yaml"/>
+  <arg name="cycles" default="1"/>
+  <arg name="auto_exit" default="true"/>
+  <node pkg="slicer_navigation" type="multi_goal_patrol.py" name="slicer_multi_goal_patrol" output="screen">
+    <rosparam command="load" file="$(find slicer_navigation)/config/patrol_params.yaml"/>
+    <param name="file" value="$(arg file)"/><param name="cycles" value="$(arg cycles)"/>
+    <param name="auto_exit" value="$(arg auto_exit)" type="bool"/>
+  </node>
+</launch>

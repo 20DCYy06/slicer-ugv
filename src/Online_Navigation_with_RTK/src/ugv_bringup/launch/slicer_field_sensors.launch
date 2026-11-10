@@ -1,0 +1,18 @@
+<launch>
+  <arg name="geographic" default="true"/>
+  <arg name="start_gnss" default="true"/>
+  <arg name="site_config" default="$(find ugv_bringup)/config/gnss_site.yaml"/>
+  <arg name="session_file" default="$(optenv ROS_HOME /tmp)/geographic-session.json"/>
+  <!-- Start once, before field navigation. No chassis or control release.
+       Same frozen source_config as slicer_field_navigation.launch. -->
+  <include file="$(find ugv_bringup)/launch/slicer_sensors.launch">
+    <arg name="root" value="$(find ugv_bringup)/config/online_runtime"/>
+    <arg name="rviz" value="false"/>
+    <arg name="tune_ekf" value="true"/>
+  </include>
+  <include if="$(arg geographic)" file="$(find ugv_bringup)/launch/slicer_geographic.launch">
+    <arg name="site_config" value="$(arg site_config)"/>
+    <arg name="session_file" value="$(arg session_file)"/>
+  </include>
+  <include if="$(eval arg('geographic') and arg('start_gnss'))" file="$(find ugv_bringup)/launch/slicer_gnss.launch"/>
+</launch>

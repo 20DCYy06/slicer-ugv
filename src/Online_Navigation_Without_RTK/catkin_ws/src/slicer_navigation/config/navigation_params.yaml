@@ -1,0 +1,38 @@
+# Vehicle dimensions/limits are generated from config/slicer_config.yaml.
+# Loaded after .generated/navigation.yaml: wrap the existing GlobalPlanner, keeping TEB unchanged.
+base_global_planner: slicer_navigation/BSplineGlobalPlanner
+controller_patience: 10.0
+planner_patience: 5.0
+oscillation_timeout: 20.0
+oscillation_distance: 0.05
+clearing_rotation_allowed: false
+recovery_behavior_enabled: true
+GlobalPlanner:
+  smoothing:
+    enabled: true
+    rdp_epsilon: 0.03               # Remove grid stair steps while retaining significant corners.
+    control_point_spacing: 0.20     # Maximum distance along simplified control polygon.
+    sample_spacing: 0.05            # Approximate arc-length output interval, meters.
+    max_refinements: 2              # Unsafe inner corner: tighten back toward original path.
+    max_cost: 252                   # Exclude inscribed/lethal/unknown cells; retain traversable inflation costs.
+  use_dijkstra: true
+  use_grid_path: true
+  # Pair discrete extraction with integer-cell start initialization. On the
+  # captured field grid, default precise initialization failed; this returned
+  # a valid 94-pose path with the same obstacles/start/goal.
+  old_navfn_behavior: true
+  use_quadratic: true
+  allow_unknown: true
+  orientation_mode: 1
+  orientation_window_size: 2
+  lethal_cost: 253
+  neutral_cost: 50
+  cost_factor: 3.0
+  default_tolerance: 0.0
+recovery_behaviors:
+  - {name: conservative_clear, type: clear_costmap_recovery/ClearCostmapRecovery}
+conservative_clear: {reset_distance: 1.0}
+global_costmap:
+  publish_frequency: 1.0
+local_costmap:
+  always_send_full_costmap: true

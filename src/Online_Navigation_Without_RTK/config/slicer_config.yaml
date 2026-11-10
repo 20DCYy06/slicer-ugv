@@ -1,0 +1,161 @@
+schema_version: 1
+runtime:
+  docker_image: slicer-fkie:latest
+  ros_master_uri: http://127.0.0.1:11311
+  build_jobs: 2
+frames:
+  map: map
+  odom: odom
+  base: base_link
+  laser: laser_link
+  arm: arm_base_link
+chassis:
+  serial_port: /dev/ttyACM0
+  fallback_port: /dev/ttyUSB0
+  usb_vid: 6790
+  usb_pid: 21972
+  serial_number: 5CF0016129
+  baud: 115200
+  firmware_confirmed: false
+  polarity_verified: false
+  host_uart: 1
+  uart_route_verified: false
+  wheel_diameter: 0.065
+  wheel_radius: 0.0325
+  wheelbase: 0.13
+  track_width: 0.179
+  body_length: 0.23
+  body_width: 0.206
+  encoder_lines: 500
+  gear_ratio: 30
+  quadrature: 4
+  counts_per_revolution: 60000
+  port_order:
+  - A
+  - B
+  - C
+  - D
+  wheel_ports:
+    left_front: D
+    right_front: C
+    left_rear: B
+    right_rear: A
+  encoder_signs:
+  - 1
+  - -1
+  - 1
+  - -1
+  pwm_signs:
+  - 1
+  - -1
+  - -1
+  - -1
+  control_hz: 100
+  telemetry_hz: 25
+  firmware_watchdog_ms: 500
+  host_watchdog_s: 0.25
+  telemetry_timeout_s: 0.25
+  max_linear: 0.25
+  max_angular: 0.6
+  max_wheel_speed: 0.4
+  velocity_kp: 700.0
+  velocity_ki: 700.0
+  pwm_limit: 16500
+  pi_output_limit: 16800
+  accel_linear: 0.25
+  accel_angular: 0.8
+  pose_covariance:
+  - 0.04
+  - 0.04
+  - 0.09
+  twist_covariance:
+  - 0.01
+  - 0.04
+sensors:
+  base_to_laser:
+    xyz:
+    - 0.065
+    - 0.0
+    - 0.095
+    quaternion:
+    - 0
+    - 0
+    - 0
+    - 1
+  laser_to_arm:
+    xyz:
+    - 0.0
+    - 0.0
+    - 0.045
+    quaternion:
+    - 0
+    - 0
+    - 0
+    - 1
+  lidar_ip: 192.168.1.192
+  host_lidar_ip: 192.168.1.5
+  lidar_interface: enP8p1s0
+  lidar_publish_hz: 10.0
+  lidar_to_imu_translation:
+  - -0.011
+  - -0.02329
+  - 0.04412
+  lidar_to_imu_rotation:
+  - 1
+  - 0
+  - 0
+  - 0
+  - 1
+  - 0
+  - 0
+  - 0
+  - 1
+  lio_pose_variance:
+  - 0.0025
+  - 0.0025
+  - 0.0025
+  scan_min_height: 0.05
+  scan_max_height: 0.5
+  scan_range_min: 0.05
+  scan_range_max: 20.0
+  scan_angle_increment: 0.008726646
+  self_filter_padding: 0.01
+  arm_self_filter_min_z: 0.23
+  front_fov_deg: 160.0
+navigation:
+  A: null
+  B: null
+  map_file: null
+  footprint_padding: 0.03
+  travel_envelope:
+    rear_x: -0.1
+    front_x: 0.17
+    half_width: 0.11
+  front_stop_distance: 0.15
+  inflation_radius: 0.192
+  cost_scaling_factor: 4.5
+  min_obstacle_dist: 0.144
+  obstacle_range: 3.0
+  raytrace_range: 4.0
+  min_obstacle_height: -0.05
+  max_forward: 0.6
+  max_reverse: 0.3
+  turn_start_angular: 2.1192982456
+  min_turning_radius: 0.0
+  teb_forward_drive_weight: 900.0
+  max_angular: 2.4725146199
+  accel_linear: 0.2
+  accel_angular: 1.2
+  xy_tolerance: 0.15
+  yaw_tolerance: 0.3
+  controller_hz: 10.0
+  planner_hz: 1.0
+  local_costmap_publish_hz: 4.0
+  goal_timeout_s: 120.0
+  local_size: 5.0
+  costmap_resolution: 0.05
+  odometry_fusion_hz: 30
+  amcl_min_particles: 500
+  amcl_max_particles: 2000
+  amcl_xy_variance: 0.05
+  amcl_yaw_variance: 0.09

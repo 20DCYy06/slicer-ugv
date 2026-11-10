@@ -1,0 +1,92 @@
+Panels:
+- Class: rviz/Displays
+  Name: Displays
+- Class: rviz/Tool Properties
+  Name: Tool Properties
+Visualization Manager:
+  Class: ''
+  Global Options:
+    Fixed Frame: map
+    Background Color: 48; 48; 48
+    Frame Rate: 3
+  Displays:
+  - Class: rviz/Grid
+    Name: Grid
+    Enabled: true
+    Plane Cell Count: 20
+  - Class: rviz/Map
+    Name: Map
+    Enabled: true
+    Topic: /map
+    Alpha: 0.8
+  - Class: rviz/Axes
+    Name: Map Origin Axes
+    Enabled: true
+    Reference Frame: map
+    Length: 0.4
+    Radius: 0.012
+  - Class: rviz/Map
+    Name: Global Costmap
+    Enabled: false
+    Topic: /move_base/global_costmap/costmap
+    Color Scheme: costmap
+    Alpha: 0.25
+  - Class: rviz/Map
+    Name: Local Costmap
+    Enabled: false
+    Topic: /move_base/local_costmap/costmap
+    Color Scheme: costmap
+    Alpha: 0.4
+  - Class: rviz/LaserScan
+    Name: Scan Points
+    Enabled: true
+    Topic: /scan
+    Style: Points
+    Size (Pixels): 2
+    Size (m): 0.01
+    Queue Size: 1
+    Decay Time: 0
+    Color Transformer: FlatColor
+    Color: 0; 255; 50
+  - Class: rviz/Path
+    Name: Global Plan
+    Enabled: true
+    Topic: /move_base/GlobalPlanner/plan
+    Buffer Length: 1
+    Pose Style: None
+  - Class: rviz/Path
+    Name: Local Plan
+    Enabled: true
+    Topic: /move_base/TebLocalPlannerROS/local_plan
+    Buffer Length: 1
+    Pose Style: None
+  - Class: rviz/Polygon
+    Name: Robot Rectangle
+    Enabled: true
+    Topic: /move_base/local_costmap/footprint
+    Color: 0; 255; 255
+    Alpha: 1.0
+    Queue Size: 1
+  - Class: rviz/Axes
+    Name: Robot Heading (red X forward)
+    Enabled: true
+    Reference Frame: base_link
+    Length: 0.3
+    Radius: 0.018
+  Tools:
+  - Class: rviz/Interact
+  - Class: rviz/MoveCamera
+  - Class: rviz/SetGoal
+    Topic: /move_base_simple/goal
+  - Class: rviz/PublishPoint
+    Single click: true
+    Topic: /clicked_point
+  Views:
+    Current:
+      Class: rviz/TopDownOrtho
+      Scale: 70
+Window Geometry:
+  Width: 1100
+  Height: 620
+  X: 30
+  Y: 30

@@ -1,0 +1,9 @@
+<launch>
+  <!-- Operator-started shortcut. Stop the existing serial owner first.
+       Explicit 0x16, no TF, release, navigation or fallback to PWM mode. -->
+  <include file="$(find ugv_bringup)/launch/slicer_driver.launch">
+    <arg name="config_file" value="$(find ugv_bringup)/config/slicer_driver_body_speed.yaml"/>
+    <arg name="control_mode" value="body_speed"/>
+    <arg name="publish_tf" value="false"/>
+  </include>
+</launch>

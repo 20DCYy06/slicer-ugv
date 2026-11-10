@@ -1,0 +1,7 @@
+cmake_minimum_required(VERSION 3.0.2)
+project(slicer_navigation_without_mapping)
+find_package(catkin REQUIRED COMPONENTS rospy std_msgs sensor_msgs geometry_msgs nav_msgs tf tf2_ros actionlib move_base_msgs)
+catkin_package()
+catkin_install_python(PROGRAMS scripts/send_goal.py scripts/prepare_runtime.py scripts/diagnose_navigation.py scripts/goal_display.py scripts/reset_map.py DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION})
+install(DIRECTORY config launch rviz DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION})
+install(FILES README.md DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION})

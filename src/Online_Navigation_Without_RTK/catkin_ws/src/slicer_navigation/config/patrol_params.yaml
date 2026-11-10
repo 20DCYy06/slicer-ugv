@@ -1,0 +1,32 @@
+action_name: /move_base
+base_frame: base_link
+control_ready_topic: /slicer_c30d_driver/ready
+control_ready_timeout: 1.0
+control_startup_timeout: 10.0
+wait_for_localization: true
+localization_topic: /slicer/localization_ready
+localization_timeout: 120.0
+localization_pause_timeout: 15.0
+startup_tf_timeout: 5.0
+pose_timeout: 0.5
+server_timeout: 30.0
+goal_timeout: 120.0
+stall_time: 3.0
+near_goal_distance: 0.35
+near_goal_stall_time: 6.0
+stall_distance: 0.02
+stall_yaw: 0.035  # About 2 degrees of measured rotation counts as progress.
+cancel_timeout: 2.0
+cancel_wait_timeout: 15.0  # 2s is a warning, not an immediate process exit.
+stop_topic: /cmd_vel/mission  # Zero holds; timed reverse only during RECOVERING.
+spin_topic: /cmd_vel/patrol_spin_raw  # Departure/final yaw, vx=0 through the existing outlet.
+recovery_timeout: 5.0
+max_retries: 2  # Legacy fallback; max_backup_attempts is the recovery budget.
+max_backup_attempts: 2
+backup_speed: -0.20  # m/s, doubled from -0.10; existing driver slew/PWM limits remain.
+backup_duration: 2.2  # s, then zero -> clear costmaps -> 0.5 s fresh scan/grid wait.
+xy_tolerance: 0.15
+yaw_tolerance: 0.30
+departure_yaw_tolerance: 0.15  # Face the next point within about 8.6 deg; final yaw stays 0.30.
+wait_s: 2.0
+cycles: 1

@@ -1,0 +1,47 @@
+<launch>
+  <arg name="root" default="/slicer"/><arg name="map_file"/><arg name="rviz" default="false"/>
+  <arg name="gui" default="$(arg rviz)"/>
+  <arg name="wasd" default="$(arg gui)"/>
+  <arg name="start_sensors" default="true"/>
+  <arg name="set_initial_pose" default="false"/>
+  <arg name="initial_x" default="0.0"/><arg name="initial_y" default="0.0"/><arg name="initial_yaw" default="0.0"/>
+  <arg name="global_localization" default="$(eval not arg('set_initial_pose'))"/>
+  <arg name="start_control" default="false"/>
+  <arg name="control_mock" default="false"/>
+  <node pkg="slicer_navigation" type="navigation_visuals.py" name="slicer_navigation_visuals" output="screen">
+    <param name="config_file" value="$(arg root)/config/slicer_config.yaml"/>
+  </node>
+  <include if="$(arg start_sensors)" file="$(find slicer_bringup)/launch/sensors.launch"><arg name="root" value="$(arg root)"/><arg name="rviz" value="false"/></include>
+  <include if="$(arg start_control)" file="$(find slicer_wasd_control)/launch/slicer_wasd_teleop.launch">
+    <arg name="keyboard" value="false"/><arg name="publish_tf" value="false"/>
+    <!-- Keep RViz/map/sensors available for fault diagnosis; no live driver means no chassis output. -->
+    <arg name="driver_required" value="false"/><arg name="mock" value="$(arg control_mock)"/>
+  </include>
+  <node pkg="map_server" type="map_server" name="map_server" args="$(arg map_file)" required="true"/>
+  <node pkg="amcl" type="amcl" name="amcl" output="screen" required="true">
+    <rosparam command="load" file="$(arg root)/.generated/amcl.yaml"/>
+    <remap from="scan" to="/scan"/>
+  </node>
+  <node pkg="slicer_navigation" type="amcl_ready.py" name="slicer_amcl_ready" output="screen">
+    <param name="config_file" value="$(arg root)/config/slicer_config.yaml"/>
+    <param name="global_localization" value="$(arg global_localization)"/>
+    <param name="set_initial_pose" value="$(arg set_initial_pose)"/>
+    <param name="initial_x" value="$(arg initial_x)"/><param name="initial_y" value="$(arg initial_y)"/>
+    <param name="initial_yaw" value="$(arg initial_yaw)"/>
+  </node>
+  <node pkg="move_base" type="move_base" name="move_base" output="screen" required="true">
+    <rosparam command="load" file="$(arg root)/.generated/navigation.yaml"/>
+    <rosparam command="load" file="$(find slicer_navigation)/config/navigation_params.yaml"/>
+    <rosparam command="load" file="$(find slicer_navigation)/config/teb_local_planner_params.yaml"/>
+    <remap from="cmd_vel" to="/cmd_vel/nav_raw"/>
+    <!-- RViz recorder remains on its separate topic. -->
+  </node>
+  <node pkg="slicer_navigation" type="arc_velocity_guard.py" name="slicer_nav_arc_guard" output="screen" required="true">
+    <!-- The extra sweep check applies only when compensation changes TEB's path. -->
+    <param name="config_file" value="$(arg root)/config/slicer_config.yaml"/>
+    <param name="control_config_file" value="$(find slicer_wasd_control)/config/teleop_params.yaml"/>
+    <rosparam command="load" file="$(find slicer_navigation)/config/arc_guard.yaml"/>
+  </node>
+  <include if="$(arg gui)" file="$(find slicer_navigation)/launch/rviz.launch"/>
+  <node if="$(arg wasd)" pkg="slicer_navigation" type="wasd_panel.py" name="slicer_wasd_panel" output="screen"/>
+</launch>

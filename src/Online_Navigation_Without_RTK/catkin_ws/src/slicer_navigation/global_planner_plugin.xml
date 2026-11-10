@@ -1,0 +1,5 @@
+<library path="lib/libslicer_bspline_global_planner">
+  <class name="slicer_navigation/BSplineGlobalPlanner" type="slicer_navigation::BSplineGlobalPlanner" base_class_type="nav_core::BaseGlobalPlanner">
+    <description>Dijkstra with collision-checked clamped cubic B-spline postprocessing and raw-path fallback.</description>
+  </class>
+</library>

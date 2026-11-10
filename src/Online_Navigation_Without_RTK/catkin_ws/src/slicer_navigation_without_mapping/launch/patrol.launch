@@ -1,0 +1,12 @@
+<launch>
+  <arg name="file" default="$(find slicer_navigation_without_mapping)/config/waypoints.yaml"/>
+  <arg name="cycles" default="1"/>
+  <node pkg="slicer_navigation" type="multi_goal_patrol.py" name="slicer_multi_goal_patrol" output="screen">
+    <rosparam command="load" file="$(find slicer_navigation)/config/patrol_params.yaml"/>
+    <!-- 在线SLAM不产生AMCL状态；仍保留原状态机的底盘就绪与新鲜map/base TF检查。 -->
+    <param name="wait_for_localization" value="false"/>
+    <param name="wait_for_chassis_recovery" value="true"/>
+    <param name="file" value="$(arg file)"/><param name="cycles" value="$(arg cycles)"/>
+    <param name="auto_exit" value="true"/>
+  </node>
+</launch>

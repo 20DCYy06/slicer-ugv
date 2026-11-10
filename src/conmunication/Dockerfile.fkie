@@ -1,0 +1,3 @@
+ARG BASE_IMAGE=workspace2-online-navigation:local
+FROM ${BASE_IMAGE}
+RUN test -x /opt/ros/noetic/lib/fkie_master_sync/master_sync && test -x /opt/ros/noetic/lib/fkie_master_discovery/master_discovery

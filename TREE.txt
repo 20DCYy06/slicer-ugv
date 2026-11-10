@@ -1,0 +1,329 @@
+/home/potato/Slicer_Workspace2
+├── Hardware/
+│   ├── .tmp/
+│   ├── Audit/
+│   │   ├── isolation_report.json
+│   │   ├── old_workspace_before_20261107.json
+│   │   └── verify_isolation.py
+│   ├── Backups/
+│   │   ├── board_5CF0016129_1794050785370148262/
+│   │   │   ├── original/
+│   │   │   │   ├── flash_read_1.bin
+│   │   │   │   ├── flash_read_2.bin
+│   │   │   │   ├── manifest.json
+│   │   │   │   └── option_bytes_readonly.bin
+│   │   │   ├── install.json
+│   │   │   └── readback.bin
+│   │   ├── board_5CF0016129_1794056115929630066/
+│   │   │   ├── original/
+│   │   │   │   ├── flash_read_1.bin
+│   │   │   │   ├── flash_read_2.bin
+│   │   │   │   ├── manifest.json
+│   │   │   │   └── option_bytes_readonly.bin
+│   │   │   ├── install.json
+│   │   │   └── readback.bin
+│   │   ├── display_fix_1794052655966228357/
+│   │   │   ├── README.md
+│   │   │   └── wasd.py
+│   │   ├── host_before_v1.1_1794056382623926405/
+│   │   │   ├── Hardware/
+│   │   │   │   ├── README.md
+│   │   │   │   ├── SOURCE_SHA256SUMS
+│   │   │   │   ├── config.yaml
+│   │   │   │   └── delivery.json
+│   │   │   ├── Test/
+│   │   │   │   ├── tests/
+│   │   │   │   │   ├── terminal_smoke.py
+│   │   │   │   │   ├── test_control.py
+│   │   │   │   │   ├── test_terminal.py
+│   │   │   │   │   └── ui_smoke.py
+│   │   │   │   ├── README.md
+│   │   │   │   ├── control_core.py
+│   │   │   │   └── diagnose_straight.py
+│   │   │   ├── TREE.txt
+│   │   │   └── deployment.json
+│   │   ├── input_fix_1794053337657974471/
+│   │   │   ├── Hardware/
+│   │   │   │   └── config.yaml
+│   │   │   ├── Test/
+│   │   │   │   ├── README.md
+│   │   │   │   ├── control_core.py
+│   │   │   │   ├── gamepad.py
+│   │   │   │   └── wasd.py
+│   │   │   └── firmware_before.json
+│   │   └── wasd_direction_1794054096100483821/
+│   │       └── Test/
+│   │           ├── tests/
+│   │           │   ├── terminal_smoke.py
+│   │           │   ├── test_control.py
+│   │           │   ├── test_terminal.py
+│   │           │   └── ui_smoke.py
+│   │           ├── README.md
+│   │           └── control_core.py
+│   ├── Firmware/
+│   │   ├── v1.0/
+│   │   │   ├── bin/
+│   │   │   │   ├── firmware.bin
+│   │   │   │   ├── firmware.elf
+│   │   │   │   ├── firmware.hex
+│   │   │   │   ├── firmware.map
+│   │   │   │   ├── generated.h
+│   │   │   │   └── manifest.json
+│   │   │   ├── src/
+│   │   │   │   ├── BALANCE/
+│   │   │   │   │   ├── balance.c
+│   │   │   │   │   └── balance.h
+│   │   │   │   ├── HARDWARE/
+│   │   │   │   │   ├── ICM20948/
+│   │   │   │   │   │   ├── ICM20948.c
+│   │   │   │   │   │   └── ICM20948.h
+│   │   │   │   │   ├── usartx.c
+│   │   │   │   │   └── usartx.h
+│   │   │   │   ├── build/
+│   │   │   │   │   ├── c30d_body.bin
+│   │   │   │   │   ├── c30d_body.elf
+│   │   │   │   │   ├── c30d_body.hex
+│   │   │   │   │   ├── c30d_body.map
+│   │   │   │   │   ├── generated.h
+│   │   │   │   │   ├── manifest.json
+│   │   │   │   │   └── test_native
+│   │   │   │   ├── tests/
+│   │   │   │   │   ├── stm32f4xx.h
+│   │   │   │   │   ├── test_build.py
+│   │   │   │   │   ├── test_firmware.c
+│   │   │   │   │   └── test_protocol.py
+│   │   │   │   ├── vendor_headers/
+│   │   │   │   │   ├── arm_math.h
+│   │   │   │   │   ├── core_cm4.h
+│   │   │   │   │   ├── core_cm4_simd.h
+│   │   │   │   │   ├── core_cmFunc.h
+│   │   │   │   │   ├── core_cmInstr.h
+│   │   │   │   │   ├── stm32f4xx.h
+│   │   │   │   │   └── system_stm32f4xx.h
+│   │   │   │   ├── build.py
+│   │   │   │   ├── config.yaml
+│   │   │   │   ├── link.ld
+│   │   │   │   ├── main.c
+│   │   │   │   ├── runtime.c
+│   │   │   │   └── startup.S
+│   │   │   ├── install_record.json
+│   │   │   └── source_manifest.json
+│   │   └── v1.1/
+│   │       ├── bin/
+│   │       │   ├── firmware.bin
+│   │       │   ├── firmware.elf
+│   │       │   ├── firmware.hex
+│   │       │   ├── firmware.map
+│   │       │   ├── generated.h
+│   │       │   └── manifest.json
+│   │       ├── host_bundle/
+│   │       │   ├── Hardware/
+│   │       │   │   └── config.yaml
+│   │       │   └── Test/
+│   │       │       ├── tests/
+│   │       │       │   ├── terminal_smoke.py
+│   │       │       │   ├── test_control.py
+│   │       │       │   ├── test_terminal.py
+│   │       │       │   └── ui_smoke.py
+│   │       │       ├── control_core.py
+│   │       │       └── diagnose_straight.py
+│   │       ├── src/
+│   │       │   ├── BALANCE/
+│   │       │   │   ├── balance.c
+│   │       │   │   └── balance.h
+│   │       │   ├── HARDWARE/
+│   │       │   │   ├── ICM20948/
+│   │       │   │   │   ├── ICM20948.c
+│   │       │   │   │   └── ICM20948.h
+│   │       │   │   ├── usartx.c
+│   │       │   │   └── usartx.h
+│   │       │   ├── build/
+│   │       │   │   ├── c30d_body.bin
+│   │       │   │   ├── c30d_body.elf
+│   │       │   │   ├── c30d_body.hex
+│   │       │   │   ├── c30d_body.map
+│   │       │   │   ├── generated.h
+│   │       │   │   ├── manifest.json
+│   │       │   │   └── test_native
+│   │       │   ├── tests/
+│   │       │   │   ├── stm32f4xx.h
+│   │       │   │   ├── test_build.py
+│   │       │   │   ├── test_firmware.c
+│   │       │   │   └── test_protocol.py
+│   │       │   ├── vendor_headers/
+│   │       │   │   ├── arm_math.h
+│   │       │   │   ├── core_cm4.h
+│   │       │   │   ├── core_cm4_simd.h
+│   │       │   │   ├── core_cmFunc.h
+│   │       │   │   ├── core_cmInstr.h
+│   │       │   │   ├── stm32f4xx.h
+│   │       │   │   └── system_stm32f4xx.h
+│   │       │   ├── build.py
+│   │       │   ├── config.yaml
+│   │       │   ├── link.ld
+│   │       │   ├── main.c
+│   │       │   ├── runtime.c
+│   │       │   └── startup.S
+│   │       ├── validation/
+│   │       │   ├── workspace/
+│   │       │   │   ├── Hardware/
+│   │       │   │   │   ├── Firmware/
+│   │       │   │   │   │   └── v1.0/
+│   │       │   │   │   │       └── src/
+│   │       │   │   │   │           ├── BALANCE/
+│   │       │   │   │   │           │   ├── balance.c
+│   │       │   │   │   │           │   └── balance.h
+│   │       │   │   │   │           ├── HARDWARE/
+│   │       │   │   │   │           │   ├── ICM20948/
+│   │       │   │   │   │           │   │   ├── ICM20948.c
+│   │       │   │   │   │           │   │   └── ICM20948.h
+│   │       │   │   │   │           │   ├── usartx.c
+│   │       │   │   │   │           │   └── usartx.h
+│   │       │   │   │   │           ├── tests/
+│   │       │   │   │   │           │   ├── stm32f4xx.h
+│   │       │   │   │   │           │   ├── test_build.py
+│   │       │   │   │   │           │   ├── test_firmware.c
+│   │       │   │   │   │           │   └── test_protocol.py
+│   │       │   │   │   │           ├── vendor_headers/
+│   │       │   │   │   │           │   ├── arm_math.h
+│   │       │   │   │   │           │   ├── core_cm4.h
+│   │       │   │   │   │           │   ├── core_cm4_simd.h
+│   │       │   │   │   │           │   ├── core_cmFunc.h
+│   │       │   │   │   │           │   ├── core_cmInstr.h
+│   │       │   │   │   │           │   ├── stm32f4xx.h
+│   │       │   │   │   │           │   └── system_stm32f4xx.h
+│   │       │   │   │   │           ├── build.py
+│   │       │   │   │   │           ├── config.yaml
+│   │       │   │   │   │           ├── link.ld
+│   │       │   │   │   │           ├── main.c
+│   │       │   │   │   │           ├── runtime.c
+│   │       │   │   │   │           └── startup.S
+│   │       │   │   │   ├── Host/
+│   │       │   │   │   │   ├── chassis.py
+│   │       │   │   │   │   ├── protocol.py
+│   │       │   │   │   │   └── transport.py
+│   │       │   │   │   ├── Unlock/
+│   │       │   │   │   │   └── unlock.py
+│   │       │   │   │   └── config.yaml
+│   │       │   │   └── Test/
+│   │       │   │       ├── tests/
+│   │       │   │       │   ├── terminal_smoke.py
+│   │       │   │       │   ├── test_control.py
+│   │       │   │       │   ├── test_display.py
+│   │       │   │       │   ├── test_feedback.py
+│   │       │   │       │   ├── test_terminal.py
+│   │       │   │       │   ├── test_unlock.py
+│   │       │   │       │   └── ui_smoke.py
+│   │       │   │       ├── DIAGNOSE_STRAIGHT.md
+│   │       │   │       ├── README.md
+│   │       │   │       ├── control_core.py
+│   │       │   │       ├── diagnose_straight.py
+│   │       │   │       ├── gamepad.py
+│   │       │   │       ├── run_feedback_check.sh
+│   │       │   │       ├── run_gamepad.sh
+│   │       │   │       ├── run_wasd.sh
+│   │       │   │       ├── terminal_wasd.py
+│   │       │   │       └── wasd.py
+│   │       │   ├── body_model.so
+│   │       │   ├── build_v1.1.log
+│   │       │   ├── corrected_mapping_model.json
+│   │       │   ├── feedback_validation.json
+│   │       │   ├── flash_v1.1.log
+│   │       │   ├── host_v1.1_tests.log
+│   │       │   ├── input_manifest.json
+│   │       │   ├── old_mapping_model.json
+│   │       │   ├── status_v1.1.log
+│   │       │   ├── terminal_v1.1_smoke.log
+│   │       │   ├── ui_v1.1_smoke.log
+│   │       │   ├── validate_feedback.py
+│   │       │   ├── verification.json
+│   │       │   ├── zero_output_record.json
+│   │       │   └── zero_v1.1.log
+│   │       ├── README.md
+│   │       ├── host_deployment.json
+│   │       ├── install_record.json
+│   │       └── source_manifest.json
+│   ├── Flashing/
+│   │   ├── vendor/
+│   │   │   ├── stm32_flash_verified.py
+│   │   │   ├── stm32_readonly.py
+│   │   │   └── test_factory_uart.py
+│   │   └── flash.py
+│   ├── Host/
+│   │   ├── chassis.py
+│   │   ├── protocol.py
+│   │   └── transport.py
+│   ├── Logs/
+│   │   ├── build_v1.0.log
+│   │   ├── build_v1.1.log
+│   │   ├── display_connection_check.json
+│   │   ├── feedback_passive_1794054716908368942.json
+│   │   ├── flash_v1.0.log
+│   │   ├── flash_v1.1.log
+│   │   ├── gamepad_gear_demo.log
+│   │   ├── gear_demo.log
+│   │   ├── host_v1.1_staged_tests.log
+│   │   ├── host_v1.1_tests.log
+│   │   ├── input_fix_verification.json
+│   │   ├── polarity_v1.1_validation.log
+│   │   ├── status_v1.1.log
+│   │   ├── terminal_v1.1_smoke.log
+│   │   ├── test_control.log
+│   │   ├── test_display_fix.log
+│   │   ├── test_feedback.log
+│   │   ├── test_input_fix.log
+│   │   ├── test_wasd_direction.log
+│   │   ├── ui_smoke.log
+│   │   ├── ui_v1.1_smoke.log
+│   │   ├── unlock_1794050726319026445.json
+│   │   ├── unlock_1794051095661071050.json
+│   │   ├── unlock_1794051096043062291.json
+│   │   ├── unlock_1794053816481509788.json
+│   │   ├── unlock_1794056388102396601.json
+│   │   ├── wasd_direction_fix.json
+│   │   ├── xvfb.log
+│   │   ├── xvfb_v1.1.log
+│   │   ├── xvfb_v1.1_staged.log
+│   │   ├── zero_check_1794051095376085390.json
+│   │   ├── zero_check_1794056387816608048.json
+│   │   └── zero_v1.1.log
+│   ├── Unlock/
+│   │   └── unlock.py
+│   ├── README.md
+│   ├── SOURCE_SHA256SUMS
+│   ├── archive_build.py
+│   ├── build.sh
+│   ├── config.yaml
+│   ├── delivery.json
+│   ├── last_install.json
+│   └── zero_check.py
+├── Test/
+│   ├── logs/
+│   │   ├── feedback_20261107T124315_922741Z.jsonl
+│   │   ├── feedback_20261107T124315_922741Z_summary.json
+│   │   ├── feedback_20261107T124327_191785Z.jsonl
+│   │   ├── feedback_20261107T124327_191785Z_summary.json
+│   │   ├── feedback_20261107T124412_140702Z.jsonl
+│   │   ├── feedback_20261107T124412_140702Z_summary.json
+│   │   ├── feedback_20261107T124431_528345Z.jsonl
+│   │   └── feedback_20261107T124431_528345Z_summary.json
+│   ├── tests/
+│   │   ├── terminal_smoke.py
+│   │   ├── test_control.py
+│   │   ├── test_display.py
+│   │   ├── test_feedback.py
+│   │   ├── test_terminal.py
+│   │   ├── test_unlock.py
+│   │   └── ui_smoke.py
+│   ├── DIAGNOSE_STRAIGHT.md
+│   ├── README.md
+│   ├── control_core.py
+│   ├── diagnose_straight.py
+│   ├── gamepad.py
+│   ├── run_feedback_check.sh
+│   ├── run_gamepad.sh
+│   ├── run_wasd.sh
+│   ├── terminal_wasd.py
+│   └── wasd.py
+├── README.md
+└── TREE.txt

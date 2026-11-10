@@ -1,0 +1,8 @@
+# 首次室内/户外对照档；只覆盖速度上限，不改变地图、评分、容差或安全规则。
+# m/s：max_vel_x 与 max_vel_trans 同步修改，否则较小的一项仍限制前进。
+# rad/s：角速度只改变上限，实际值仍由规划器和反馈决定。
+DWAPlannerROS:
+  max_vel_x: 0.20
+  max_vel_trans: 0.20
+  max_vel_theta: 0.25
+# 保留原加速度 .2m/s²、1rad/s²、停止阈值与最小角速；不作起转补偿。

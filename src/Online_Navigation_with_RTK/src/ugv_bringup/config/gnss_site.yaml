@@ -1,0 +1,13 @@
+datum: WGS84
+origin:
+  latitude: null
+  longitude: null
+  altitude_ellipsoid_m: null
+map_from_enu:
+- null
+- null
+- null
+antenna_in_base_link_m:
+- 0.065
+- 0.0
+- null

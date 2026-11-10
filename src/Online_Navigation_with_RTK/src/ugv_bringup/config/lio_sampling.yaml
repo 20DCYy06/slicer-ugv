@@ -1,0 +1,2 @@
+# Retain every second valid point before FAST-LIO deskewing and voxel filtering.
+point_filter_num: 2

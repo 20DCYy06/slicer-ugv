@@ -1,0 +1,7 @@
+# 未经实车验收的提速对照档；0.20档停车与避障通过后，由现场单独选择。
+# 只提高前进上限；保持角速、加速度、目标容差、评分和安全规则。
+DWAPlannerROS:
+  max_vel_x: 0.30
+  max_vel_trans: 0.30
+  max_vel_theta: 0.25
+# DWA原有scaling_speed=.25/max_scaling_factor=.2继续生效，不关闭速度足迹膨胀。

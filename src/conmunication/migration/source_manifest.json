@@ -1,0 +1,16 @@
+{
+  "verify_relay.py": "03a7ac68aeddc79f40694d573cceefa83dfeb478d401699e53789dd8e3a0eabb",
+  "package.xml": "861acdbcf90ee5bf433db0491244e4430a99427f4331fb272868a5d46c4ccfd6",
+  "run.sh": "e692ba032eb7aadb2a650f4be545870e9f1e6ad4d81b17644ed8406f7c512eb7",
+  "navigation_core.py": "1273645daf3dbe336be3c541b41da85895821dfb7587ebc9285805f04650af26",
+  "Dockerfile.fkie": "6b94fbe26b6a767739b83918ca039de6e1e0c6e611f574444640008560f25aba",
+  "CMakeLists.txt": "fc906df200466106e19e658bbd90c0a619137222291eb58f400ba935d9fd3ec2",
+  "waypoint_receiver.py": "f0c8bff2302e7a45814af9c6870105f8e2e1f7d22ec2a07d41e2fd12091cecc9",
+  "relay.py": "b31bbc5a3a759e3219791cf2743cfcf8188eda18d92e68f15b581c291df6112d",
+  "config/sync_topics.yaml": "6819d7d873d5802458c24d17cb9fd5cdfe8903ba13cfc5f44071d9caa1c0117a",
+  "config/fkie_ugv_sync.launch": "e31a109080c1409ca48dbca0273f0fd755f9cb8679b94e140049390fa945671c",
+  "config/network.env": "4de8a32ce8192886827d7451bd72c885cc7965d592d85cfa31e85140f4c75335",
+  "config/uav_receiver.example.yaml": "0c164063629d7a90d5f7d193ab68439571a44d6457c6ca33acf9d2f3e0e27591",
+  "config/relay.yaml": "b326e5342993962cfeccd5fab9f3a8cf7666ae6178ef9a44d3655b33457ac832",
+  "launch/fkie_ugv_sync.launch": "6c50ef4e01e7f420d18ffdd5aca88cbe53e98c625b5061ec9dd0da797d8354d6"
+}

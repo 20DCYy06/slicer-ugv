@@ -1,0 +1,14 @@
+# Backward-compatible node/topic names. This is a velocity smoother, not a planner.
+# Limits/accelerations come exclusively from slicer_config.yaml navigation.*.
+input_topic: /cmd_vel/nav_raw
+spin_input_topic: /cmd_vel/patrol_spin_raw
+output_topic: /cmd_vel/nav
+command_timeout: 0.5
+publish_hz: 20.0
+# Validate only commands whose path is changed by reverse rejection/turn boost.
+costmap_topic: /move_base/local_costmap/costmap
+costmap_timeout: 1.5
+tf_timeout: 0.5
+compensation_horizon: 0.8
+turning_linear_window: 0.03
+angular_intent_threshold: 0.02

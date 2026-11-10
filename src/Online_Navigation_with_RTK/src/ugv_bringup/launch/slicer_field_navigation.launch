@@ -1,0 +1,51 @@
+<launch>
+  <!-- Operator-started field presets, reusing the existing navigation chain.
+       Default: fixed geographic map grid; field_sensors owns map -> odom.
+       geographic:=false is the local odom bootstrap. mapping:=true explicitly
+       selects the retained Gmapping candidate instead of geographic navigation.
+       Start field_sensors separately; neither branch starts a chassis driver.
+       Mux remains startup held; this file never sends a goal or release. -->
+  <arg name="mapping" default="false"/>
+  <arg name="geographic" default="true"/>
+  <arg name="enable_depth" default="false"/>
+  <!-- Empty uses the operator's dwa.yaml unchanged; lower-speed profiles are opt-in. -->
+  <arg name="cruise_config" default=""/>
+  <arg name="start_camera" default="true"/>
+  <arg name="camera_serial" default=""/>
+  <include unless="$(arg mapping)" file="$(find ugv_bringup)/launch/slicer_odom.launch">
+    <arg name="local_planner" value="dwa"/>
+    <arg name="connect_control" value="true"/>
+    <arg name="source_config" value="$(find ugv_bringup)/config/online_runtime/config/slicer_config.yaml"/>
+    <arg name="control_config" value="$(find ugv_bringup)/config/slicer_driver_body_speed.yaml"/>
+    <arg name="global_costmap_config"
+         value="$(eval find('ugv_bringup') + '/config/' + ('outdoor_map.yaml' if arg('geographic') else 'field_odom_map.yaml'))"/>
+  </include>
+  <include if="$(arg mapping)" file="$(find ugv_bringup)/launch/slicer_online.launch">
+    <arg name="local_planner" value="dwa"/>
+    <arg name="start_sensors" value="false"/>
+    <arg name="connect_control" value="true"/>
+    <arg name="control_config" value="$(find ugv_bringup)/config/slicer_driver_body_speed.yaml"/>
+    <arg name="enable_depth" value="$(arg enable_depth)"/>
+    <arg name="start_camera" value="$(arg start_camera)"/>
+    <arg name="camera_serial" value="$(arg camera_serial)"/>
+  </include>
+  <!-- The same explicit switch controls acquisition, processing and layers.
+       This candidate does not add a static map dependency to geographic/odom. -->
+  <group if="$(eval arg('enable_depth') and not arg('mapping'))">
+    <include file="$(find ugv_bringup)/launch/slicer_depth.launch">
+      <arg name="start_camera" value="$(arg start_camera)"/>
+      <arg name="camera_serial" value="$(arg camera_serial)"/>
+    </include>
+    <rosparam command="load" ns="ugv/move_base"
+              file="$(find ugv_bringup)/config/depth_costmap.yaml"/>
+    <rosparam ns="ugv/move_base/global_costmap/plugins">
+      - {name: obstacle_layer, type: 'costmap_2d::ObstacleLayer'}
+      - {name: depth_layer, type: 'costmap_2d::ObstacleLayer'}
+      - {name: inflation_layer, type: 'costmap_2d::InflationLayer'}
+    </rosparam>
+  </group>
+  <!-- Only an explicitly selected profile overrides operator limits. The Guard
+       reads final planner limits at startup; restart navigation after edits. -->
+  <rosparam if="$(eval arg('cruise_config') != '')" command="load"
+            ns="ugv/move_base" file="$(arg cruise_config)"/>
+</launch>

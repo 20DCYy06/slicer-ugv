@@ -1,0 +1,18 @@
+{
+  "build_and_install_passed": true,
+  "check_passed": true,
+  "catkin_reported_tests": 331,
+  "migration_tests": 6,
+  "gnss_global_integration": true,
+  "geographic_client_integration": true,
+  "outdoor_costmap_integration": true,
+  "images": {
+    "ugv-online-rtk:arm64-20261030": "sha256:5a194ce7eb0689b4a7eea4ddefd360db747fd631136877ced77de5d4c1485c28"
+  },
+  "hardware_driver_started": false,
+  "real_gnss_started": false,
+  "real_goal_sent": false,
+  "firmware_flashed": false,
+  "udev_rules_installed": false,
+  "source_unchanged": true
+}

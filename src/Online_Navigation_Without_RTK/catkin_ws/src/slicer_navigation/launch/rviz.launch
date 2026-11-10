@@ -1,0 +1,4 @@
+<launch>
+  <arg name="config" default="$(find slicer_navigation)/rviz/nav_light.rviz"/>
+  <node pkg="rviz" type="rviz" name="slicer_nav_rviz" args="-d $(arg config)" output="screen"/>
+</launch>

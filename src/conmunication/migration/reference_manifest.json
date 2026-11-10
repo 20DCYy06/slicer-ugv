@@ -1,0 +1,70 @@
+{
+  "/home/potato/Slicer_Workspace/communication/VALIDATION.md": {
+    "sha256": "4e2f729fa592a7ce596aa3f6716f572b0baa04f24fb95b8619af0d2a378926d0",
+    "mtime_ns": 1792681807686254870
+  },
+  "/home/potato/Slicer_Workspace/communication/verify_relay.py": {
+    "sha256": "b0d47be5758706d018ad5f8351d4fb188ca60c46a8927e56341c12afe04f4e31",
+    "mtime_ns": 1792678501956552937
+  },
+  "/home/potato/Slicer_Workspace/communication/TIME_AND_FRAMES.md": {
+    "sha256": "9165a2591725748fd7b61777466ebf61e37a4bf5d3a29d12b4055406ea5be586",
+    "mtime_ns": 1792678461603389998
+  },
+  "/home/potato/Slicer_Workspace/communication/README.md": {
+    "sha256": "900bf35f2d5b366829685cf7f75db8dc69ba1c9a0aff62e570b856f8fd5701c9",
+    "mtime_ns": 1792681809446293965
+  },
+  "/home/potato/Slicer_Workspace/communication/run.sh": {
+    "sha256": "cc4314009d45136a61f2b69de4fbb32cc0691202bf0ef2811f9e9a5a9c1979cb",
+    "mtime_ns": 1792680807130639726
+  },
+  "/home/potato/Slicer_Workspace/communication/Dockerfile.fkie": {
+    "sha256": "6ffa05af811f62bbf64d45d65f392b113f7e9e9824e82ae3546c69f31c3b763a",
+    "mtime_ns": 1792672926189994886
+  },
+  "/home/potato/Slicer_Workspace/communication/UAV_HANDOFF.md": {
+    "sha256": "fc9d402d68d402bdae7873a8b6576f050142042cd1d02c88718c09df65140504",
+    "mtime_ns": 1792678459991342889
+  },
+  "/home/potato/Slicer_Workspace/communication/FKIE_WAYPOINTS.md": {
+    "sha256": "933dc6fdf760c6241a16f2fa6e3c1050c9e5159f3bf696bd6d090a57c62246b2",
+    "mtime_ns": 1792681811154331885
+  },
+  "/home/potato/Slicer_Workspace/communication/relay.py": {
+    "sha256": "6102ecee97a603781c9bdb565a0183df6d976ceded29418b553a0a6531e6bed3",
+    "mtime_ns": 1792678452023109234
+  },
+  "/home/potato/Slicer_Workspace/communication/config/sync_topics.yaml": {
+    "sha256": "6819d7d873d5802458c24d17cb9fd5cdfe8903ba13cfc5f44071d9caa1c0117a",
+    "mtime_ns": 1792680804858586514
+  },
+  "/home/potato/Slicer_Workspace/communication/config/network.env": {
+    "sha256": "e53e276633762a240236b82256263abfe641df2d1022fadc5746d0364048948f",
+    "mtime_ns": 1792672936350352028
+  },
+  "/home/potato/Slicer_Workspace/communication/config/uav_receiver.example.yaml": {
+    "sha256": "0c164063629d7a90d5f7d193ab68439571a44d6457c6ca33acf9d2f3e0e27591",
+    "mtime_ns": 1792678456759248270
+  },
+  "/home/potato/Slicer_Workspace/communication/config/relay.yaml": {
+    "sha256": "2edc9e2646be0a6b6089107a05d9a21405c450a6a694ba3aca2b66d08eab6c96",
+    "mtime_ns": 1792678455159201351
+  },
+  "/home/potato/Slicer_Workspace/communication/launch/fkie_ugv_sync.launch": {
+    "sha256": "e4d2b590e84238f66cc195c65ce17a9a799903067e4d2c9639750761ca5ca623",
+    "mtime_ns": 1792672943254596390
+  },
+  "/home/potato/Slicer_Workspace/config/fkie_ugv_sync.launch": {
+    "sha256": "fb41d906168ca511e2f566c1564c4551020ce369456b0b8e9ee0514f88fe3288",
+    "mtime_ns": 1792680803134545953
+  },
+  "/home/potato/Slicer_Workspace/catkin_ws/src/slicer_navigation/scripts/uav_waypoint_receiver.py": {
+    "sha256": "32927de833883ba1d419db6c3ca450b31dcb6c68c55123ee5264213725b0ad71",
+    "mtime_ns": 1792680670742731639
+  },
+  "/home/potato/Slicer_Workspace/catkin_ws/src/slicer_navigation/scripts/navigation_core.py": {
+    "sha256": "1273645daf3dbe336be3c541b41da85895821dfb7587ebc9285805f04650af26",
+    "mtime_ns": 1792758402156473700
+  }
+}

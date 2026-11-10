@@ -1,0 +1,18 @@
+global_costmap:
+  footprint: &id001
+  - - -0.14500000000000002
+    - -0.14
+  - - -0.14500000000000002
+    - 0.14
+  - - 0.2
+    - 0.14
+  - - 0.2
+    - -0.14
+  footprint_padding: 0.0
+local_costmap:
+  footprint: *id001
+  footprint_padding: 0.0
+TebLocalPlannerROS:
+  footprint_model:
+    type: polygon
+    vertices: *id001

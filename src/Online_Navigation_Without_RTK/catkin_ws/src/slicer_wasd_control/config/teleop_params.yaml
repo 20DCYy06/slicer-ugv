@@ -1,0 +1,2 @@
+control_mode: body_speed
+base_frame: base_link

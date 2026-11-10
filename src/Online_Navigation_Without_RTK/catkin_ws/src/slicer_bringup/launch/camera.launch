@@ -1,0 +1,4 @@
+<launch>
+  <arg name="root" default="/slicer"/>
+  <include file="$(arg root)/.generated/camera.launch"/>
+</launch>

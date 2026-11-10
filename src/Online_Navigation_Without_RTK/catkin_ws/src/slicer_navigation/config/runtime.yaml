@@ -1,0 +1,7 @@
+# 本机导航：两项都用127.0.0.1；跨机通信时改为Jetson真实网卡IP。
+# 环境变量ROS_MASTER_URI、ROS_IP若已设置，则优先使用环境变量。
+ros_master_uri: http://127.0.0.1:11311
+ros_ip: 127.0.0.1
+
+# 上位机允许接入的MCU闭环PWM硬上限，单位‰；不改变固件或速度指令。
+mcu_pwm_accept_max_permille: 982

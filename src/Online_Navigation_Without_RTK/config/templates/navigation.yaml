@@ -1,0 +1,99 @@
+controller_frequency: 10.0
+planner_frequency: 1.0
+base_global_planner: global_planner/GlobalPlanner
+base_local_planner: teb_local_planner/TebLocalPlannerROS
+controller_patience: 10.0
+planner_patience: 5.0
+oscillation_timeout: 20.0
+oscillation_distance: 0.1
+recovery_behavior_enabled: true
+TebLocalPlannerROS:
+  odom_topic: /odom
+  map_frame: map
+  max_vel_x: 0.8
+  max_vel_x_backwards: 0.02
+  max_vel_y: 0.0
+  max_vel_theta: 2.4725146199
+  acc_lim_x: 0.2
+  acc_lim_y: 0.0
+  acc_lim_theta: 1.2
+  min_turning_radius: 0.0
+  wheelbase: 0.17
+  cmd_angle_instead_rotvel: false
+  weight_kinematics_forward_drive: 900.0
+  xy_goal_tolerance: 0.15
+  yaw_goal_tolerance: 0.3
+  footprint_model:
+    type: polygon
+    vertices: &id001
+    - - -0.14500000000000002
+      - -0.14
+    - - -0.14500000000000002
+      - 0.14
+    - - 0.2
+      - 0.14
+    - - 0.2
+      - -0.14
+  min_obstacle_dist: 0.144
+  inflation_dist: 0.192
+global_costmap:
+  robot_base_frame: base_link
+  transform_tolerance: 0.3
+  footprint: *id001
+  footprint_padding: 0.0
+  resolution: 0.05
+  obstacle_layer: &id002
+    enabled: true
+    observation_sources: scan
+    combination_method: 1
+    track_unknown_space: true
+    scan:
+      topic: /scan
+      data_type: LaserScan
+      marking: true
+      clearing: true
+      obstacle_range: 3.0
+      raytrace_range: 4.0
+      min_obstacle_height: -0.05
+      max_obstacle_height: 0.5
+      inf_is_valid: true
+      observation_persistence: 0.0
+      expected_update_rate: 0.2
+  inflation_layer: &id003
+    enabled: true
+    inflation_radius: 0.192
+    cost_scaling_factor: 4.5
+  global_frame: map
+  update_frequency: 3.0
+  publish_frequency: 1.0
+  static_layer:
+    lethal_cost_threshold: 100
+    trinary_costmap: true
+    track_unknown_space: true
+  rolling_window: false
+  plugins:
+  - name: static_layer
+    type: costmap_2d::StaticLayer
+  - name: obstacle_layer
+    type: costmap_2d::ObstacleLayer
+  - name: inflation_layer
+    type: costmap_2d::InflationLayer
+local_costmap:
+  robot_base_frame: base_link
+  transform_tolerance: 0.3
+  footprint: *id001
+  footprint_padding: 0.0
+  resolution: 0.05
+  obstacle_layer: *id002
+  inflation_layer: *id003
+  global_frame: odom
+  update_frequency: 5.0
+  publish_frequency: 4.0
+  rolling_window: true
+  width: 5.0
+  height: 5.0
+  plugins:
+  - name: obstacle_layer
+    type: costmap_2d::ObstacleLayer
+  - name: inflation_layer
+    type: costmap_2d::InflationLayer

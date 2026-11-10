@@ -1,0 +1,7 @@
+<launch>
+  <arg name="file" default="$(find slicer_navigation)/config/waypoints.yaml"/>
+  <arg name="clicked_yaw" default="0.0"/>
+  <node pkg="slicer_navigation" type="waypoint_recorder.py" name="slicer_waypoint_recorder" output="screen" required="true">
+    <param name="file" value="$(arg file)"/><param name="clicked_yaw" value="$(arg clicked_yaw)"/>
+  </node>
+</launch>

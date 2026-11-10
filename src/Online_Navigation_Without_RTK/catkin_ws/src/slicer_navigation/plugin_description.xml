@@ -1,0 +1,5 @@
+<library path="lib/libslicer_record_waypoint_tool">
+  <class name="slicer_navigation/RecordWaypoint" type="slicer_navigation::RecordWaypointTool" base_class_type="rviz::Tool">
+    <description>Continuous map-plane waypoint recording without rendered-object picking or motion goals.</description>
+  </class>
+</library>

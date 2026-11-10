@@ -1,0 +1,3 @@
+# 在线map坐标随每次新建图重新建立，不能直接复用另一次SLAM的绝对坐标点。
+frame_id: map
+waypoints: []

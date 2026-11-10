@@ -1,0 +1,29 @@
+# Fixed task-local obstacle cache for the first 5-10 m outdoor target trials.
+# Bounds are [-20, 20) m in ENU map, including detour margin around the origin.
+# This is no evidence of observed free space or full 30 x 40 m field coverage.
+# Rebuild navigation under the existing hold after alignment/re-alignment;
+# old obstacle cells are not reprojected by a later map -> odom correction.
+global_costmap:
+  global_frame: map
+  rolling_window: false
+  static_map: false
+  width: 40.0
+  height: 40.0
+  origin_x: -20.0
+  origin_y: -20.0
+  resolution: 0.05
+  plugins:
+    - {name: obstacle_layer, type: 'costmap_2d::ObstacleLayer'}
+    - {name: inflation_layer, type: 'costmap_2d::InflationLayer'}
+local_costmap:
+  global_frame: odom
+  rolling_window: true
+  track_unknown_space: true
+  always_send_full_costmap: true
+# A global route may cross unknown cells; local unknown-space and Guard rules
+# remain at their existing settings and still require live lidar observations.
+GlobalPlanner:
+  allow_unknown: true
+DWAPlannerROS:
+  xy_goal_tolerance: 0.10
+  yaw_goal_tolerance: 0.12

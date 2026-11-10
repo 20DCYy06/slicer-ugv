@@ -1,0 +1,14 @@
+<launch>
+  <arg name="keyboard" default="false"/><arg name="publish_tf" default="false"/>
+  <arg name="mock" default="false"/><arg name="wait_for_fault_clear" default="true"/>
+  <arg name="config" default="$(find slicer_navigation_without_mapping)/.runtime/config/control.yaml"/>
+  <arg name="host_config" default="/workspace2/Hardware/config.yaml"/>
+  <node pkg="slicer_wasd_control" type="velocity_mux.py" name="slicer_velocity_mux" output="screen" required="true">
+    <param name="config_file" value="$(arg config)"/>
+  </node>
+  <node pkg="slicer_wasd_control" type="c30d_driver_node.py" name="slicer_c30d_driver" output="screen" required="true">
+    <param name="config_file" value="$(arg config)"/><param name="host_config_file" value="$(arg host_config)"/>
+    <param name="mock" value="$(arg mock)"/><param name="publish_tf" value="$(arg publish_tf)"/>
+    <param name="wait_for_fault_clear" value="$(arg wait_for_fault_clear)"/>
+  </node>
+</launch>

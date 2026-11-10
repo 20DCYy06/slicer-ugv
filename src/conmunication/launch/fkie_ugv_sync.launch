@@ -1,0 +1,10 @@
+<launch>
+  <arg name="waypoint_topic" default="/uav/mission/waypoints"/>
+  <arg name="waypoint_file" default="$(optenv UGV_WAYPOINT_FILE /navigation/waypoints.yaml)"/>
+  <node pkg="fkie_master_sync" type="master_sync" name="master_sync" output="screen">
+    <rosparam command="load" file="$(find ugv_communication)/config/sync_topics.yaml"/>
+  </node>
+  <node pkg="ugv_communication" type="waypoint_receiver.py" name="ugv_waypoint_receiver" output="screen">
+    <param name="topic" value="$(arg waypoint_topic)"/><param name="file" value="$(arg waypoint_file)"/>
+  </node>
+</launch>

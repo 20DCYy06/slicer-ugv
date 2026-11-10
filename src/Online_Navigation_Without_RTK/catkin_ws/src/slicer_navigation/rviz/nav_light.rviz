@@ -1,0 +1,49 @@
+Panels:
+  - {Class: rviz/Displays, Name: Displays}
+  - {Class: rviz/Tool Properties, Name: Tool Properties}
+Visualization Manager:
+  Class: ""
+  Global Options:
+    Fixed Frame: map
+    Background Color: 48; 48; 48
+    Frame Rate: 10
+  Displays:
+    - {Class: rviz/Grid, Name: Grid, Enabled: true, Plane Cell Count: 20}
+    - {Class: rviz/Map, Name: Map, Enabled: true, Topic: /map, Alpha: 0.8}
+    - {Class: rviz/Axes, Name: Map Origin Axes, Enabled: true, Reference Frame: map, Length: 0.4, Radius: 0.012}
+    - {Class: rviz/MarkerArray, Name: Robot and Map Origin, Enabled: true, Marker Topic: /slicer/navigation_markers, Queue Size: 1}
+    - {Class: rviz/Map, Name: Global Costmap, Enabled: false, Topic: /move_base/global_costmap/costmap, Color Scheme: costmap, Alpha: 0.25}
+    - {Class: rviz/Map, Name: Local Costmap, Enabled: true, Topic: /move_base/local_costmap/costmap, Color Scheme: costmap, Alpha: 0.40}
+    - Class: rviz/LaserScan
+      Name: Scan Points
+      Enabled: true
+      Topic: /scan
+      Style: Points
+      Size (Pixels): 2
+      Size (m): 0.01
+      Queue Size: 1
+      Decay Time: 0
+      Color Transformer: FlatColor
+      Color: 0; 255; 50
+    - {Class: rviz/PoseArray, Name: AMCL Particles, Enabled: false, Topic: /particlecloud, Queue Size: 1}
+    - Class: rviz/Path
+      Name: Global Plan
+      Enabled: true
+      Topic: /move_base/GlobalPlanner/plan
+      Buffer Length: 1
+      Pose Style: None
+    - Class: rviz/Path
+      Name: Local Plan
+      Enabled: true
+      Topic: /move_base/TebLocalPlannerROS/local_plan
+      Buffer Length: 1
+      Pose Style: None
+  Tools:
+    - {Class: rviz/Interact}
+    - {Class: rviz/MoveCamera}
+    - {Class: rviz/SetInitialPose, Topic: /initialpose}
+    - {Class: rviz/SetGoal, Topic: /slicer/patrol/record_goal}
+    - {Class: slicer_navigation/RecordWaypoint}
+  Views:
+    Current: {Class: rviz/TopDownOrtho, Scale: 70}
+Window Geometry: {Width: 1280, Height: 720}

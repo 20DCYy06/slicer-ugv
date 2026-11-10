@@ -1,0 +1,14 @@
+frame_id: map
+waypoints:
+- name: point_001
+  x: 5.7889
+  y: 5.2719
+  z: 0.0
+  yaw: 0.0
+  wait_s: 2.0
+- name: point_002
+  x: -0.5526
+  y: -2.1737
+  z: 0.0
+  yaw: 0.0
+  wait_s: 2.0
