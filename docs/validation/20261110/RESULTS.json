@@ -1,0 +1,58 @@
+{
+  "date": "2026-11-10",
+  "source_import_commit": "bb93c03b9e1ad3958a8a767f2f37f7ea7bf8c535",
+  "branch": "workspace2/vision-align-20261110",
+  "environment": {
+    "image": "ugv-online-offline:20261030",
+    "network": "none",
+    "devices": [],
+    "source_mount": "readonly",
+    "ros_master": "isolated container 127.0.0.1 only"
+  },
+  "tests": {
+    "new_vision": {
+      "run": 29,
+      "failures": 0,
+      "skipped": 0
+    },
+    "existing_navigation": {
+      "run": 3,
+      "failures": 0,
+      "skipped": 0
+    },
+    "existing_gnss": {
+      "run": 53,
+      "failures": 0,
+      "skipped": 0
+    },
+    "private_ros_image_and_publisher_smoke": "passed",
+    "official_rgb_launch_parse": "passed, no camera started"
+  },
+  "test_evidence": [
+    "vision-tests.txt",
+    "gnss-tests.txt"
+  ],
+  "notes": [
+    "The trailing zero-test discovery in vision-tests.txt is not counted; corrected GNSS execution is separately recorded in gnss-tests.txt.",
+    "Private ROS smoke initially misused caller-prepending registration API in test fixture; fixed to explicit XMLRPC registration, then final smoke passed.",
+    "Review found mixed-frame edge clicks; frozen-frame selection and receipt-binding regressions now pass."
+  ],
+  "not_validated": [
+    "ARM build/deployment of this candidate",
+    "actual RGB camera/GUI display",
+    "measured local image Jacobian",
+    "physical visual alignment/reachable image targets",
+    "actual GNSS 10Hz receiver setting/model/firmware"
+  ],
+  "sha256": {
+    "src/Online_Navigation_with_RTK/src/ugv_bringup/launch/slicer_odom.launch": "b5eee3386bfcb6d5b22eaeda710ddaa1b25dff7f821e0ba808eaa6e00f817f07",
+    "Test/Vision_adjust/README.md": "ec7325c669f441bab03e0c3ae0ac188ca4bdd4daa7f382171233d27f324bffab",
+    "Test/Vision_adjust/config.yaml": "5039724ea4319e26345b9f603b394554b3744dedba8699b32777a39c8232284d",
+    "Test/Vision_adjust/tests/ros_smoke.py": "b8c3bc16919fd5ba458a5c2f4089aa7f4e9ece978c77089bebb8d30fe264db2a",
+    "Test/Vision_adjust/tests/test_vision_app.py": "4521214b062305516c67c3c191b92137e005402c3279c53b2272e4a4db7aa9bc",
+    "Test/Vision_adjust/tests/test_vision_core.py": "94a566bf6df2dc8511cf51196450ea62d523a19894f7a92b235659407b1291c8",
+    "Test/Vision_adjust/tests/test_vision_launch.py": "12b4ad47bc475abbba7bb4021a00dd279d3f94c077d0810b6df8b7a294668c9e",
+    "Test/Vision_adjust/vision_align.py": "2fcb0dc36704a2c20ab18a33d9a6a40554282637de6fd6c33b447a3630c327f5",
+    "Test/Vision_adjust/vision_core.py": "d7fac66fa1e9bc89e10e075c92c732e68e85ce8aa35f38ec73efe43be8dd4e78"
+  }
+}

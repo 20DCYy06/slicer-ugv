@@ -11,13 +11,15 @@
   <arg name="source_config" default="/slicer/config/slicer_config.yaml"/>
   <arg name="control_config" default="$(find ugv_bringup)/config/slicer_driver_body_speed.yaml"/>
   <arg name="raw_topic" default="/cmd_vel/nav_raw"/>
+  <!-- Vision experiments keep costmaps alive while separating planner commands. -->
+  <arg name="planner_raw_topic" default="$(arg raw_topic)"/>
   <arg name="release_owner" default="$(eval '/' + arg('namespace').strip('/') + '/control')"/>
   <include file="$(find ugv_bringup)/launch/odom.launch">
     <arg name="namespace" value="$(arg namespace)"/>
     <arg name="odom_topic" value="$(arg odom_topic)"/>
     <arg name="scan_topic" value="$(arg scan_topic)"/>
     <arg name="local_planner" value="$(arg local_planner)"/>
-    <arg name="cmd_vel_topic" value="$(eval arg('raw_topic') if arg('connect_control') else 'cmd_vel/nav_raw')"/>
+    <arg name="cmd_vel_topic" value="$(eval arg('planner_raw_topic') if arg('connect_control') else 'cmd_vel/nav_raw')"/>
   </include>
   <rosparam if="$(eval arg('global_costmap_config') != '')" command="load"
             ns="$(arg namespace)/move_base" file="$(arg global_costmap_config)"/>

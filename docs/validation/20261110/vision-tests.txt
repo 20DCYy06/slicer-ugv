@@ -1,0 +1,62 @@
+test_bounds_use_actual_dwa_values_and_reject_invalid_limits (test_vision_app.VisionAdapterTests) ... ok
+test_control_requires_ros_and_nonsingular_calibration (test_vision_app.VisionAdapterTests) ... ok
+test_edge_clicks_share_frozen_frame_then_resume_tracking (test_vision_app.VisionAdapterTests) ... ok
+test_edge_selection_stops_until_feature_matches_live_packet (test_vision_app.VisionAdapterTests) ... ok
+test_live_frame_requires_advancing_stamp_and_both_age_limits (test_vision_app.VisionAdapterTests) ... ok
+test_pause_stale_or_lost_feature_always_stops_both_axes (test_vision_app.VisionAdapterTests) ... ok
+test_route_rejects_other_raw_publishers_or_guard_mismatch (test_vision_app.VisionAdapterTests) ... ok
+test_target_defaults_to_image_center_and_rejects_outside_image (test_vision_app.VisionAdapterTests) ... ok
+test_accepts_bgr_camera_frame (test_vision_core.PointTrackerTests) ... ok
+test_edge_feature_is_mean_of_tracked_endpoints (test_vision_core.PointTrackerTests) ... ok
+test_feature_leaving_image_invalidates_tracking (test_vision_core.PointTrackerTests) ... ok
+test_lost_feature_requires_explicit_reselection (test_vision_core.PointTrackerTests) ... ok
+test_rejects_flat_selected_patch_without_moving_to_texture (test_vision_core.PointTrackerTests) ... ok
+test_rejects_frame_size_change_and_invalid_frames (test_vision_core.PointTrackerTests) ... ok
+test_rejects_invalid_selection_and_clears_previous_selection (test_vision_core.PointTrackerTests) ... ok
+test_reset_clears_selection (test_vision_core.PointTrackerTests) ... ok
+test_target_update_changes_command_without_resetting_feature (test_vision_core.PointTrackerTests) ... ok
+test_tracks_selected_point_on_translated_texture (test_vision_core.PointTrackerTests) ... ok
+test_unrelated_background_is_not_accepted_as_selected_feature (test_vision_core.PointTrackerTests) ... ok
+test_axis_swap_and_angular_sign_follow_calibration (test_vision_core.ServoCommandTests) ... ok
+test_configured_bounds_have_no_hidden_lower_cap (test_vision_core.ServoCommandTests) ... ok
+test_euclidean_pixel_tolerance_and_zero_error_stop (test_vision_core.ServoCommandTests) ... ok
+test_full_inverse_jacobian_preserves_coupling_and_gain (test_vision_core.ServoCommandTests) ... ok
+test_nonfinite_error_and_invalid_parameters_stop_explicitly (test_vision_core.ServoCommandTests) ... ok
+test_reverse_required_stops_both_commands (test_vision_core.ServoCommandTests) ... ok
+test_singular_or_invalid_calibration_stops_explicitly (test_vision_core.ServoCommandTests) ... ok
+test_uniform_bounds_preserve_command_direction (test_vision_core.ServoCommandTests) ... ok
+test_default_still_routes_planner_to_guard (test_vision_launch.VisionLaunchTests) ... ok
+test_vision_override_isolates_planner_and_keeps_costmap_guard_mux (test_vision_launch.VisionLaunchTests) ... ok
+
+----------------------------------------------------------------------
+Ran 29 tests in 0.075s
+
+OK
+usage: vision_align.py [-h] [--image FILE | --video FILE | --topic ROS_IMAGE]
+                       [--config CONFIG] [--target X Y]
+                       [--feature {point,edge}] [--control]
+
+Click a point/edge and observe it; ROS control is explicit and calibrated.
+
+optional arguments:
+  -h, --help            show this help message and exit
+  --image FILE          offline still image
+  --video FILE          offline video file
+  --topic ROS_IMAGE     ROS Image (default: config image_topic)
+  --config CONFIG
+  --target X Y
+  --feature {point,edge}
+  --control             publish calibrated commands to fixed Guard raw input
+test_control_connection_has_one_guard_mux_and_no_driver (test_online_launch.OnlineLaunchTests) ... ok
+test_default_planning_uses_online_map_and_continuous_local_frame (test_online_launch.OnlineLaunchTests) ... ok
+test_bootstrap_odom_profile_remains_explicit (test_field_launch.FieldLaunchTests) ... ok
+
+----------------------------------------------------------------------
+Ran 3 tests in 0.049s
+
+OK
+
+----------------------------------------------------------------------
+Ran 0 tests in 0.000s
+
+OK
