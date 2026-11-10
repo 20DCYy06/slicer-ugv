@@ -3,6 +3,7 @@ import importlib.util
 from pathlib import Path
 import sys
 import unittest
+from unittest.mock import patch
 
 import cv2
 import numpy as np
@@ -103,6 +104,17 @@ class VisionAdapterTests(unittest.TestCase):
         view = {"result": {"feature": (10, 10)}, "received": 50.0, "clicks": []}
         self.assertEqual(command(view, (30, 20), config, (0.6, 1.0), True, False, 50.0),
                          {"vx": 0.6, "wz": 0.3, "status": "active"})
+
+    def test_window_close_detection_supports_gtk_without_visible_property(self):
+        closed = self.helper("window_closed")
+        def gtk_property(window, prop):
+            return 1.0 if prop == cv2.WND_PROP_AUTOSIZE else -1.0
+        with patch.object(self.app.cv2, "getWindowProperty", side_effect=gtk_property):
+            self.assertFalse(closed("test"))
+        with patch.object(self.app.cv2, "getWindowProperty", return_value=-1.0):
+            self.assertTrue(closed("test"))
+        with patch.object(self.app.cv2, "getWindowProperty", side_effect=cv2.error("window gone")):
+            self.assertTrue(closed("test"))
 
     def edge_frames(self):
         rng = np.random.RandomState(32)

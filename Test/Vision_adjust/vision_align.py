@@ -102,6 +102,14 @@ def frame_command(view, target, config, bounds, fresh, paused, packet_received):
                          bounds[0], bounds[1], config["tolerance_px"])
 
 
+def window_closed(window):
+    """GTK3 lacks WND_PROP_VISIBLE; our AUTOSIZE window has a supported flag."""
+    try:
+        return cv2.getWindowProperty(window, cv2.WND_PROP_AUTOSIZE) < 0
+    except cv2.error:
+        return True
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     source = parser.add_mutually_exclusive_group()
@@ -255,7 +263,7 @@ def main(argv=None):
                 cv2.putText(canvas, text, (10, 22 + row * 23), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
             cv2.imshow(window, canvas)
             key = cv2.waitKey(30) & 0xff
-            if key == 27 or cv2.getWindowProperty(window, cv2.WND_PROP_VISIBLE) < 1:
+            if key == 27 or window_closed(window):
                 break
             if key == ord(" "):
                 paused = not paused

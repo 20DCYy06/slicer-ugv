@@ -1,0 +1,51 @@
+{
+  "date": "2026-11-10",
+  "vehicle_directory": "/home/potato/slicer_workspace2_codex",
+  "base_commit": "4e48148",
+  "arm_build_install": "passed (aarch64, network none, no devices)",
+  "arm_vision_tests": {
+    "run": 30,
+    "failures": 0,
+    "skipped": 0
+  },
+  "camera": {
+    "width": 640,
+    "height": 480,
+    "encoding": "rgb8",
+    "frame_id": "camera_color_optical_frame",
+    "samples": 26,
+    "hz": 14.973872949649165,
+    "header_age_min_s": 0.009077310562133789,
+    "header_age_max_s": 0.07811546325683594,
+    "camera_K": [
+      385.34124755859375,
+      0.0,
+      320.15167236328125,
+      0.0,
+      384.6559143066406,
+      240.7541046142578,
+      0.0,
+      0.0,
+      1.0
+    ],
+    "camera_D": [
+      -0.05800452083349228,
+      0.06929922103881836,
+      1.960165536729619e-05,
+      0.0009387999307364225,
+      -0.022836247459053993
+    ],
+    "ros_sdk_serial": "309122301575",
+    "usb_asic_serial": "342343063024",
+    "velocity_publishers": []
+  },
+  "gui_fix": "GTK3 WND_PROP_VISIBLE returns -1 for an open window; use supported AUTOSIZE property for this AUTOSIZE window",
+  "field_observation": "User confirmed selected black-hole rim can track a slow 1–2cm tabletop translation. Earlier faster movement lost tracking; cause not captured, not considered resolved.",
+  "control_validation": "No chassis driver, release, goals or velocity published; local image Jacobian not yet calibrated.",
+  "source_sha256": {
+    "Test/Vision_adjust/vision_align.py": "1ad5a9e3e954028834521647794936796698d9b485011597e7e8b073ffe6aa6b",
+    "Test/Vision_adjust/vision_core.py": "d7fac66fa1e9bc89e10e075c92c732e68e85ce8aa35f38ec73efe43be8dd4e78",
+    "Test/Vision_adjust/view_car.sh": "36be8a2405bb8ea9b3ef2cdd5056715b880dbc95d1e9ab6f930a0a72db053ce0",
+    "src/Online_Navigation_with_RTK/src/ugv_bringup/launch/slicer_odom.launch": "b5eee3386bfcb6d5b22eaeda710ddaa1b25dff7f821e0ba808eaa6e00f817f07"
+  }
+}

@@ -33,12 +33,12 @@ ROS 模式另需 `cv_bridge`、`sensor_msgs`，控制模式需 `geometry_msgs`�
 
 ```bash
 roslaunch realsense2_camera rs_camera.launch \
-  enable_color:=true enable_depth:=false serial_no:=342343063024
+  enable_color:=true enable_depth:=false serial_no:=309122301575
 rostopic info /camera/color/image_raw
 rostopic echo -n 2 /camera/color/image_raw/header
 ```
 
-这里使用不带下划线的 ROS1 序列号。已核对官方 ROS1 [nodelet.launch.xml](https://github.com/IntelRealSense/realsense-ros/blob/ros1-legacy/realsense2_camera/launch/includes/nodelet.launch.xml) 明确以 `type="str"` 设置 `serial_no`，[工厂代码](https://github.com/IntelRealSense/realsense-ros/blob/ros1-legacy/realsense2_camera/src/realsense_node_factory.cpp) 直接匹配序列号，不剥离 `_`。应先检查现场安装包是否与此一致；不要套用 ROS2 的 `_342343063024` 写法。此命令只申请 RGB，不能代替已有的深度避障输入；Guard 需要的既有感知和 costmap 仍须有效。
+本次实机SDK确认：ROS设备序列号为`309122301575`，USB/ASIC序列号为`342343063024`，两者不同；USB映射继续使用后者，ROS参数使用前者。这里使用不带下划线的 ROS1 序列号。已核对官方 ROS1 [nodelet.launch.xml](https://github.com/IntelRealSense/realsense-ros/blob/ros1-legacy/realsense2_camera/launch/includes/nodelet.launch.xml) 明确以 `type="str"` 设置 `serial_no`，[工厂代码](https://github.com/IntelRealSense/realsense-ros/blob/ros1-legacy/realsense2_camera/src/realsense_node_factory.cpp) 直接匹配序列号，不剥离 `_`。应先检查现场安装包是否与此一致；不要套用 ROS2 的 `_342343063024` 写法。此命令只申请 RGB，不能代替已有的深度避障输入；Guard 需要的既有感知和 costmap 仍须有效。
 
 ## 标定和可选控制
 
@@ -83,3 +83,23 @@ PYTHONDONTWRITEBYTECODE=1 python3 -s -m unittest discover -s Test/Vision_adjust/
 ```
 
 `test_vision_launch.py` 需要已 source 的 ROS Noetic 环境，只解析 launch，不启动节点。软件模型与后续 ROS 验证应在无设备、`--network none` 容器的独立 master 中运行；离线通过不代表现场视觉、标定或底盘运动已通过。
+
+## 当前车端部署（2026-11-10）
+
+独立目录 `/home/potato/slicer_workspace2_codex`，没有覆盖队友工程。相机容器名为`slicer-vision-camera`；主机GTK窗口关闭判断已实测调整为AUTOSIZE属性，避免不支持VISIBLE属性导致立即退出。
+
+电脑WSL终端打开观察窗口（仅显示）：
+
+```bash
+cd /home/rescue/slicer_ugv_ros1/current
+bash Test/Vision_adjust/view_car.sh
+# 要选边中点，改用：bash Test/Vision_adjust/view_car.sh edge
+```
+
+Esc或关闭窗口结束观察。若也要关闭本轮相机和其ROS master：
+
+```bash
+ssh cup-jetson docker stop slicer-vision-camera
+```
+
+下次只有相机容器已停止、11311没有其他master时，可以`ssh cup-jetson docker start slicer-vision-camera`再开观察窗口；若正常导航已运行，不要另外启动一个master。该相机容器的最终启动命令使用SDK设备序列号。
