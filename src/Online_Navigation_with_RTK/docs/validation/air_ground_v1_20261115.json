@@ -1,0 +1,78 @@
+{
+  "date": "2026-11-15",
+  "implementation_commit": "4a53b66449157ae893e1c9668b802e007012ff75",
+  "baseline_commit": "76367a7d4d939c4e404313e0125a215c2dfd718e",
+  "branch": "workspace2/air-ground-v1-20261115",
+  "source_sha256": {
+    "air_ground_core.py": "14a631f1b92b3186d00d05815ec442da131529ce077f05a9967a3868f9480936",
+    "air_ground_executor.py": "d9198f408b68ba508c08a3f220ba29e12ff5e8eb4f6aae331d340fd028bf20cb",
+    "air_ground_node.py": "7df29a9471842e1be7cda320811e55181e1a45d099124cfb34c0d93308a2f710",
+    "air_ground_wire.py": "9061e779c87f11c2c9c0fa0315bd08bb0a0b495c015b54a6192b89df9f087bd4",
+    "geographic.py": "d17908991a1894039e91c88bfae79a930f11b1fdb255d60a9b04e7e1a3a87d15",
+    "geographic_goal_core.py": "d3b52c959bfea115fadee0482544248d9a2c8ec1a325373bda635f01356cfb22"
+  },
+  "catkin": {
+    "tests": 429,
+    "errors": 0,
+    "failures": 0,
+    "skipped": 0,
+    "log": ".test-results/air-ground-verified-serial.log",
+    "environment": "Noetic Docker; no devices; network none; isolated master; serial ROS tests"
+  },
+  "focused_pure_tests": {
+    "count": 89,
+    "core": 43,
+    "cli": 25,
+    "executor": 13,
+    "stop_boundaries": 8,
+    "included_in_catkin": true
+  },
+  "supplemental": {
+    "expected_hold": 3,
+    "collector": 18,
+    "communication_config": 5
+  },
+  "historical_tools_suite": {
+    "tests": 196,
+    "failures": 5,
+    "errors": 6,
+    "log": ".test-results/run-pEvMGiPI/output.log",
+    "scope": "baseline fixture/config expectations; not corrected by changing production settings"
+  },
+  "parallel_ros_attempt": {
+    "passed": false,
+    "reason": "geographic status exceeded unchanged freshness bound under concurrent fixture load",
+    "serial_rerun": "429 passed; no freshness threshold changed"
+  },
+  "arm64": {
+    "build_install_passed": true,
+    "isolated_ros_passed": true,
+    "restart_orphan_recovery_passed": true,
+    "log": "/home/potato/slicer_workspace2_codex/evidence/air-ground-v1-20261115/arm-startup-final.log"
+  },
+  "message_md5": "b574bb9bb1240c0d2ae262d6c3feb2bf",
+  "deployment": {
+    "root": "/home/potato/slicer_workspace2_codex",
+    "protected_files_unchanged": 12,
+    "running_module_hashes_matched": true,
+    "temporary_software_container_removed": true
+  },
+  "computer_lan": {
+    "status_read": true,
+    "invalid_task_pause_receipt_received": true,
+    "reason": "task_id does not name an unfinished task",
+    "motion_command_sent": false,
+    "status_log": ".test-results/air-ground-deployed-final-status.json",
+    "receipt_log": ".test-results/air-ground-deployed-final-negative.log"
+  },
+  "not_executed": [
+    "real vehicle task/route replacement/pause/resume/cancel",
+    "real aircraft integration",
+    "radio-specific link verification"
+  ],
+  "physical_test_prerequisites": [
+    "user present with whole vehicle, GNSS/lidar and usable current RTK registration",
+    "real captured target files and safe short route",
+    "existing emergency stop and takeover ready; user starts driver and motion commands"
+  ]
+}

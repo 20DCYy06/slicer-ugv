@@ -16,13 +16,13 @@
 
 ## Implementation and validation
 
-- [ ] Task 1: `air_ground_core.py`, pure regression tests: five operations, whole-batch validation, paused replacements, duplicate/conflicting/old requests, terminal task IDs and stale callbacks. Observe red before green.
-- [ ] Task 2: message package, `air_ground.py`/wire helper and real rospy example; file/schema, sequencing and official-topic client tests.
-- [ ] Task 3: `air_ground_executor.py`/`air_ground_node.py`, existing geographic conversion/review and control.py adapter; fake navigation backend tests plus isolated ROS Action/Mux fixtures. Prove cancel acknowledgment, position-only via, final three-way review, external-hold preservation, no subscriber dependency, restart behavior.
-- [ ] Task 4: build/install/launch/run.sh entry, minimal interface config, legacy communication conflict checks; Noetic build and software tests with network none/no devices. Fresh focused review before completion.
-- [ ] Task 5: only if online, snapshot own deployment, incremental deploy/ARM build/install/read-only version check. No assistant-started real driver/release/goal; physical motion requires user at vehicle. Offline remains useful when vehicle unavailable.
-- [ ] Task 6: `docs/air_ground_interface_v1.md` is the sole teammate entry. Verify examples/fields against code, package the minimal interface, record exact verification/deployment gaps and rollback.
+- [x] Task 1: `air_ground_core.py`, pure regression tests: five operations, whole-batch validation, paused replacements, duplicate/conflicting/old requests, terminal task IDs and stale callbacks. Observe red before green.
+- [x] Task 2: message package, `air_ground.py`/wire helper and real rospy example; file/schema, sequencing and official-topic client tests.
+- [x] Task 3: `air_ground_executor.py`/`air_ground_node.py`, existing geographic conversion/review and control.py adapter; fake navigation backend tests plus isolated ROS Action/Mux fixtures. Prove cancel acknowledgment, position-only via, final three-way review, external-hold preservation, no subscriber dependency, restart behavior.
+- [x] Task 4: build/install/launch/run.sh entry, minimal interface config, legacy communication conflict checks; Noetic build and software tests with network none/no devices. Fresh focused review before completion.
+- [x] Task 5: only if online, snapshot own deployment, incremental deploy/ARM build/install/read-only version check. No assistant-started real driver/release/goal; physical motion requires user at vehicle. Offline remains useful when vehicle unavailable.
+- [x] Task 6: `docs/air_ground_interface_v1.md` is the sole teammate entry. Verify examples/fields against code, package the minimal interface, record exact verification/deployment gaps and rollback.
 
 ## Progress
 
-Baseline inspected; new branch created without discarding dirty work. Known Jetson connection currently fails; do not claim deployment or vehicle tests. Independent core and wire/client tasks delegated; main owns executor/integration.
+Local feature implemented and committed through 4a53b66; 429 Catkin checks pass serially with network none/no devices. Final 4a53b66 ARM64 build/install and isolated ROS lifecycle/restart fixture passed. LAN status/rejection round trip passed and all six running module hashes match local. Physical tests await the user; only Jetson has been powered. Existing dirty work preserved. Main document records exact gaps; no real driver, goal or release was sent by the assistant.

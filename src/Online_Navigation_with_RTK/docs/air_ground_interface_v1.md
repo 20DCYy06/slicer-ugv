@@ -1,10 +1,10 @@
 # 空地任务接口 V1 · 队友接入说明
 
-协议版本：`1`。更新日期：2026-11-15。当前实现位于 `workspace2/air-ground-v1-20261115`，基线提交 `76367a7d4d939c4e404313e0125a215c2dfd718e`，本轮新增文件尚未提交。电脑临时代替飞机，使用飞机将来使用的同一 ROS 消息和任务语义。
+协议版本：`1`。更新日期：2026-11-15。当前实现位于 `workspace2/air-ground-v1-20261115`，基线提交 `76367a7d4d939c4e404313e0125a215c2dfd718e`；实现提交 `4a53b66`（包含 `98f6005`、`36ab8c4`）。电脑临时代替飞机，使用飞机将来使用的同一 ROS 消息和任务语义。
 
 本版只处理室外 WGS84 任务：一个最终停车点，加零个或多个有序途经点；同时只有一个任务。飞机侧提供唯一、串行的逻辑命令出口，人工操作也由飞机侧统一协调。车端没有双源优先级、控制租约或独立任务 FIFO。
 
-**验证状态：Noetic/Catkin 隔离验证 428 项通过，0 错误、0 失败、0 跳过；安装环境检查通过。** Jetson 当前已在线，ARM64 构建/部署仍待本轮最终记录确认，真实车辆任务尚未执行。2026-11-11 的 WGS84 导航结果属于原导航底座，不是本空地接口的实车验收；历史 tools 全回归仍有失败，不能把本次定向验证称作全部历史回归通过。分项结果见文末。
+**验证状态：Noetic/Catkin 隔离验证 429 项通过，0 错误、0 失败、0 跳过；安装环境检查通过。** 最终实现 `4a53b66` 已完成车端 ARM64 构建安装、隔离 ROS 回归和运行文件哈希核对；电脑经局域网读取状态并收到无效任务 PAUSE 的正式拒绝回执。真实车辆任务尚未执行，不能据此宣称实车任务通过。2026-11-11 的 WGS84 导航结果属于原导航底座，不是本空地接口的实车验收；历史 tools 全回归仍有失败，不能把本次定向验证称作全部历史回归通过。分项结果见文末。
 
 ## 1. 快速开始
 
@@ -12,12 +12,15 @@
 
 初始化会实际前进，不能用启动空地节点代替。先确认 `/geographic/status` 已配准且当前注册有效；保持原 DWA、Guard/Mux/Watchdog 链。所有终端连接同一 ROS master。
 
-车端在当前独立 RTK 项目根目录构建并启动任务节点：
+车端使用我方独立目录。本轮最终版本已安装。完成上述现场导航准备后启动任务节点；无需每次重新 build：
 
 ```bash
-./run.sh build
+cd /home/potato/slicer_workspace2_codex/src/Online_Navigation_with_RTK
+export ROS_MASTER_URI=http://192.168.3.68:11311 ROS_IP=192.168.3.68
 ./run.sh tasks
 ```
+
+上面 IP 是本轮实际联调地址；网络变化时更换为当前 Jetson 地址。若同名任务服务已运行，先检查状态，不要重复启动。本轮用于局域网验证的临时软件容器及其 ROS master 已关闭；正常测试时按上述顺序自行启动即可。
 
 `tasks` 对应 `roslaunch ugv_bringup slicer_air_ground.launch`，只添加任务层；传感器、底盘、定位和 map 导航仍使用现有入口。不要并行启动另一套导航或目标发送器。任务层独占 `/ugv/move_base` 的任务目标，使用它期间不要再运行 `geographic.py send`、`goal.py send`、旧航点接收器或巡航节点。
 
@@ -26,6 +29,16 @@
 ```bash
 rosrun ugv_navigation air_ground.py status
 ```
+
+现场测试前，在另一个车端终端开启现有只读采集器：
+
+```bash
+cd /home/potato/slicer_workspace2_codex/src/Online_Navigation_with_RTK
+EVIDENCE_DIR="evidence/air-ground-$(date +%Y%m%d-%H%M%S)"
+./run.sh shell python3 tools/collect_odom_test.py --navigation --duration 900 --output "$EVIDENCE_DIR"
+```
+
+它已包含正式 command/state、Action goal/result、配准、RTK、odom、plan、costmap 和速度链；Ctrl-C 只结束记录，不停车。先用短距离单终点，再测途经点替换、暂停/恢复和取消；每组运动由现场用户确认安全后发令，记录实际停车、干预及同一车体参考点到标记的实测距离。
 
 真实目标必须来自已保存的现场采点文件。采点仍使用既有 `geographic.py capture`；文件可从旧配准会话沿用，但不能把旧会话的局部 map 坐标当成新会话坐标。电脑端填写该真实文件的本地路径：
 
@@ -84,6 +97,8 @@ rosmsg show slicer_air_ground_msgs/Command
 ```
 
 双方须使用完全相同的 `.msg` 定义；不要只手写同名 Python 类。Python 发送端还需要 Noetic 自带的 `rospy`、`std_msgs`。完整本工程构建安装后可用上述 `rosrun ugv_navigation` 命令；只分发消息包时，可同时分发 [air_ground.py](../src/ugv_navigation/scripts/air_ground.py) 与同目录的 [air_ground_wire.py](../src/ugv_navigation/scripts/air_ground_wire.py)，然后直接运行 `python3 /path/to/air_ground.py status` 等同参数命令。
+
+队友可直接使用随本轮交付的 `slicer-air-ground-v1-sdk.zip`：仅包含消息包、正式 CLI、wire helper、rospy 示例和本说明，不带导航/驱动依赖或凭据。独立 Noetic `--network none` 构建安装已验证。完整主工程才提供 `rosrun ugv_navigation`；SDK 使用 README 中的 `python3 scripts/air_ground.py` 入口。
 
 本版生成的 `slicer_air_ground_msgs/Command` MD5 为 `b574bb9bb1240c0d2ae262d6c3feb2bf`，可用 `rosmsg md5 slicer_air_ground_msgs/Command` 核对。
 
@@ -273,6 +288,9 @@ python3 /path/to/ugv_navigation/examples/air_ground_rospy.py "$TARGET_FILE"
 | `action` | object / null | 最近 Action 观测：`state`（actionlib 数字状态）、`text`、`observed_stamp` |
 | `arrival` | object / null | 最近终点复核：`target`、`generation`、`evaluated_stamp`、`move_base`、`stop`、`geographic` |
 | `last_error` | string | 执行/停车或 hold 未确认等补充错误；与 `reason` 一起查看 |
+| `stop` | object / null | 最近暂停、取消或启动清理的停车窗口证据，与终点 arrival.stop 分开 |
+| `startup_checked` | boolean | 是否已读到首次新鲜 Action 状态并检查遗留执行 |
+| `startup_recovery` | object / null | 发现遗留 Action 的原因/时间、stop/stop_confirmed；确认后保留该次证据 |
 | `cancellation_pending` | boolean | 是否仍在等已拥有 Action 的取消终止确认 |
 | `last_command` | object / null | 最近命令身份、操作、序号、`accepted`、`reason`、`duplicate` |
 | `last_task_result` | object / null | 最近任务的 `task_id`、`status`、`reason`、`result`，最终检查结果在 result 中 |
@@ -319,13 +337,13 @@ python3 /path/to/ugv_navigation/examples/air_ground_rospy.py "$TARGET_FILE"
 
 序号在一个接收端 `server_id` 内全局有效，不是每任务独立计数；允许跳号。通过信封检查且比水位新的命令会消耗该序号，即使后续因坐标批次、转换、任务编号或任务状态被拒绝；下一命令须重新读取最新状态。坏信封、旧序号和请求身份内容冲突不推进水位。属于本次 boot 且 request_id 非空可识别的坏信封仍缓存拒绝回执，不能改正协议版本/操作等后复用同一 request_id；错误 server_id 不跨启动缓存或取得任务控制。
 
-同一 `request_id`、完全相同语义内容的重发返回原处理结果，并标记重复，不会重复启动、重复插入途经点或回到旧路线。同一 ID 不同内容明确拒绝，包括首次因协议、操作或坐标等无效而被拒绝后修改内容；只有属于当前接收端且请求身份可识别时才能缓存该回执。`has_* = false` 的可选数值被忽略，不会因无效数值先被边界丢弃而绕过身份检查。接收端保存最近 256 条请求回执；超过此窗口后仍由全局序号水位阻止旧请求再次执行，但不保证还能返回该条最初回执。不能用旧保存文件长期充当新任务模板。
+同一 `request_id`、完全相同语义内容的重发返回原处理结果，并标记重复，不会重复启动、重复插入途经点或回到旧路线。同一 ID 不同内容明确拒绝，包括首次因协议、操作或坐标等无效而被拒绝后修改内容；只有属于当前接收端且请求身份可识别时才能缓存该回执。`has_* = false` 的可选数值被忽略，不会因无效数值先被边界丢弃而绕过身份检查。接收端在本次启动内保留每个可识别请求的指纹及原回执，不淘汰已处理身份；状态输出仍仅发送最新快照。回执内存随该次启动期间的唯一请求数线性增长，重启后清空并更换 server_id。不能用旧保存文件长期充当新任务模板。
 
 任务完成或取消后，旧路线更新、旧 Action 回调和 RESUME 都不能复活任务；新任务必须显式 SET 新 `task_id`。SET 替换旧任务时，旧任务结果标明 `REPLACED`。
 
 通信中断不新增运动租约：原有导航、定位与控制条件仍满足时，车端继续最后已受理任务。反馈无人订阅或回执丢失都不会阻止任务执行。重连订阅状态拿到最新快照，不补发完整历史；客户端丢失某条命令时，车端不会自行猜测或补齐。
 
-任务节点重启后生成新 `server_id`，从 IDLE 开始，不恢复旧任务或旧运动；命令非锁存，不会在重连后自动恢复。旧 boot 的保存请求在工具端就被拒绝，车端也拒绝旧身份。发送端重启则读取当前新鲜状态，继续分配全局序号；没有额外 sender lease、持久计数器或多来源仲裁。
+任务节点重启后生成新 `server_id`，不恢复旧任务。首次收到新鲜 Action 状态时若发现遗留活动目标，先使用既有 hold/cancel-all 清理，并等待 Action 终止和原静止窗口；清理未确认时不派发新目标。`startup_recovery.stop_confirmed`、`startup_recovery.stop` 公开清理证据。没有导航状态时 `runtime_phase=WAITING_NAVIGATION`，不把逻辑 IDLE 当作物理停车确认；命令非锁存，不会在重连后自动恢复。旧 boot 的保存请求在工具端就被拒绝，车端也拒绝旧身份。发送端重启则读取当前新鲜状态，继续分配全局序号；没有额外 sender lease、持久计数器或多来源仲裁。
 
 ## 8. 参数、停止与回退
 
@@ -340,7 +358,7 @@ python3 /path/to/ugv_navigation/examples/air_ground_rospy.py "$TARGET_FILE"
 
 原终点地理容差沿用 0.35 m；原停车窗口沿用 1 s、线速度绝对值不超过 0.02 m/s、角速度不超过 0.05 rad/s，并检查连续新鲜 odom 和窗口内位移。原地理状态新鲜度 1 s、RTK 观测最大年龄 2.5 s 等保持原规则。执行器停车/复核等待上限为 `max(4, stop_window_s+4)+max_fix_age_s`，以上默认值下为 7.5 s。本轮没有为了通过测试放宽 DWA、定位或终点容差；ROS 夹具缩短的测试窗口不作为实车参数。
 
-源配置修改后须 `./run.sh build` 安装，再重启相应节点；只修改 source 不会自动更新已经 source 的 install。部署仅面向独立新工程 `/home/potato/slicer_workspace2_codex/src/Online_Navigation_with_RTK`；队友依赖树和旧工程只读。部署前后需记录源码/配置及安装版本，不能覆盖现场未提交工作。
+修改本接口后可在车端用 `./tools/noetic.sh bash -c 'set -e; catkin_make -j2; catkin_make install -j2'` 只构建安装，再重启任务节点；这不会运行会重新生成底盘/感知参数的 prepare。原 `./run.sh build` 包含 prepare，只有明确需要重新生成基础配置时才使用。只修改 source 不会自动更新已经 source 的 install。部署仅面向独立新工程 `/home/potato/slicer_workspace2_codex/src/Online_Navigation_with_RTK`；队友依赖树和旧工程只读。部署前后需记录源码/配置及安装版本，不能覆盖现场未提交工作。
 
 正常停止：现场用户先 `air_ground.py cancel` 并观察结束，必要时直接按原控制入口 hold；确认车端保持停车，再 Ctrl-C `./run.sh tasks`。紧急处置沿用既有物理急停/接管。进程退出或停止反馈订阅不能当作已停车证据。
 
@@ -352,18 +370,20 @@ python3 /path/to/ugv_navigation/examples/air_ground_rospy.py "$TARGET_FILE"
 | --- | --- | --- |
 | 电脑 CLI / wire / 目标文件 | 25 项离线单元测试通过 | `python3 -m unittest discover -s src/ugv_navigation/test -p test_air_ground_cli.py -v`；含无效请求解码、拒绝去重与同 ID 改内容回归；无 ROS master、网络、设备 |
 | Python 语法 | CLI、wire、rospy 示例编译通过 | `python3 -m py_compile`；不证明 ROS 运行行为 |
-| 原生纯逻辑定向测试 | 88 项通过 | core 42 + CLI 25 + executor 13 + stop boundaries 8；覆盖替换、暂停更新、取消、拒绝回执、取消屏障、旧回调、外部 hold 等 |
+| 原生纯逻辑定向测试 | 89 项通过 | core 43 + CLI 25 + executor 13 + stop boundaries 8；覆盖替换、暂停更新、取消、拒绝回执、取消屏障、旧回调、外部 hold 等 |
 | 控制 hold 归属 / 采集器 / 通信配置 | 分别 3 / 18 / 5 项通过 | 预期 hold 二元组、正式任务证据采集、通信配置与只读消息安装挂载；不连接车辆 |
-| Noetic/Catkin 构建、隔离 ROS 验证 | 428 项，0 错误、0 失败、0 跳过 | 包含既有 GNSS/Guard/Mux 及新正式消息 ROS 夹具；无设备、`--network none` 容器独立 master |
+| Noetic/Catkin 构建、隔离 ROS 验证 | 429 项，0 错误、0 失败、0 跳过 | 包含既有 GNSS/Guard/Mux 及新正式消息 ROS 夹具；无设备、`--network none` 容器独立 master |
 | 安装环境 | 通过 | `tools/check_air_ground_install.py` 核对已安装脚本/helper、生成 Command 序列化往返及官方 launch 仅一个任务节点 |
 | 历史 tools 全回归 | 未全绿：196 项中 5 失败、6 错误 | 原 `tools/test_noetic.sh` 的旧 NTRIP/footprint/site/source-vs-install 预期及缺少冻结 `.generated/sensor_launch.yaml` 等基线问题；不宣称全部历史测试通过 |
-| ARM64 构建与部署 | 待本轮最终记录确认 | Jetson 已在线、架构 aarch64；已核对既有 geographic/site/body/Nav 基线与本地相同，不代表本轮任务安装或硬件执行通过 |
-| 电脑→电台→车端接口 | 未执行 | 需要现场网络、双方正式消息包及运行节点 |
+| ARM64 构建与部署 | 最终 `4a53b66` 通过 | 实际 ARM64 Catkin build/install、核心用例及正式 ROS 假 Action/进程重启回归通过；安装消息 MD5 相同，运行的 6 个文件 SHA256 与本地一致 |
+| 电脑→局域网→Jetson 正式接口 | 状态与拒绝回执通过 | 电脑 `192.168.3.208` ↔ Jetson `192.168.3.68`，正式 CLI replay 不存在任务的 PAUSE 得到明确拒绝；没有导航目标。未验证电台链路 |
 | 真实车辆任务 | 未执行 | 至少单终点、途中换路线、暂停/恢复、取消，运动由现场用户执行 |
 | 真正飞机端 / 全部电台工况 | 未验证 | 电脑代飞机通过也不等于无人机端或全部射频工况验收 |
 
-上述原生纯逻辑测试与 Catkin 汇总有重复收录，不相加冒充总测试数。ROS 夹具通过正式 Command/topic 驱动真实任务节点，使用假 Action/RTK/TF 和真实软件 Mux，覆盖单终点复核、多途经点位置通过、运行中替换/清空路线、换终点、旧结果、暂停更新/恢复、重复/旧序号/无效批次、无反馈订阅者、重连最新状态与拒绝锁存指令；它没有证明真实轮地运动或电台性能。
+上述原生纯逻辑测试与 Catkin 汇总有重复收录，不相加冒充总测试数。ROS 夹具通过正式 Command/topic 驱动真实任务节点，使用假 Action/RTK/TF 和真实软件 Mux，覆盖单终点复核、多途经点位置通过、运行中替换/清空路线、换终点、旧结果、暂停更新/恢复、重复/旧序号/无效批次、无反馈订阅者、重连最新状态、拒绝锁存指令，以及强制结束任务进程后新实例保持/取消遗留 Action、静止确认、旧 boot 拒绝；它没有证明真实轮地运动或电台性能。
 
 新一轮现场记录应把任务命令、`/air_ground/state`、实际 Action 目标/结果、配准状态和停车/地理复核证据关联到 `task_id` / `request_id`。只保存本轮明确采集的新目录，不扫描或覆盖历史日志、bag 或凭据。运行前替换新输出路径，不复用旧加测目录。
 
 室内坐标适配、独立任务队列、屏幕 UI、多来源仲裁、通信失联租约均不属于本版；后续扩展继续使用公开 ROS 接口，并保持现有导航/控制边界。
+
+结构化结果见 [air_ground_v1_20261115.json](validation/air_ground_v1_20261115.json)。本轮软件证据：项目 `.test-results/air-ground-verified-serial.log`（429 项及安装检查）；`.test-results/air-ground-deployed-final-status.json`、`air-ground-deployed-final-negative.log`（最终版本真实局域网）；首次历史工具结果为 `.test-results/run-pEvMGiPI/output.log`。并行 ROS 测试曾因状态时间过旧触发保护停止，改为串行复核通过，未放宽阈值。车端新增证据仅位于 `/home/potato/slicer_workspace2_codex/evidence/air-ground-v1-20261115`。
