@@ -3,7 +3,6 @@
 import copy
 import json
 import math
-from collections import OrderedDict
 
 
 OPERATIONS = frozenset(('SET_TASK', 'REPLACE_VIA_POINTS', 'PAUSE', 'RESUME', 'CANCEL'))
@@ -46,8 +45,9 @@ class TaskCore:
     ``last_sequence`` is None until the first valid envelope. Any strictly
     newer, valid envelope consumes its sequence, even when its batch, task ID,
     or task state is rejected. Bad envelopes, old sequences, and request-ID
-    content conflicts do not advance it. Last 256 receipts are replayable;
-    the sequence watermark still rejects older commands after eviction.
+    content conflicts do not advance it. Fingerprints and receipts remain
+    replayable for the receiver boot; their memory grows linearly with unique
+    identifiable requests. Task/status snapshots retain only the latest state.
 
     ``activate`` may be called only after the runner has observed termination
     of its previous Action. A route update invalidates intent immediately; it
@@ -67,7 +67,7 @@ class TaskCore:
         self.last_task_result = None
         self.last_sequence = None
         self.reason = ''
-        self._receipts = OrderedDict()
+        self._receipts = {}
         self._ended_task_ids = set()
         self._token_counter = 0
 
@@ -267,6 +267,4 @@ class TaskCore:
                        operation=command.get('operation') if isinstance(command.get('operation'), str) else None)
         self.last_command = copy.deepcopy(receipt)
         self._receipts[command['request_id']] = (fingerprint, copy.deepcopy(receipt))
-        if len(self._receipts) > 256:
-            self._receipts.popitem(last=False)
         return receipt

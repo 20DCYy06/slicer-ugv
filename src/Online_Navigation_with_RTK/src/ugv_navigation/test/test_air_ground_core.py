@@ -358,18 +358,29 @@ class TaskCoreTests(unittest.TestCase):
         self.assertEqual(self.core.snapshot()['phase'], 'READY')
         self.assertFalse(self.core.handle(self.command('PAUSE', sequence=49))['accepted'])
 
-    def test_receipts_are_bounded_but_eviction_cannot_allow_old_request_replay(self):
+    def test_receipt_replays_original_result_after_many_later_commands(self):
         first = self.command()
-        self.core.handle(first)
-        for number in range(257):
+        original = self.core.handle(first)
+        for number in range(301):
             command = self.command('PAUSE' if number % 2 == 0 else 'RESUME')
             self.assertTrue(self.core.handle(command)['accepted'])
         before = self.core.snapshot()
         result = self.core.handle(first)
-        self.assertFalse(result['accepted'])
+        self.assertEqual(result, dict(original, duplicate=True))
+        self.assertEqual(self.core.snapshot(), before)
+
+    def test_old_request_id_cannot_bind_different_content_after_many_later_commands(self):
+        first = self.command()
+        self.assertTrue(self.core.handle(first)['accepted'])
+        for number in range(301):
+            command = self.command('PAUSE' if number % 2 == 0 else 'RESUME')
+            self.assertTrue(self.core.handle(command)['accepted'])
+        before = self.core.snapshot()
+        different = dict(first, sequence=1000, task_id='task-2', final_goal=point(32.))
+        result = self.core.handle(different)
+        self.assertFalse(result['accepted'], 'later sequence cannot reuse a previously bound request_id')
         self.assertFalse(result['duplicate'])
-        self.assertEqual(self.core.snapshot()['revision'], before['revision'])
-        self.assertEqual(self.core.snapshot()['phase'], before['phase'])
+        self.assertEqual(self.core.snapshot(), before)
 
     def test_point_validation_rejects_nonfinite_boolean_ranges_and_via_yaw(self):
         invalid_points = [point(math.nan), point(math.inf), point(True), point(-91.),
