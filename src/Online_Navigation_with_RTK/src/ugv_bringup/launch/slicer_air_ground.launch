@@ -1,0 +1,8 @@
+<launch>
+  <!-- Only the task interface. No driver, sensor, registration, navigation launch
+       or release is started here. Existing map navigation must be ready. -->
+  <node pkg="ugv_navigation" type="air_ground_node.py" name="air_ground_task"
+        output="screen" required="true">
+    <rosparam command="load" file="$(find ugv_bringup)/config/air_ground.yaml"/>
+  </node>
+</launch>

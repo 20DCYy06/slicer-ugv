@@ -25,7 +25,8 @@ PORT
   exec "$ROOT/tools/slicer_shell.sh" roslaunch ugv_bringup slicer_body_driver.launch "$@";;
  nav) exec "$ROOT/tools/slicer_shell.sh" roslaunch ugv_bringup slicer_field_navigation.launch "$@";;
  nav-odom) exec "$ROOT/tools/slicer_shell.sh" roslaunch ugv_bringup slicer_field_navigation.launch geographic:=false "$@";;
+ tasks) exec "$ROOT/tools/slicer_shell.sh" roslaunch ugv_bringup slicer_air_ground.launch "$@";;
  shell) exec "$ROOT/tools/slicer_shell.sh" "$@";;
  rviz) export UGV_GUI=1;exec "$ROOT/tools/slicer_shell.sh" rviz -d /workspace/install/share/ugv_bringup/rviz/outdoor_navigation.rviz;;
- *) echo 'Usage: ./run.sh {prepare|build|check|sensors|driver|nav-odom|nav|shell|rviz}';;
+ *) echo 'Usage: ./run.sh {prepare|build|check|sensors|driver|nav-odom|nav|tasks|shell|rviz}';;
 esac

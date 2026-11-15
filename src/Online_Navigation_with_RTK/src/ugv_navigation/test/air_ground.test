@@ -1,0 +1,23 @@
+<launch>
+  <!-- TEST_ONLY: fake Action/RTK/TF, no chassis driver, network-none container. -->
+  <param name="use_sim_time" value="false"/>
+  <param name="ugv/move_base/global_costmap/global_frame" value="map"/>
+  <param name="geographic/stop_window_s" value="0.25"/>
+  <param name="geographic/status_max_age_s" value="1.0"/>
+  <param name="geographic/max_fix_age_s" value="1.0"/>
+  <node pkg="ugv_slicer_control" type="velocity_mux.py" name="slicer_velocity_mux"
+        required="true" output="screen">
+    <!-- No driver is launched. The fake Action never publishes velocity. -->
+    <param name="config_file" value="$(find ugv_bringup)/config/slicer_driver_body_speed.yaml"/>
+    <param name="manual_release_owner" value="/ugv/control"/>
+  </node>
+  <node pkg="ugv_navigation" type="air_ground_node.py" name="air_ground_task"
+        required="true" output="screen">
+    <rosparam command="load" file="$(find ugv_bringup)/config/air_ground.yaml"/>
+    <param name="via_pass_radius_m" value="0.25"/>
+    <param name="cancel_timeout_s" value="3.0"/>
+    <param name="segment_timeout_s" value="20.0"/>
+  </node>
+  <test pkg="ugv_navigation" type="test_air_ground_ros.py"
+        test-name="air_ground_transport" time-limit="120.0"/>
+</launch>

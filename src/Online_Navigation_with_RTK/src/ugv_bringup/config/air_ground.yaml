@@ -1,0 +1,10 @@
+# Outdoor task interface only; existing DWA/Guard/Mux/localization limits remain.
+# Via points are position-pass targets: at this radius cancel/ACK before next
+# segment, before DWA's existing 0.10m final-position/yaw stage. Metres.
+via_pass_radius_m: 0.25
+# Maximum wall-clock navigation time per segment (not a motion permission lease).
+segment_timeout_s: 120.0
+# Wall seconds to observe the OWNED Action terminal ACK after cancellation.
+# Timeout blocks the route and holds; never sends a second competing goal.
+cancel_timeout_s: 3.0
+action: /ugv/move_base

@@ -34,6 +34,20 @@ def acknowledged(state, request, before, held):
             and state['last_intent_accepted'] and state['manual_hold'] is held)
 
 
+def check_expected_hold(state, instance, generation):
+    """Bind task RESUME to its previously acquired hold, across CLI startup.
+
+    The ordinary operator CLI keeps its existing default behavior. A task
+    must not adopt a newer manual takeover merely because this process starts
+    after the executor checked its subscribed Mux state.
+    """
+    if instance is None and generation is None:
+        return
+    if (instance is None or generation is None or
+            (state['mux_instance_id'], state['takeover_generation']) != (instance, generation)):
+        raise ValueError('expected Mux instance/hold generation changed; release refused')
+
+
 def main():
     import rosgraph
     parser = argparse.ArgumentParser(description=__doc__)
@@ -43,7 +57,11 @@ def main():
         parser.add_argument('--' + option)
     parser.add_argument('--timeout', type=float)
     parser.add_argument('--freshness', type=float)
+    parser.add_argument('--expected-mux-instance')
+    parser.add_argument('--expected-generation', type=int)
     args = parser.parse_args(rosgraph.myargv()[1:])
+    if args.command != 'release' and (args.expected_mux_instance is not None or args.expected_generation is not None):
+        parser.error('expected hold applies only to release')
     namespace = args.namespace.rstrip('/')
     if not namespace.startswith('/') or '..' in namespace.split('/') or not namespace:
         raise ValueError('an absolute node namespace is required')
@@ -109,6 +127,7 @@ def main():
                    rospy.Subscriber(status_topic, GoalStatusArray, receive_status, queue_size=10)]
     wait_for(lambda: ready('state', state_topic, owner), 'no fresh state from the unique mux owner')
     before = samples['state'][1]
+    check_expected_hold(before, args.expected_mux_instance, args.expected_generation)
     if args.command == 'state':
         print(json.dumps(before, sort_keys=True))
         return 0

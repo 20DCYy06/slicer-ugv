@@ -38,7 +38,8 @@ def topic_map(namespace='ugv', navigation=False, perception=False):
                       gnss_fix='/gnss/fix', gnss_nmea='/gnss/nmea', gnss_diagnostics='/gnss/diagnostics',
                       gnss_fix_quality='/gnss/fix_quality', global_odom='/global/odom',
                       gnss_odometry='/gnss/odometry', geographic_status='/geographic/status',
-                      geographic_goal='/geographic/goal', geographic_result='/geographic/goal_result')
+                      geographic_goal='/geographic/goal', geographic_result='/geographic/goal_result',
+                      air_ground_command='/air_ground/command', air_ground_state='/air_ground/state')
         for scope in ('global', 'local'):
             for stream in ('costmap', 'costmap_updates', 'footprint'):
                 topics[scope+'_'+stream] = action+'/'+scope+'_costmap/'+stream
@@ -213,7 +214,7 @@ def snapshot(master, namespace, perception=False, navigation=False):
     if navigation:
         # Read only public localization configuration; the receiver root also
         # contains NTRIP configuration and must never be exported wholesale.
-        paths += ('/geographic', '/global_localization', '/slicer_geometry',
+        paths += ('/geographic', '/global_localization', '/slicer_geometry', '/air_ground_task',
                   '/cup_gnss/frame_id', '/cup_gnss/source', '/cup_gnss/data_timeout_s',
                   '/cup_gnss/max_differential_age_s', '/cup_gnss/max_source_age_s',
                   '/cup_gnss/future_tolerance_s', '/cup_gnss/expected_usb_serial',

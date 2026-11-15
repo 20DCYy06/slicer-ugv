@@ -31,13 +31,14 @@ def package_path(package):
 
 
 def check_install(prefix):
-    for package in ('ugv_bringup', 'ugv_navigation', 'ugv_slicer_control', 'cup_gnss'):
+    for package in ('ugv_bringup', 'ugv_navigation', 'ugv_slicer_control', 'cup_gnss', 'slicer_air_ground_msgs'):
         expected = prefix / 'share' / package
         require(package_path(package) == expected,
                 '{} must resolve from {}'.format(package, expected))
 
     entries = {
-        'ugv_navigation': ('goal.py', 'depth_obstacles.py', 'geographic.py', 'gnss_global.py'),
+        'ugv_navigation': ('goal.py', 'depth_obstacles.py', 'geographic.py', 'gnss_global.py',
+                           'air_ground.py', 'air_ground_node.py', 'air_ground_rospy.py'),
         'ugv_slicer_control': ('velocity_mux.py', 'arc_velocity_guard.py',
                                'control.py', 'c30d_driver_node.py'),
         'cup_gnss': ('gnss_node.py', 'gnss_status.py'),
@@ -57,7 +58,8 @@ def check_install(prefix):
             print('IMPORT {}'.format(expected), flush=True)
 
     helpers = {
-        'ugv_navigation': ('depth_geometry', 'geographic_core', 'geographic_state', 'geographic_goal_core'),
+        'ugv_navigation': ('depth_geometry', 'geographic_core', 'geographic_state', 'geographic_goal_core',
+                           'air_ground_core', 'air_ground_wire', 'air_ground_executor'),
         'ugv_slicer_control': ('control_core', 'slicer_manual', 'navigation_core',
                                'c30d_link', 'chassis_core', 'serial_transport'),
     }
@@ -69,6 +71,17 @@ def check_install(prefix):
                     '{} came from {} instead of {}'.format(
                         name, module.__file__, expected))
             print('HELPER {}'.format(expected), flush=True)
+
+    from slicer_air_ground_msgs.msg import Command, GeoPoint
+    import io
+    message = Command(protocol_version=1, server_id='INSTALL_CHECK_ONLY', sequence=1,
+                      request_id='install-check', task_id='install-check', operation='SET_TASK',
+                      final_goal=GeoPoint(has_altitude=False, has_yaw=False))
+    stream = io.BytesIO()
+    message.serialize(stream)
+    restored = Command().deserialize(stream.getvalue())
+    require(restored == message, 'installed formal command serialization failed')
+    print('AIR_GROUND_MESSAGE_MD5 '+Command._md5sum, flush=True)
 
     # catkin_python_setup installs the GNSS Python library independently of
     # its executable entrypoints. Importing never starts a source or caster.

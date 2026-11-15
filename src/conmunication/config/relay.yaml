@@ -16,6 +16,7 @@ routes:
   type: std_msgs/Bool
   latch: true
   on_change: true
+# Legacy pure-SLAM patrol status, unrelated to the formal /air_ground/state.
 - source: /slicer_multi_goal_patrol/state
   target: /ugv/mission/state
   type: std_msgs/String

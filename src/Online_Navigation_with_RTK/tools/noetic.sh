@@ -20,4 +20,4 @@ exec docker run --rm "${ugv_tty[@]}" --network none --cap-drop ALL \
   -e ROS_MASTER_URI=http://127.0.0.1:11311 -e ROS_IP=127.0.0.1 \
   -e ROS_HOME=/workspace/.ros -e PYTHONDONTWRITEBYTECODE=1 \
   --entrypoint /bin/bash "$ugv_image" -c \
-  'set -e; ugv_command=("$@"); set --; source /opt/ros/noetic/setup.bash; source /slicer/catkin_ws/devel/setup.bash; if [[ -f /workspace/devel/setup.bash ]]; then source /workspace/devel/setup.bash; fi; if [[ -d /slicer/catkin_ws/src ]]; then export ROS_PACKAGE_PATH="${ROS_PACKAGE_PATH}:/slicer/catkin_ws/src"; fi; exec "${ugv_command[@]}"' bash "$@"
+  'set -e; ugv_command=("$@"); set --; source /opt/ros/noetic/setup.bash; if [[ -f /slicer/catkin_ws/devel/setup.bash ]]; then source /slicer/catkin_ws/devel/setup.bash; fi; if [[ -f /workspace/devel/setup.bash ]]; then source /workspace/devel/setup.bash; fi; if [[ -d /slicer/catkin_ws/src ]]; then export ROS_PACKAGE_PATH="${ROS_PACKAGE_PATH}:/slicer/catkin_ws/src"; fi; exec "${ugv_command[@]}"' bash "$@"

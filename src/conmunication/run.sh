@@ -7,18 +7,26 @@ source "$HERE/config/network.env"
 mode="${1:-status}"
 MASTER="${ROS_MASTER_URI:-http://$UGV_ROS_IP:11311}"
 POINTS="${UGV_WAYPOINT_DIR:-$WORKSPACE2/src/Online_Navigation_Without_RTK/catkin_ws/src/slicer_navigation_without_mapping/config}"
+LEGACY_WAYPOINTS="${UGV_ENABLE_LEGACY_WAYPOINTS:-false}"
+case "$LEGACY_WAYPOINTS" in true|false) ;; *) echo 'UGV_ENABLE_LEGACY_WAYPOINTS must be true or false';exit 2;; esac
+RTK_INSTALL="$WORKSPACE2/src/Online_Navigation_with_RTK/install"
+RTK_MOUNTS=()
+# 只读复用我方已构建的消息包；不自动构建，也不挂载队友/旧工程。
+if [[ -f "$RTK_INSTALL/setup.bash" ]]; then
+ RTK_MOUNTS=(-v "$RTK_INSTALL:/rtk_install:ro")
+fi
 COMMON=(--init --network host --restart unless-stopped --user "$(id -u):$(id -g)"
  -e "ROS_MASTER_URI=$MASTER" -e "ROS_IP=$UGV_ROS_IP" -e ROS_HOSTNAME= -e PYTHONDONTWRITEBYTECODE=1
  -e PYTHONNOUSERSITE=1 -e PYTHONUNBUFFERED=1 -e HOME=/tmp/ugv-communication
  -e ROS_LOG_DIR=/tmp/ugv-communication-log -e ROS_PACKAGE_PATH=/communication:/opt/ros/noetic/share
- -v "$HERE:/communication:ro")
+ -v "$HERE:/communication:ro" "${RTK_MOUNTS[@]}")
 start_one() {
  local name="$COMM_CONTAINER_PREFIX-$1";shift
  if docker inspect "$name" >/dev/null 2>&1;then
   if [[ "$(docker inspect "$name" --format '{{.State.Running}}')" == true ]];then echo "$name already running";else docker start "$name";fi
  else docker run -d --name "$name" "${COMMON[@]}" "$@";fi
 }
-relay(){ start_one state-relay "$FKIE_IMAGE" bash -c 'unset ROS_HOSTNAME; source /opt/ros/noetic/setup.bash; export ROS_NAMESPACE=/ugv/communication; exec python3 -B /communication/relay.py'; }
+relay(){ start_one state-relay "$FKIE_IMAGE" bash -c 'unset ROS_HOSTNAME; source /opt/ros/noetic/setup.bash; if [[ -f /rtk_install/setup.bash ]]; then source /rtk_install/setup.bash --extend; fi; export ROS_NAMESPACE=/ugv/communication; exec python3 -B /communication/relay.py'; }
 case "$mode" in
  check)
   mkdir -p "$HERE/logs/check"
@@ -36,10 +44,14 @@ except OSError:sys.exit(1)
 MASTER_CHECK
   then start_one roscore "$FKIE_IMAGE" bash -c 'unset ROS_HOSTNAME; source /opt/ros/noetic/setup.bash; exec roscore';fi
   start_one discovery -e "ROBOT_HOSTS=['$UAV_ROS_IP']" "$FKIE_IMAGE" bash -c \
-   'unset ROS_HOSTNAME; source /opt/ros/noetic/setup.bash; until rosparam get /rosdistro >/dev/null 2>&1;do sleep 2;done; exec rosrun fkie_master_discovery master_discovery "_robot_hosts:=$ROBOT_HOSTS"'
-  [[ -d "$POINTS" ]] || { echo "路点目录不存在：$POINTS";exit 1; }
-  start_one sync -v "$POINTS:/navigation" "$FKIE_IMAGE" bash -c \
-   'unset ROS_HOSTNAME; source /opt/ros/noetic/setup.bash; export ROS_PACKAGE_PATH=/communication:$ROS_PACKAGE_PATH; until rosservice list 2>/dev/null | grep -qx /master_discovery/list_masters;do sleep 2;done; exec roslaunch /communication/launch/fkie_ugv_sync.launch'
+   'unset ROS_HOSTNAME; source /opt/ros/noetic/setup.bash; if [[ -f /rtk_install/setup.bash ]]; then source /rtk_install/setup.bash --extend; fi; until rosparam get /rosdistro >/dev/null 2>&1;do sleep 2;done; exec rosrun fkie_master_discovery master_discovery "_robot_hosts:=$ROBOT_HOSTS"'
+  SYNC_MOUNTS=()
+  if [[ "$LEGACY_WAYPOINTS" == true ]]; then
+   [[ -d "$POINTS" ]] || { echo "路点目录不存在：$POINTS";exit 1; }
+   SYNC_MOUNTS=(-v "$POINTS:/navigation")
+  fi
+  start_one sync "${SYNC_MOUNTS[@]}" "$FKIE_IMAGE" bash -c \
+   'unset ROS_HOSTNAME; source /opt/ros/noetic/setup.bash; if [[ -f /rtk_install/setup.bash ]]; then source /rtk_install/setup.bash --extend; fi; export ROS_PACKAGE_PATH=/communication:$ROS_PACKAGE_PATH; until rosservice list 2>/dev/null | grep -qx /master_discovery/list_masters;do sleep 2;done; exec roslaunch /communication/launch/fkie_ugv_sync.launch "$@"' bash "enable_legacy_waypoints:=$LEGACY_WAYPOINTS"
   relay;;
  reload-sync) docker restart "$COMM_CONTAINER_PREFIX-sync";;
  status) docker ps -a --filter "name=$COMM_CONTAINER_PREFIX-" --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}';;

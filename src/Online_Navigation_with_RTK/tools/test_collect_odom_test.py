@@ -50,7 +50,8 @@ class CaptureTests(unittest.TestCase):
     def test_navigation_capture_includes_geographic_evidence_without_optional_mapping_or_depth(self):
         topics = capture.topic_map('ugv', navigation=True)
         for topic in ('/gnss/fix', '/gnss/nmea', '/gnss/diagnostics', '/global/odom',
-                      '/gnss/odometry', '/geographic/status', '/geographic/goal', '/geographic/goal_result'):
+                      '/gnss/odometry', '/geographic/status', '/geographic/goal', '/geographic/goal_result',
+                      '/air_ground/command', '/air_ground/state'):
             self.assertIn(topic, topics.values())
             self.assertNotIn(topic, capture.topic_map('ugv').values())
         self.assertNotIn('/map', topics.values())
