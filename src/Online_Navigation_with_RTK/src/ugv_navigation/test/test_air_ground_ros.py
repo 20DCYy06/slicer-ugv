@@ -9,12 +9,15 @@ import copy
 import io
 import json
 import math
+import os
 from pathlib import Path
+import signal
 import subprocess
 import sys
 import threading
 import time
 import unittest
+import xmlrpc.client
 
 
 class AirGroundROS(unittest.TestCase):
@@ -369,6 +372,45 @@ time.sleep(.5)
         self.assertEqual(self.state['phase'], 'CANCELED')
         self.assertEqual(self.state['task_id'], 'paused-update')
 
+        # Abrupt receiver death cannot run its shutdown handler. The surviving
+        # fake navigation server keeps the old Action until the new receiver
+        # positively holds/cancels it, and must never resume the old task.
+        old_command = self.command('SET_TASK', 'restart-orphan', self.point(14., .5))
+        orphan = self.wait_goals(12)
+        old_server_id = self.state['server_id']
+        self.assertFalse(orphan['terminal'])
+        self.assertFalse(self.manual_state['manual_hold'])
+        self.set_pose(11.35, .5, moving=False)
+        self.assertTrue(Path('/.dockerenv').exists(), 'kill is permitted only in the isolated fixture container')
+        self.assertEqual({path.name for path in Path('/sys/class/net').iterdir()}, {'lo'})
+        uri = rosgraph.Master(rospy.get_name()).lookupNode('/air_ground_task')
+        code, message, pid = xmlrpc.client.ServerProxy(uri).getPid(rospy.get_name())
+        self.assertEqual(code, 1, message)
+        self.assertGreater(pid, 1)
+        self.assertNotEqual(pid, os.getpid())
+        self.assertIn(b'air_ground_node.py', Path('/proc/{}/cmdline'.format(pid)).read_bytes())
+        os.kill(pid, signal.SIGKILL)
+        self.until(lambda: self.state['server_id'] != old_server_id, 'receiver respawn with new boot identity')
+        self.until(lambda: orphan['canceled'] and orphan['terminal'] and
+                   self.manual_state['manual_hold'] and self.state['phase'] == 'IDLE' and
+                   self.state['task_id'] is None and self.state['runtime_phase'] == 'IDLE' and
+                   (self.state.get('startup_recovery') or {}).get('stop_confirmed') is True and
+                   (self.state.get('startup_recovery', {}).get('stop') or {}).get('confirmed') is True,
+                   'new receiver must hold/cancel orphaned Action and remain idle', timeout=8.)
+        self.assertTrue(self.state.get('startup_recovery'), 'orphan recovery evidence must be public')
+        self.assertEqual(len(self.goals), 12, 'receiver restart must not resubmit an old target')
+        self.until(lambda: self.command_pub.get_num_connections() > 0, 'respawned formal command subscriber')
+        self.command_pub.publish(old_command)
+        self.until(lambda: (self.state.get('last_command') or {}).get('request_id') == old_command.request_id,
+                   'old boot command rejection after restart')
+        self.assertFalse(self.state['last_command']['accepted'])
+        self.assertIn('server_id', self.state['last_command']['reason'])
+        time.sleep(.25)
+        self.assertEqual(len(self.goals), 12)
+        self.assertIsNone(self.state['task_id'])
+        self.assertEqual(self.state['phase'], 'IDLE')
+        self.assertTrue(self.manual_state['manual_hold'])
+
 
 if __name__ == '__main__':
     # control.py verifies the Action status publisher's identity. Set it before
@@ -381,6 +423,7 @@ if __name__ == '__main__':
     from move_base_msgs.msg import MoveBaseAction, MoveBaseActionResult, MoveBaseResult
     from nav_msgs.msg import Odometry
     import rospy
+    import rosgraph
     import rostest
     from slicer_air_ground_msgs.msg import Command, GeoPoint
     from std_msgs.msg import String

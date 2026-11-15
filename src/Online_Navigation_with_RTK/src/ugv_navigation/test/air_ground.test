@@ -12,7 +12,7 @@
     <param name="manual_release_owner" value="/ugv/control"/>
   </node>
   <node pkg="ugv_navigation" type="air_ground_node.py" name="air_ground_task"
-        required="true" output="screen">
+        respawn="true" respawn_delay="0.2" output="screen">
     <rosparam command="load" file="$(find ugv_bringup)/config/air_ground.yaml"/>
     <param name="via_pass_radius_m" value="0.25"/>
     <param name="cancel_timeout_s" value="3.0"/>

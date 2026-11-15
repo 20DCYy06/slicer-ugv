@@ -22,6 +22,14 @@ class TaskExecutor:
         self.stop_since, self.own_hold, self.stop_held = None, None, False
         self.runtime_phase, self.action, self.arrival = 'IDLE', None, None
         self.current_navigation_target, self.last_error = None, ''
+        self.stop_result = None
+
+    def recover_orphan(self):
+        """A new receiver found an old server goal, not a resumable task."""
+        if self.core.snapshot()['task_id'] is not None or self.active is not None:
+            raise ValueError('startup cleanup is only for an idle new receiver')
+        self.stop_since, self.stop_held, self.stop_result = self.clock(), False, None
+        self.runtime_phase = 'STARTUP_STOPPING'
 
     def command(self, command):
         def validate(final, vias):
@@ -37,6 +45,7 @@ class TaskExecutor:
             self.arrival = None
             if self.core.snapshot()['phase'] in ('PAUSING', 'CANCELING'):
                 self.stop_since, self.stop_held = self.clock(), False
+                self.stop_result = None
         return result
 
     @staticmethod
@@ -78,6 +87,7 @@ class TaskExecutor:
         if self.active is not None:
             return
         quiet = self.backend.stopped(self.stop_since)
+        self.stop_result = quiet
         if quiet.get('confirmed'):
             self.core.mark_stopped()
             self.stop_since = None
@@ -213,6 +223,7 @@ class TaskExecutor:
         return dict(self.core.snapshot(), runtime_phase=self.runtime_phase,
                     current_navigation_target=self.current_navigation_target,
                     action=self.action, arrival=self.arrival, last_error=self.last_error,
+                    stop=self.stop_result,
                     cancellation_pending=self.cancel_since is not None)
 
     def shutdown(self):

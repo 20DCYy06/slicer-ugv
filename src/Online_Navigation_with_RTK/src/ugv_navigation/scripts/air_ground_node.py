@@ -95,25 +95,33 @@ class RosNavigation:
             self._convert(point, status, pose)
 
     def target(self, point):
-        return self._convert(point, self.status(), self.geo.current_pose('map'))
+        target = self._convert(point, self.status(), self.geo.current_pose('map'))
+        self.ensure_idle()  # A known pre-dispatch failure must not create a phantom owned Action.
+        return target
 
     def position(self):
         return self.geo.current_pose('map')[:2]
 
-    def start(self, target):
+    def active_server_goal(self):
+        sample = self.status_sample
+        if sample is None or not 0 <= time.monotonic()-sample[0] <= .5:
+            return None
+        return any(row.status in (0, 1, 6, 7) for row in sample[1])
+
+    def ensure_idle(self):
         if not self.geo.client.wait_for_server(self.ros.Duration(.2)):
             raise ValueError('existing move_base Action unavailable')
         # Reuse the existing control client's idle-status criterion. Do not
         # preempt a competing legacy goal merely by submitting our first goal.
         deadline = time.monotonic()+1.
         while True:
-            sample = self.status_sample
-            if (sample is not None and 0 <= time.monotonic()-sample[0] <= .5
-                    and all(row.status not in (0, 1, 6, 7) for row in sample[1])):
+            if self.active_server_goal() is False:
                 break
             if time.monotonic() >= deadline:
                 raise ValueError('fresh idle move_base status unavailable; stop other goal senders')
             time.sleep(.02)
+
+    def start(self, target):
         self.geo.client.send_goal(self.geo.MoveBaseGoal(
             target_pose=self.geo.pose(target['map_xyz'], target['yaw'], target['frame'])))
 
@@ -153,6 +161,8 @@ class RosNavigation:
         return self._control('release', expected_hold)
 
     def stopped(self, since):
+        if self.active_server_goal() is not False:
+            return dict(confirmed=False, reason='fresh global Action termination ACK unavailable')
         _, _, rows = self.geo.observation()
         return quiet_odom_tail([r for r in rows if r['received'] >= since], time.monotonic(),
                                self.ros.Time.now().to_sec(), window=self.geo.stop_window)
@@ -172,6 +182,7 @@ class TaskNode:
         self.inbox = queue.Queue(maxsize=32)
         self.latest, self.transport_error = {}, None
         self.last_receipt = None
+        self.boot_checked, self.startup_recovery = False, None
         self.feedback_lock = threading.Lock()
         self.backend = RosNavigation(ros, ros.get_param('~action', '/ugv/move_base'))
         self.executor = TaskExecutor(TaskCore(uuid.uuid4().hex), self.backend,
@@ -215,6 +226,12 @@ class TaskNode:
                      navigation_action=self.backend.geo.args.action,
                      physical_reference='base_link_horizontal', datum='WGS84',
                      transport_error=self.transport_error, software=self.software)
+        state['startup_checked'] = self.boot_checked
+        if self.startup_recovery is not None and not self.startup_recovery.get('stop_confirmed'):
+            self.startup_recovery['stop'] = self.executor.stop_result
+            self.startup_recovery['stop_confirmed'] = (self.executor.stop_since is None and
+                                                       bool((self.executor.stop_result or {}).get('confirmed')))
+        state['startup_recovery'] = dict(self.startup_recovery) if self.startup_recovery is not None else None
         with self.feedback_lock:
             self.latest = state
 
@@ -227,6 +244,14 @@ class TaskNode:
     def run(self):
         try:
             while not self.ros.is_shutdown():
+                if not self.boot_checked:
+                    active = self.backend.active_server_goal()
+                    if active is not None:
+                        self.boot_checked = True
+                        if active and self.executor.core.snapshot()['task_id'] is None:
+                            self.startup_recovery = dict(reason='orphaned Action at receiver startup',
+                                                         observed_stamp=self.ros.Time.now().to_sec())
+                            self.executor.recover_orphan()
                 # Bound command work per cycle, retaining navigation/stop polling.
                 for _ in range(8):
                     try:
@@ -241,6 +266,8 @@ class TaskNode:
                     self.ros.loginfo('air_ground receipt: %s', json.dumps(receipt, ensure_ascii=False))
                     self._snapshot()
                 self.executor.tick()
+                if not self.boot_checked and self.executor.core.snapshot()['task_id'] is None:
+                    self.executor.runtime_phase = 'WAITING_NAVIGATION'
                 self._snapshot()
                 time.sleep(.05)
         except Exception as error:
