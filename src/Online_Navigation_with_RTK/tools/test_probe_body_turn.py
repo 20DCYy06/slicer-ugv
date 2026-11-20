@@ -57,6 +57,61 @@ class ProbeScheduleTest(unittest.TestCase):
             for index, (stamp, _) in enumerate(received):
                 self.assertAlmostEqual(stamp, index / 20.)
 
+    def test_vision_profiles_have_one_second_command_and_five_second_total(self):
+        for case, active in (('vision-forward', (.025, 0.)), ('vision-turn', (0., .08))):
+            with self.subTest(case=case):
+                clock, received = Clock(), []
+                probe.run_schedule(case, lambda vx, wz: received.append((clock.now, vx, wz)),
+                                   clock.monotonic, clock.sleep, with_linear=True)
+                self.assertEqual(len(received), 101)
+                self.assertEqual(received[-1], (5., 0., 0.))
+                self.assertEqual(clock.now, 5.)
+                for index, (stamp, vx, wz) in enumerate(received):
+                    self.assertAlmostEqual(stamp, index / 20.)
+                    self.assertEqual((vx, wz), active if 2. <= stamp < 3. else (0., 0.))
+                for elapsed in (1.9999, 2., 2.9999, 3., 5.):
+                    self.assertEqual(probe.command_at(case, elapsed),
+                                     active[1] if 2. <= elapsed < 3. else 0.)
+
+    def test_existing_short_profiles_keep_four_seconds_command_and_eight_second_total(self):
+        for case, active in (('straight-short', (.10, 0.)), ('arc-short', (.10, .08)),
+                             ('turn-short', (0., .08)), ('turn-short-025', (0., .25)),
+                             ('turn-short-050', (0., .50)), ('turn-short-100', (0., 1.))):
+            with self.subTest(case=case):
+                clock, received = Clock(), []
+                probe.run_schedule(case, lambda vx, wz: received.append((clock.now, vx, wz)),
+                                   clock.monotonic, clock.sleep, with_linear=True)
+                self.assertEqual(len(received), 161)
+                self.assertEqual(received[-1], (8., 0., 0.))
+                for stamp, vx, wz in received:
+                    self.assertEqual((vx, wz), active if 2. <= stamp < 6. else (0., 0.))
+
+    def test_vision_forward_requires_linear_interface(self):
+        clock = Clock()
+        with self.assertRaisesRegex(ValueError, 'linear profile requires'):
+            probe.run_schedule('vision-forward', lambda wz: None, clock.monotonic, clock.sleep)
+
+    def test_vision_profiles_finish_zero_on_shutdown_exception_and_ctrl_c(self):
+        for case in ('vision-forward', 'vision-turn'):
+            clock, received = Clock(), []
+            probe.run_schedule(case, lambda vx, wz: received.append((vx, wz)),
+                               clock.monotonic, clock.sleep, lambda: clock.now >= 2.1,
+                               with_linear=True)
+            self.assertEqual(clock.now, 2.1)
+            self.assertEqual(received[-1], (0., 0.))
+            for failure in (RuntimeError('TEST_ONLY publish failed'), KeyboardInterrupt()):
+                clock, received = Clock(), []
+
+                def publish(vx, wz):
+                    received.append((vx, wz))
+                    if vx or wz:
+                        raise failure
+
+                with self.assertRaises(type(failure)):
+                    probe.run_schedule(case, publish, clock.monotonic, clock.sleep, with_linear=True)
+                self.assertNotEqual(received[-2], (0., 0.))
+                self.assertEqual(received[-1], (0., 0.))
+
     def test_late_wakeup_uses_elapsed_time_and_does_not_extend_nonzero(self):
         clock, received = Clock(), []
 

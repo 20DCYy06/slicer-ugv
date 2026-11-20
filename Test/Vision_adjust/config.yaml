@@ -10,4 +10,4 @@ jacobian: null                # REQUIRED measured 2x2 matrix before --control
 # Do not infer camera signs or scale from the temporary object's dimensions.
 gain: 0.5                     # 1/s
 tolerance_px: 5.0
-frame_timeout_s: 0.25          # BOTH ROS header age and local receipt age
+frame_timeout_s: 0.25          # absolute ROS header/host clock difference AND local receipt age

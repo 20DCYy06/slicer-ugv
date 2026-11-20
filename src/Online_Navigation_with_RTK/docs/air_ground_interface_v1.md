@@ -8,6 +8,8 @@
 
 ## 1. 快速开始
 
+现场联调直接用[空地联调操作单](field/AIR_GROUND_FIELD_RUNBOOK.md)，按室内协议检查、室外飞机静止发令的顺序执行。
+
 以下运动相关命令由现场用户执行。先按[现行工程 README](../README.md#用户现场顺序下列driverreleaseinitializesend涉及真实硬件运动)完成传感器、底盘、odom 导航中的 RTK 初始化，再保持定位/GNSS运行，退出 odom 导航并切到 map 导航。详细现场检查沿用[户外 RTK 操作单](field/OUTDOOR_RTK_20261111.md)；该操作单中的日期、IP 和输出目录是当日记录，新一轮必须使用当前地址和新目录。
 
 初始化会实际前进，不能用启动空地节点代替。先确认 `/geographic/status` 已配准且当前注册有效；保持原 DWA、Guard/Mux/Watchdog 链。所有终端连接同一 ROS master。

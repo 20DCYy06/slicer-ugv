@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Click a point/edge and observe it; ROS control is explicit and calibrated."""
 import argparse
+import csv
 from pathlib import Path
 import sys
 import time
@@ -29,7 +30,13 @@ def control_bounds(get_param):
                    for key in ("max_vel_x", "max_vel_theta"))
     if not all(np.isfinite(value) and value > 0 for value in limits):
         raise ValueError("actual DWA max_vel_x/max_vel_theta must be finite and positive")
-    return limits
+    try:
+        reverse = float(get_param(GUARD_NODE + "/effective_max_reverse"))
+    except KeyError:
+        reverse = 0.0  # Older/default Guard retains the original forward-only policy.
+    if not np.isfinite(reverse) or reverse < 0:
+        raise ValueError("effective Guard reverse limit must be finite and nonnegative")
+    return limits + (reverse,)
 
 
 def check_control_route(system_state_reply, caller_id, resolved_guard_input):
@@ -46,11 +53,13 @@ def check_control_route(system_state_reply, caller_id, resolved_guard_input):
 
 
 def frame_is_fresh(stamp, previous_stamp, ros_now, received_at, now, timeout):
+    # Camera hardware-clock mapping can lead host ROS time by a few ms.
+    # Keep the original header; bound clock skew and real receipt age separately.
     values = (stamp, ros_now, received_at, now, timeout)
     return bool(all(np.isfinite(value) for value in values)
                 and stamp > 0 and timeout > 0
                 and (previous_stamp is None or stamp > previous_stamp)
-                and 0 <= ros_now - stamp <= timeout
+                and abs(ros_now - stamp) <= timeout
                 and 0 <= now - received_at <= timeout)
 
 
@@ -69,11 +78,12 @@ def update_view(view, tracker, packet, valid):
     """Keep both edge clicks on one displayed frame until selection completes."""
     if view["clicks"]:
         return False
-    frame, _, received = packet
+    frame, stamp, received = packet
     if not valid:
         tracker.reset()
     if frame is not None:
         view["frame"] = frame
+    view["stamp"] = stamp
     view["received"] = received
     view["result"] = tracker.update(frame)
     return True
@@ -99,7 +109,14 @@ def frame_command(view, target, config, bounds, fresh, paused, packet_received):
     if status:
         return {"vx": 0.0, "wz": 0.0, "status": status}
     return servo_command(feature, target, config["jacobian"], config["gain"],
-                         bounds[0], bounds[1], config["tolerance_px"])
+                         bounds[0], bounds[1], config["tolerance_px"],
+                         max_reverse=bounds[2])
+
+
+def log_values(view, target, command, hostnow):
+    feature = view["result"]["feature"] if view["result"]["valid"] else ("", "")
+    return (view["stamp"], hostnow, *feature, *target,
+            command["vx"], command["wz"], command["status"])
 
 
 def window_closed(window):
@@ -120,8 +137,10 @@ def main(argv=None):
     parser.add_argument("--target", nargs=2, type=int, metavar=("X", "Y"))
     parser.add_argument("--feature", choices=("point", "edge"), default="point")
     parser.add_argument("--control", action="store_true", help="publish calibrated commands to fixed Guard raw input")
+    parser.add_argument("--log", metavar="CSV", help="append image/host times, feature, target and command to CSV")
     args = parser.parse_args(argv)
     capture = subscriber = publisher = rospy = None
+    log_stream = None
     zero = {"vx": 0.0, "wz": 0.0, "status": "stopped"}
 
     def publish(command):
@@ -143,6 +162,12 @@ def main(argv=None):
         kind = "image" if args.image else "video" if args.video else "ros"
         if args.control:
             require_control_config(kind, config)
+        if args.log:
+            log_stream = open(args.log, "a", newline="", encoding="utf-8")
+            log_writer = csv.writer(log_stream)
+            if log_stream.tell() == 0:
+                log_writer.writerow(("image_stamp", "host_processing_time", "feature_x", "feature_y",
+                                     "target_x", "target_y", "vx", "wz", "status"))
         packet = [None]
         bounds = None
 
@@ -187,7 +212,7 @@ def main(argv=None):
         window = "Vision align: OBSERVE" if not args.control else "Vision align: CONTROL"
         cv2.namedWindow(window, cv2.WINDOW_AUTOSIZE)
         tracker = PointTracker()
-        view = {"frame": None, "received": None, "clicks": [], "result": tracker.update(None)}
+        view = {"frame": None, "stamp": None, "received": None, "clicks": [], "result": tracker.update(None)}
         required_points = 1 if args.feature == "point" else 2
 
         def click(event, x, y, flags, userdata):
@@ -283,6 +308,9 @@ def main(argv=None):
                 publish(command)
             else:
                 command = {**zero, "status": "paused" if paused else "selecting_edge" if view["clicks"] else "observing" if fresh else "stale"}
+            if log_stream is not None:
+                log_writer.writerow(log_values(view, target, command, time.time()))
+                log_stream.flush()
         return 0
     except KeyboardInterrupt:
         return 0
@@ -295,6 +323,8 @@ def main(argv=None):
         except Exception as error:
             print("vision_align: final zero publish failed: " + str(error), file=sys.stderr)
         finally:
+            if log_stream is not None:
+                log_stream.close()
             if subscriber is not None:
                 subscriber.unregister()
             if capture is not None:

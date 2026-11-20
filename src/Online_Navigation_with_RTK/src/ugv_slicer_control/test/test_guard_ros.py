@@ -22,6 +22,7 @@ class GuardTransportTests(unittest.TestCase):
     NODES = ('TEST_ONLY_guard', 'TEST_ONLY_guard_boosted')
 
     def setUp(self):
+        self.external_reverse = rospy.get_param('~external_reverse', False)
         self.lock = threading.RLock()
         self.outputs = {name: deque(maxlen=2000) for name in self.NODES}
         self.reasons = {name: None for name in self.NODES}
@@ -212,6 +213,12 @@ class GuardTransportTests(unittest.TestCase):
                                 '{} retained motion during {}: {!r}'.format(name, reason, samples))
 
     def test_01_forbidden_reverse_arc_and_tiny_reverse_stop_with_reason(self):
+        if self.external_reverse:
+            for name in self.NODES:
+                self.assertEqual(rospy.get_param('/' + name + '/effective_max_reverse'), .125)
+            self._moving(-.02, .25)
+            self._moving(-.02, -.25)
+            return
         for velocity, omega in ((-.02, .25), (-1.e-12, -.05)):
             with self.subTest(vx=velocity, wz=omega):
                 self._moving(0., .25)
@@ -292,6 +299,22 @@ class GuardTransportTests(unittest.TestCase):
             # x=[.20,.25], y=[.15,.20]: currently clear, hit by the rotating front corner.
             self.cell_index = 43 * 80 + 44
             self.cell = 100
+        self._held('swept footprint')
+
+    def test_12_enabled_reverse_checks_rear_occupied_unknown_and_outside_grid(self):
+        if not self.external_reverse:
+            self.skipTest('requires the explicit external reverse test variant')
+        for value in (100, -1):
+            self._moving(-.1, 0.)
+            with self.lock:
+                self.cell_index = 40 * 80 + 35  # x=[-.25,-.20], behind current rear x=-.165.
+                self.cell = value
+            self._held('swept footprint')
+            with self.lock:
+                self.cell = 0
+        self._moving(-.1, 0.)
+        with self.lock:
+            self.pose = (-1.8, 0., 0.)  # Current body fits; reverse sweep leaves grid.
         self._held('swept footprint')
 
 

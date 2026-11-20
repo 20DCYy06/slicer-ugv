@@ -9,6 +9,8 @@ These have 2s zero before and after, at 20Hz, with all linear velocities zero.
 straight-short: vx=0.10m/s; arc-short: vx=0.10m/s, wz=0.08rad/s;
 turn-short: wz=0.08rad/s; turn-short-025/-050/-100: wz=0.25/0.50/1.00rad/s.
 Short profiles have 2s zero + 4s command + 2s zero.
+vision-forward: vx=0.025m/s; vision-turn: wz=0.08rad/s.
+Vision profiles have 2s zero + 1s command (2-3s) + 2s zero, 5s total.
 Requires fresh driver ready true; stops on false or stopped ready updates.
 """
 import argparse
@@ -20,13 +22,18 @@ import time
 TOPIC = '/cmd_vel/nav_raw'
 SHORT_PROFILES = {'straight-short': (.10, 0.), 'arc-short': (.10, .08),
                   'turn-short': (0., .08), 'turn-short-025': (0., .25),
-                  'turn-short-050': (0., .50), 'turn-short-100': (0., 1.)}
+                  'turn-short-050': (0., .50), 'turn-short-100': (0., 1.),
+                  'vision-forward': (.025, 0.), 'vision-turn': (0., .08)}
+
+
+def short_active_seconds(case):
+    return 1. if case in ('vision-forward', 'vision-turn') else 4.
 
 
 def command_at(case, elapsed):
     """Return angular.z; the legacy scalar interface remains unchanged."""
     if case in SHORT_PROFILES:
-        return SHORT_PROFILES[case][1] if 2. <= elapsed < 6. else 0.
+        return SHORT_PROFILES[case][1] if 2. <= elapsed < 2. + short_active_seconds(case) else 0.
     if not 2. <= elapsed < 14.:
         return 0.
     if case == 'steady':
@@ -41,7 +48,7 @@ def run_schedule(case, publish, monotonic=time.monotonic, sleep=time.sleep,
     """Publish wz as before, or (vx, wz) with with_linear=True; always finish zero."""
     if not with_linear and case in SHORT_PROFILES and SHORT_PROFILES[case][0]:
         raise ValueError('linear profile requires with_linear=True and publish(vx, wz)')
-    duration = 8. if case in SHORT_PROFILES else 16.
+    duration = 4. + short_active_seconds(case) if case in SHORT_PROFILES else 16.
     start, tick = monotonic(), 0
     try:
         while not should_stop():
@@ -50,7 +57,8 @@ def run_schedule(case, publish, monotonic=time.monotonic, sleep=time.sleep,
                 break
             wz = command_at(case, elapsed)
             if with_linear:
-                vx = SHORT_PROFILES[case][0] if case in SHORT_PROFILES and 2. <= elapsed < 6. else 0.
+                vx = (SHORT_PROFILES[case][0] if case in SHORT_PROFILES and
+                      2. <= elapsed < 2. + short_active_seconds(case) else 0.)
                 publish(vx, wz)
             else:
                 publish(wz)
@@ -80,8 +88,9 @@ def main(argv=None):
     print('FIELD COMMAND: topic={} case={} 20Hz; linear.yz=0, angular.xy=0'.format(TOPIC, args.case),
           flush=True)
     if args.case in SHORT_PROFILES:
-        print('0-2s: zero; 2-6s: vx={}m/s, wz={}rad/s; 6-8s: zero; final zero on exit'.format(
-            *SHORT_PROFILES[args.case]), flush=True)
+        end = 2 + int(short_active_seconds(args.case))
+        print('0-2s: zero; 2-{}s: vx={}m/s, wz={}rad/s; {}-{}s: zero; final zero on exit'.format(
+            end, *SHORT_PROFILES[args.case], end, end + 2), flush=True)
     else:
         print('0-2s: wz=0; 2-14s: {}; 14-16s: wz=0; final zero on exit'.format(
             'wz=+0.08 rad/s' if args.case == 'steady' else
@@ -149,7 +158,7 @@ def main(argv=None):
             return False
 
         print('START: raw subscriber connected, fresh driver ready true; finite {}s sequence begins.'.format(
-            8 if args.case in SHORT_PROFILES else 16), flush=True)
+            4 + int(short_active_seconds(args.case)) if args.case in SHORT_PROFILES else 16), flush=True)
         running = True
         run_schedule(args.case, publish, should_stop=should_stop, with_linear=True)
         return 0

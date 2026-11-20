@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# WSL -> Jetson RGB observation only; never creates a velocity publisher.
+# WSL -> Jetson RGB viewer. Observation by default; explicit app options are forwarded.
 set -euo pipefail
 feature="${1:-point}"
-case "$feature" in point|edge) ;; *) echo 'Usage: view_car.sh [point|edge]' >&2; exit 2;; esac
+case "$feature" in point|edge) ;; *) echo 'Usage: view_car.sh [point|edge] [vision_align.py options]' >&2; exit 2;; esac
+if [[ $# -gt 0 ]]; then shift; fi
 remote_command="$(cat <<'REMOTE'
 set -e
 [ -n "${DISPLAY:-}" ] || { echo 'SSH X11 forwarding is unavailable' >&2; exit 2; }
@@ -15,8 +16,10 @@ exec docker run --rm --name slicer-vision-view --network host \
  -e ROS_HOME=/tmp/slicer-vision-view -e PYTHONDONTWRITEBYTECODE=1 \
  --mount "type=bind,src=$HOME/.Xauthority,dst=/tmp/vision.xauth,readonly" \
  --mount type=bind,src=/home/potato/slicer_workspace2_codex/Test/Vision_adjust,dst=/vision,readonly \
+ --mount type=bind,src=/home/potato/slicer_workspace2_codex/field/deployment/20261110-vision,dst=/capture \
  --entrypoint /bin/bash ugv-online-rtk:arm64-20261030 \
- -c 'source /opt/ros/noetic/setup.bash; exec python3 -s /vision/vision_align.py --topic /camera/color/image_raw --feature "$1"' bash
+ -c 'source /opt/ros/noetic/setup.bash; exec python3 -s /vision/vision_align.py --topic /camera/color/image_raw --feature "$1" "${@:2}"' bash
 REMOTE
 )"
-exec ssh -Y -C cup-jetson "$remote_command $feature"
+printf -v quoted_arguments ' %q' "$feature" "$@"
+exec ssh -Y -C cup-jetson "$remote_command$quoted_arguments"

@@ -2,6 +2,8 @@
   <!-- TEST_ONLY. No driver/Mux: run in a network-none, no-device container. -->
   <param name="use_sim_time" value="false"/>
   <arg name="local_planner" default="teb"/>
+  <arg name="external_reverse" default="false"/>
+  <arg name="source_config" default="$(find ugv_bringup)/config/test_slicer_guard.yaml"/>
   <param name="TEST_ONLY_guard_planner/base_local_planner"
          value="$(eval {'teb': 'teb_local_planner/TebLocalPlannerROS', 'dwa': 'dwa_local_planner/DWAPlannerROS'}[arg('local_planner')])"/>
   <rosparam if="$(eval arg('local_planner') == 'teb')" ns="TEST_ONLY_guard_planner/TebLocalPlannerROS">
@@ -28,7 +30,9 @@
   <node pkg="ugv_slicer_control" type="arc_velocity_guard.py"
         name="TEST_ONLY_guard" required="true" output="screen">
     <rosparam command="load" file="$(find ugv_bringup)/config/slicer_guard.yaml"/>
-    <param name="config_file" value="$(find ugv_bringup)/config/test_slicer_guard.yaml"/>
+    <param name="config_file" value="$(arg source_config)"/>
+    <param name="external_reverse" value="$(arg external_reverse)"/>
+    <param name="planner_output_topic" value="/TEST_ONLY_guard/planner_unused"/>
     <param name="control_config_file" value="$(find ugv_bringup)/config/test_slicer_guard.yaml"/>
     <param name="planner_namespace" value="/TEST_ONLY_guard_planner"/>
     <param name="input_topic" value="/TEST_ONLY_guard/raw"/>
@@ -40,7 +44,9 @@
         name="TEST_ONLY_guard_boosted" required="true" output="screen">
     <rosparam command="load" file="$(find ugv_bringup)/config/slicer_guard.yaml"/>
     <param name="turn_compensation_enabled" value="true"/>
-    <param name="config_file" value="$(find ugv_bringup)/config/test_slicer_guard.yaml"/>
+    <param name="config_file" value="$(arg source_config)"/>
+    <param name="external_reverse" value="$(arg external_reverse)"/>
+    <param name="planner_output_topic" value="/TEST_ONLY_guard/planner_unused"/>
     <param name="control_config_file" value="$(find ugv_bringup)/config/test_slicer_guard.yaml"/>
     <param name="planner_namespace" value="/TEST_ONLY_guard_planner"/>
     <param name="input_topic" value="/TEST_ONLY_guard/raw"/>
@@ -49,5 +55,7 @@
     <param name="lio_topic" value="/TEST_ONLY_guard/lio"/>
   </node>
   <test pkg="ugv_slicer_control" type="test_guard_ros.py"
-        test-name="guard_transport" time-limit="75.0"/>
+        test-name="guard_transport" time-limit="75.0">
+    <param name="external_reverse" value="$(arg external_reverse)"/>
+  </test>
 </launch>

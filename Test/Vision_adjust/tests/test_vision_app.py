@@ -46,7 +46,7 @@ class VisionAdapterTests(unittest.TestCase):
         bounds = self.helper("control_bounds")
         parameters = {"/ugv/move_base/DWAPlannerROS/max_vel_x": 0.6,
                       "/ugv/move_base/DWAPlannerROS/max_vel_theta": 1.0}
-        self.assertEqual(bounds(parameters.__getitem__), (0.6, 1.0))
+        self.assertEqual(bounds(parameters.__getitem__), (0.6, 1.0, 0.0))
         for bad in [0, -0.1, float("nan"), float("inf")]:
             parameters["/ugv/move_base/DWAPlannerROS/max_vel_x"] = bad
             with self.subTest(bad=bad), self.assertRaises(ValueError):
@@ -66,6 +66,27 @@ class VisionAdapterTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             check((-1, "master unavailable", []), "/vision", "/cmd_vel/nav_raw")
 
+    def test_reverse_bound_comes_from_effective_guard_limit(self):
+        bounds = self.helper("control_bounds")
+        parameters = {"/ugv/move_base/DWAPlannerROS/max_vel_x": 0.4,
+                      "/ugv/move_base/DWAPlannerROS/max_vel_theta": 0.25,
+                      "/slicer_nav_arc_guard/effective_max_reverse": 0.3}
+        self.assertEqual(bounds(parameters.__getitem__), (0.4, 0.25, 0.3))
+        for invalid in (-1, float("nan"), float("inf")):
+            parameters["/slicer_nav_arc_guard/effective_max_reverse"] = invalid
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                bounds(parameters.__getitem__)
+
+    def test_frame_passes_effective_reverse_limit_to_calibrated_controller(self):
+        command = self.helper("frame_command")
+        config = {"jacobian": [[100, 0], [0, 100]], "gain": 1,
+                  "tolerance_px": 5}
+        view = {"result": {"feature": (10, 0)}, "received": 50., "clicks": []}
+        reverse = command(view, (0, 0), config, (.4, .25, .03), True, False, 50.)
+        self.assertEqual(reverse, {"vx": -.03, "wz": 0., "status": "active"})
+        forbidden = command(view, (0, 0), config, (.4, .25, 0.), True, False, 50.)
+        self.assertEqual(forbidden, {"vx": 0., "wz": 0., "status": "reverse_forbidden"})
+
     def test_live_frame_requires_advancing_stamp_and_both_age_limits(self):
         fresh = self.helper("frame_is_fresh")
         self.assertTrue(fresh(10.1, 10.0, 10.2, 50.0, 50.1, 0.25))
@@ -74,11 +95,29 @@ class VisionAdapterTests(unittest.TestCase):
                 (9.9, 10.0, 10.1, 50.0, 50.1),
                 (9.8, 9.7, 10.1, 50.0, 50.1),
                 (10.1, 10.0, 10.2, 49.5, 50.1),
-                (10.2, 10.0, 10.1, 50.0, 50.1),
+                (10.4, 10.0, 10.1, 50.0, 50.1),
                 (0.0, None, 0.1, 50.0, 50.1),
         ]:
             with self.subTest(stamp=stamp, previous=previous, received=received):
                 self.assertFalse(fresh(stamp, previous, ros_now, received, now, 0.25))
+
+    def test_small_camera_header_clock_skew_does_not_clear_selection(self):
+        fresh = self.helper("frame_is_fresh")
+        frame, _ = self.edge_frames()
+        tracker = self.app.PointTracker()
+        result = tracker.select(frame, [(50, 65)])
+        self.assertTrue(result["valid"])
+        view = {"frame": frame, "received": 50.0, "clicks": [], "result": result}
+        # D455 2.50.0: recorded lost-frame headers were 1–17 ms ahead.
+        accepted = fresh(10.015, 9.94, 10.0, 50.1, 50.11, .25)
+        self.assertTrue(accepted)
+        self.app.update_view(view, tracker, (frame, 10.015, 50.1), accepted)
+        self.assertTrue(view["result"]["valid"])
+        for stamp, ros_now, received, now in [(10.251, 10., 50., 50.1),
+                                             (9.749, 10., 50., 50.1),
+                                             (10.015, 10., 50., 50.251)]:
+            with self.subTest(stamp=stamp, now=now):
+                self.assertFalse(fresh(stamp, None, ros_now, received, now, .25))
 
     def test_target_defaults_to_image_center_and_rejects_outside_image(self):
         target = self.helper("image_target")
@@ -98,11 +137,11 @@ class VisionAdapterTests(unittest.TestCase):
                 (None, True, False, "no_feature")]:
             with self.subTest(expected=expected):
                 view = {"result": {"feature": feature}, "received": 50.0, "clicks": []}
-                self.assertEqual(command(view, (30, 20), config, (0.6, 1.0),
+                self.assertEqual(command(view, (30, 20), config, (0.6, 1.0, 0.0),
                                          fresh, paused, 50.0),
                                  {"vx": 0.0, "wz": 0.0, "status": expected})
         view = {"result": {"feature": (10, 10)}, "received": 50.0, "clicks": []}
-        self.assertEqual(command(view, (30, 20), config, (0.6, 1.0), True, False, 50.0),
+        self.assertEqual(command(view, (30, 20), config, (0.6, 1.0, 0.0), True, False, 50.0),
                          {"vx": 0.6, "wz": 0.3, "status": "active"})
 
     def test_window_close_detection_supports_gtk_without_visible_property(self):
@@ -159,23 +198,49 @@ class VisionAdapterTests(unittest.TestCase):
                   "tolerance_px": 5}
         update(view, tracker, (frame, 10.0, 50.0), True)
         select(view, tracker, (50, 65), 2)
-        pending = self.app.frame_command(view, (130, 65), config, (0.6, 1.0),
+        pending = self.app.frame_command(view, (130, 65), config, (0.6, 1.0, 0.0),
                                          True, False, 50.1)
         self.assertEqual(pending, {"vx": 0.0, "wz": 0.0, "status": "selecting_edge"})
         update(view, tracker, (shifted, 10.1, 50.1), True)
         select(view, tracker, (100, 65), 2)
-        old_feature = self.app.frame_command(view, (130, 65), config, (0.6, 1.0),
+        old_feature = self.app.frame_command(view, (130, 65), config, (0.6, 1.0, 0.0),
                                              True, False, 50.1)
         self.assertEqual(old_feature, {"vx": 0.0, "wz": 0.0, "status": "stale"})
         update(view, tracker, (shifted, 10.1, 50.1), True)
-        resumed = self.app.frame_command(view, (130, 65), config, (0.6, 1.0),
+        resumed = self.app.frame_command(view, (130, 65), config, (0.6, 1.0, 0.0),
                                          True, False, 50.1)
         self.assertEqual(resumed["status"], "active")
         self.assertAlmostEqual(resumed["vx"], 0.175, delta=0.001)
         self.assertAlmostEqual(resumed["wz"], 0.0, delta=0.001)
-        stale = self.app.frame_command(view, (130, 65), config, (0.6, 1.0),
+        stale = self.app.frame_command(view, (130, 65), config, (0.6, 1.0, 0.0),
                                        False, False, 50.1)
         self.assertEqual(stale, {"vx": 0.0, "wz": 0.0, "status": "stale"})
+
+    def test_frozen_edge_preserves_processed_image_header_stamp(self):
+        frame, shifted = self.edge_frames()
+        tracker = self.app.PointTracker()
+        view = {"frame": None, "stamp": None, "received": None, "clicks": [],
+                "result": tracker.update(None)}
+        self.app.update_view(view, tracker, (frame, 10.0, 50.0), True)
+        self.assertEqual(view["stamp"], 10.0)
+        self.app.select_feature(view, tracker, (50, 65), 2)
+        self.assertFalse(self.app.update_view(view, tracker, (shifted, 10.1, 50.1), True))
+        self.assertEqual(view["stamp"], 10.0)
+        self.app.select_feature(view, tracker, (100, 65), 2)
+        self.app.update_view(view, tracker, (shifted, 10.1, 50.1), True)
+        self.assertEqual(view["stamp"], 10.1)
+
+    def test_csv_values_keep_image_and_host_times_and_actual_command(self):
+        values = self.helper("log_values")
+        view = {"stamp": 10.015, "result": {"valid": True, "feature": (21.5, 32.25)}}
+        command = {"vx": 0.12, "wz": -0.31, "status": "active"}
+        self.assertEqual(values(view, (30, 40), command, 1000.75),
+                         (10.015, 1000.75, 21.5, 32.25, 30, 40, 0.12, -0.31, "active"))
+        view["result"] = {"valid": False, "feature": (21.5, 32.25)}
+        command = {"vx": 0.0, "wz": 0.0, "status": "stale"}
+        self.assertEqual(values(view, (30, 40), command, 1001.0),
+                         (10.015, 1001.0, "", "", 30, 40, 0.0, 0.0, "stale"))
+
 
 
 if __name__ == "__main__":

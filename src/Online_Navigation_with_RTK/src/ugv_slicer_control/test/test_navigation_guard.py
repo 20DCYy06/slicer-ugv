@@ -6,7 +6,7 @@ import sys
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
-from navigation_core import saturate_twist, slew_arc, planner_limits
+from navigation_core import saturate_twist, slew_arc, planner_limits, swept_clear
 
 
 class NavigationGuardTests(unittest.TestCase):
@@ -30,6 +30,45 @@ class NavigationGuardTests(unittest.TestCase):
                          dict(max_forward=.08, max_reverse=0., max_angular=.25,
                               accel_linear=.15, accel_angular=.4))
         self.assertEqual(source['max_forward'], .1)
+
+    def test_external_reverse_opt_in_retains_source_and_translation_caps(self):
+        for source_reverse, expected in ((.02, .02), (.3, .125), (0., 0.)):
+            with self.subTest(source_reverse=source_reverse):
+                limits = planner_limits(dict(self.SOURCE, max_reverse=source_reverse),
+                                        'dwa_local_planner/DWAPlannerROS', self.DWA,
+                                        external_reverse=True)
+                self.assertEqual(limits['max_reverse'], expected)
+                self.assertEqual(limits['max_forward'], .125)
+                self.assertEqual(limits['max_angular'], .25)
+                self.assertEqual(limits['accel_linear'], .2)
+                self.assertEqual(limits['accel_angular'], 1.)
+        limits = planner_limits(self.SOURCE, 'dwa_local_planner/DWAPlannerROS',
+                                dict(self.DWA, max_vel_trans=.01), external_reverse=True)
+        self.assertEqual(limits['max_reverse'], .01)
+
+    def test_external_reverse_keeps_dwa_forward_only_and_requires_boolean(self):
+        with self.assertRaisesRegex(ValueError, 'min_vel_x'):
+            planner_limits(self.SOURCE, 'dwa_local_planner/DWAPlannerROS',
+                           dict(self.DWA, min_vel_x=-.02), external_reverse=True)
+        for invalid in (1, 'true', None):
+            with self.subTest(external_reverse=invalid), self.assertRaises(ValueError):
+                planner_limits(self.SOURCE, 'dwa_local_planner/DWAPlannerROS',
+                               self.DWA, external_reverse=invalid)
+
+    def test_reverse_sweep_checks_rear_occupied_unknown_and_outside_grid(self):
+        footprint = [(-.2, -.15), (.2, -.15), (.2, .15), (-.2, .15)]
+        grid = dict(width=100, height=100, resolution=.05,
+                    origin=(-2.5, -2.5, 0.), data=[0] * 10000)
+        self.assertTrue(swept_clear((0, 0, 0), -.5, 0., footprint, grid, 1.))
+        for value in (100, -1):
+            with self.subTest(rear_cell=value):
+                grid['data'][50 * 100 + 39] = value  # x=[-.55,-.50], behind body.
+                self.assertFalse(swept_clear((0, 0, 0), -.5, 0., footprint, grid, 1.))
+        grid['data'][50 * 100 + 39] = 0
+        self.assertFalse(swept_clear((-2., 0, 0), -.5, 0., footprint, grid, 1.))
+        self.assertTrue(swept_clear((0, 0, 0), -.4, .4, footprint, grid, 1.))
+        grid['data'][49 * 100 + 40] = 100  # rear cell reached by the curved sweep.
+        self.assertFalse(swept_clear((0, 0, 0), -.4, .4, footprint, grid, 1.))
 
     def test_teb_reference_retains_source_and_selected_planner_bounds(self):
         teb = dict(max_vel_x=.2, max_vel_x_backwards=.01, max_vel_theta=.25,

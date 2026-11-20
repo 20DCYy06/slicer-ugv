@@ -1,0 +1,6 @@
+# This D455 has different USB/ASIC and SDK device serials (SDK 2.50.0 verified).
+usb_serial: '342343063024'  # USB/sysfs identity, used to expose this camera's nodes.
+sdk_serial: '309122301575'  # RealSense device Serial Number, used by ROS serial_no.
+width: 640                # RGB pixels; changing resolution invalidates pixel calibration.
+height: 480
+fps: 15

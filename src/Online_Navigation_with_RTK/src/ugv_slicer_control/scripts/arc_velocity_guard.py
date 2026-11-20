@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Navigation velocity smoothing with forward-only, swept-checked turn compensation."""
+"""Navigation velocity smoothing with swept-checked turn compensation."""
 import math
 from pathlib import Path
 import sys
@@ -25,6 +25,16 @@ def main():
     allow_patrol_spin = p.get('allow_patrol_spin', True)
     if type(allow_patrol_spin) is not bool:
         raise ValueError('allow_patrol_spin must be a boolean')
+    external_reverse = p.get('external_reverse', False)
+    if type(external_reverse) is not bool:
+        raise ValueError('external_reverse must be a boolean')
+    if external_reverse:
+        planner_output = p.get('planner_output_topic', p['input_topic'])
+        if not all(isinstance(topic, str) and topic.startswith('/')
+                   for topic in (planner_output, p['input_topic'])):
+            raise ValueError('external reverse requires absolute planner and Guard input topics')
+        if rospy.resolve_name(planner_output) == rospy.resolve_name(p['input_topic']):
+            raise ValueError('external reverse requires planner output isolated from Guard input')
     with open(p['config_file'], encoding='utf-8') as stream:
         limits = yaml.safe_load(stream)['navigation']
     planner_ns = str(p.get('planner_namespace', '/move_base')).rstrip('/')
@@ -36,7 +46,8 @@ def main():
     planner = rospy.get_param(planner_ns + '/' + plugin.rsplit('/', 1)[-1], {})
     # Source physics and the selected planner both constrain this outlet. A
     # commissioning planner may deliberately request lower limits than daily nav.
-    limits = planner_limits(limits, plugin, planner)
+    limits = planner_limits(limits, plugin, planner, external_reverse=external_reverse)
+    rospy.set_param('~effective_max_reverse', limits['max_reverse'])
     rospy.loginfo('Guard planner %s limits: forward=%.3f reverse=%.3f angular=%.3f',
                   plugin, limits['max_forward'], limits['max_reverse'], limits['max_angular'])
     with open(p['control_config_file'], encoding='utf-8') as stream:

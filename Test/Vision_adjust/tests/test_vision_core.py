@@ -142,7 +142,12 @@ class PointTrackerTests(CoreTest):
 class ServoCommandTests(CoreTest):
     def command(self, feature=(0, 0), target=(10, 10),
                 jacobian=((100, 0), (0, 100)), gain=1.0,
-                max_linear=1.0, max_angular=1.0, tolerance_px=0.0):
+                max_linear=1.0, max_angular=1.0, tolerance_px=0.0,
+                max_reverse=None):
+        if max_reverse is not None:
+            return self.core.servo_command(feature, target, jacobian, gain,
+                                           max_linear, max_angular, tolerance_px,
+                                           max_reverse=max_reverse)
         return self.core.servo_command(feature, target, jacobian, gain,
                                        max_linear, max_angular, tolerance_px)
 
@@ -180,7 +185,88 @@ class ServoCommandTests(CoreTest):
         self.assertAlmostEqual(result["wz"], 0.32)
 
     def test_reverse_required_stops_both_commands(self):
-        self.assert_stopped(self.command(target=(-10, 10)), "reverse_forbidden")
+        self.assert_stopped(self.command(target=(-10, 0)), "reverse_forbidden")
+
+    def test_explicit_reverse_limit_uses_full_calibrated_inverse(self):
+        result = self.command(target=(-10, 10), max_reverse=0.2)
+        self.assertEqual(result["status"], "active")
+        self.assertAlmostEqual(result["vx"], -0.1)
+        self.assertAlmostEqual(result["wz"], 0.1)
+
+    def test_reverse_limit_scales_both_axes_without_changing_arc(self):
+        result = self.command(target=(-100, 200), max_reverse=0.2,
+                              max_angular=0.5)
+        self.assertAlmostEqual(result["vx"], -0.2)
+        self.assertAlmostEqual(result["wz"], 0.4)
+
+    def test_invalid_reverse_limit_stops(self):
+        for limit in (-0.1, float("nan"), float("inf")):
+            with self.subTest(limit=limit):
+                self.assert_stopped(self.command(max_reverse=limit), "invalid_input")
+
+    def test_reverse_with_angular_error_turns_without_claiming_reached(self):
+        result = self.command(target=(-10, 10), tolerance_px=5)
+        self.assertEqual(result["status"], "active")
+        self.assertEqual(result["vx"], 0.0)
+        self.assertAlmostEqual(result["wz"], 0.1)
+        self.assert_stopped(self.command(feature=(0, 10), target=(-10, 10),
+                                         tolerance_px=5), "reverse_forbidden")
+
+    def test_recorded_near_goal_error_uses_legal_turn_to_reduce_pixel_error(self):
+        jacobian = np.array(((310.2871199, 792.8549618),
+                             (-3455.1373696, -507.6815472)))
+        feature = np.array((198.78, 94.80))
+        target = np.array((206.0, 91.0))
+        error = target - feature
+        unconstrained = np.linalg.solve(jacobian, 2 * error)
+        self.assertLess(unconstrained[0], 0)
+        result = self.command(feature=feature, target=target,
+                              jacobian=jacobian, gain=2, max_linear=0.4,
+                              max_angular=0.25, tolerance_px=5)
+        self.assertEqual(result["status"], "active")
+        self.assertEqual(result["vx"], 0.0)
+        self.assertGreater(result["wz"], 0)
+        velocity = np.array((result["vx"], result["wz"]))
+        self.assertLess(np.linalg.norm(error - 0.05 * jacobian @ velocity),
+                        np.linalg.norm(error))
+        self.assertLess(np.linalg.norm(error - jacobian @ velocity / 2), 1)
+        self.assertNotAlmostEqual(result["wz"], unconstrained[1])
+
+    def test_reverse_boundary_is_constrained_least_squares_optimum(self):
+        jacobian = np.array(((3.0, 2.0), (-4.0, 1.0)))
+        requested = jacobian @ np.array((-0.2, 0.4))
+        result = self.command(target=requested, jacobian=jacobian)
+        velocity = np.array((result["vx"], result["wz"]))
+        residual = jacobian @ velocity - requested
+        self.assertEqual(result["status"], "active")
+        self.assertEqual(result["vx"], 0.0)
+        self.assertAlmostEqual(jacobian[:, 1] @ residual, 0.0)
+        self.assertGreaterEqual(jacobian[:, 0] @ residual, 0.0)
+        for forward in (0.0, 0.1, 0.5):
+            for angular_offset in (-0.3, 0.0, 0.3):
+                candidate = (forward, result["wz"] + angular_offset)
+                self.assertLessEqual(np.linalg.norm(residual),
+                                     np.linalg.norm(jacobian @ candidate
+                                                    - requested) + 1e-12)
+
+    def test_reverse_boundary_turn_respects_existing_angular_bound(self):
+        result = self.command(target=(-100, 200), max_linear=0.2,
+                              max_angular=0.1)
+        self.assertEqual(result["status"], "active")
+        self.assertEqual(result["vx"], 0.0)
+        self.assertAlmostEqual(result["wz"], 0.1)
+
+    def test_forward_trajectory_keeps_unconstrained_commands(self):
+        jacobian = np.array(((100.0, 50.0), (0.0, -100.0)))
+        target = np.array((15.0, -10.0))
+        feature = np.zeros(2)
+        for _ in range(5):
+            expected = np.linalg.solve(jacobian, 2 * (target - feature))
+            result = self.command(feature=feature, target=target,
+                                  jacobian=jacobian, gain=2)
+            self.assertEqual(result["status"], "active")
+            np.testing.assert_allclose((result["vx"], result["wz"]), expected)
+            feature += 0.05 * jacobian @ expected
 
     def test_euclidean_pixel_tolerance_and_zero_error_stop(self):
         self.assert_stopped(self.command(target=(3, 4), tolerance_px=5),

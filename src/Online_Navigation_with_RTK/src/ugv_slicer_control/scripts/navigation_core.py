@@ -18,8 +18,10 @@ def finite(value, name):
     return result
 
 
-def planner_limits(source, plugin, planner):
+def planner_limits(source, plugin, planner, external_reverse=False):
     """Constrain Guard by the selected planner; never borrow another plugin's caps."""
+    if type(external_reverse) is not bool:
+        raise ValueError('external_reverse must be a boolean')
     if plugin not in ('teb_local_planner/TebLocalPlannerROS',
                       'dwa_local_planner/DWAPlannerROS'):
         raise ValueError('Unsupported local planner: ' + str(plugin))
@@ -45,7 +47,7 @@ def planner_limits(source, plugin, planner):
             if value <= 0:
                 raise ValueError(planner_key + ' must be positive')
             limits[key] = min(limits[key], value)
-        limits['max_reverse'] = 0.
+        limits['max_reverse'] = min(reverse, limits['max_forward']) if external_reverse else 0.
     return limits
 
 

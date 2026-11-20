@@ -7,6 +7,9 @@ map_from_enu:
 - null
 - null
 - null
+# 天线中心相对base_link：x向前、y向左，单位m。
+# 2026-11-11加测：固定在雷达正上方26cm，水平杆臂恢复为[0.065,0]。
+# 26cm是相对雷达垂直高度；z=null保留二维水平补偿，不冒充实测base_link三维高度。
 antenna_in_base_link_m:
 - 0.065
 - 0.0
