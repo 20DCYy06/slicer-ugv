@@ -1,0 +1,3 @@
+[submodule "Hardware"]
+	path = Hardware
+	url = https://github.com/20DCYy06/slicer_ugv_hardware.git
