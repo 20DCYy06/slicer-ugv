@@ -1,0 +1,12 @@
+# Narrow task interface. An empty service allowlist alone allows ALL services.
+sync_topics:
+  - /air_ground/v2/command
+  - /air_ground/v2/state
+  - /air_ground/v2/uav_state
+sync_nodes: []
+ignore_services: ['*']
+sync_services: []
+sync_topics_on_demand: false
+sync_remote_nodes: false
+resync_on_reconnect: true
+resync_on_reconnect_timeout: 0

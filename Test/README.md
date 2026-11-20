@@ -40,3 +40,7 @@ PYTHONDONTWRITEBYTECODE=1 python3 -s -m unittest discover -s Test/tests -v
 `--demo`和离线单元测试都不连接电机，不等同于实际行驶验收。
 
 v1.1方向约定：W下发正vx、S下发负vx；A下发正wz、D下发负wz。终端和GUI一致。底层电机与编码器符号已配套校正，不再通过反向上位机命令掩盖坐标问题。原v1.0与修改前上位机文件已备份；恢复时固件和上位机极性配置需要配套。
+
+## 融合手柄入口
+
+`./Test/run_gamepad.sh` 默认启用双摇杆+Y/A舵机+X/B吸放。按键X=3、Y=0、B=1、A=2。Y/A按住转松开停，X/B按一次执行吸放；B不再停车。纯底盘旧模式使用`--drive-only`。无硬件测试`./Test/run_gamepad.sh --test`。

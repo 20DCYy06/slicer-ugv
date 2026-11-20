@@ -1,0 +1,103 @@
+{
+  "client_date": "2026-11-18",
+  "offline_tests": 40,
+  "gui_800x480": "passed",
+  "camera": {
+    "frames": 53,
+    "settled_frames": 33,
+    "settled_detected": 33,
+    "last": {
+      "seq": 53,
+      "center": [
+        290.61052727282447,
+        172.2113289585573
+      ],
+      "box": [
+        152,
+        20,
+        310,
+        280
+      ]
+    },
+    "center_std_px": [
+      0.40763367889469865,
+      0.4007869024602419
+    ],
+    "actuator_commands_sent": false
+  },
+  "airgrip_read_only": {
+    "fw": "1.2T.1",
+    "pump": 0,
+    "attach": 0,
+    "protocol": "PING/GET_STATUS only"
+  },
+  "reference_servo_function_unchanged": true,
+  "existing_test_and_hardware_files_unchanged": true,
+  "actual_motion_and_grasp_tested": false,
+  "current_camera_calibration_activated": false,
+  "photo_capture_button": "passed",
+  "three_faces_saved_separately": true,
+  "initial_user_confirmed_aim_px": [
+    293,
+    170.9
+  ],
+  "photo_capture_auto_activates_contour_center": false,
+  "raised_nozzle_samples_reviewed": 19,
+  "true_contact_target_activated": false,
+  "raw_samples_modified": false,
+  "ui_resilience_tests": 10,
+  "camera_disconnect_bug_reproduced": true,
+  "live_desktop_sigint_exit_code": 0,
+  "live_desktop_sigint_exit_s": 0.266,
+  "duplicate_window_guard": true,
+  "no_actuator_commands_sent": true,
+  "camera_mode": "YUYV 640x480 30fps",
+  "preview_reconnect_without_resuming_actions": true,
+  "stability": {
+    "duration_s": 20,
+    "frames": 214,
+    "errors": [],
+    "observed_processing_hz": 11.723680926920553,
+    "configured_fourcc": "YUYV",
+    "configured_capture_fps": 30,
+    "actuator_commands_sent": false
+  },
+  "fixed_origin": true,
+  "nozzle_detection_disabled": true,
+  "fixed_origin_live": {
+    "frames": 58,
+    "green_detected": 58,
+    "last": {
+      "seq": 59,
+      "green": [
+        327.46929931640625,
+        224.3780059814453
+      ],
+      "red": [
+        344.0,
+        344.0
+      ]
+    },
+    "red_constant": true,
+    "motion_commands_sent": false
+  },
+  "snapshot_single_vision_read_verified": true,
+  "surface_size_m": [
+    0.1,
+    0.07
+  ],
+  "forward_image_direction": "down",
+  "gui_buttons": [
+    "移动并抓取",
+    "释放",
+    "停止抽气"
+  ],
+  "real_motion_tested": false,
+  "servo_control_removed": true,
+  "servo_config_dependency_removed": true,
+  "approach_extra_m": 0.03,
+  "extra_direction": "locked_visual_vector",
+  "stop_pump_available_during_motion": true,
+  "shared_chassis_gamepad_and_servo_config_unchanged": true,
+  "current_backup": "archives/before_no_servo_offset_1795103063088252127.tar.gz"
+}

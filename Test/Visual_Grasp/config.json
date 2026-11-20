@@ -1,0 +1,82 @@
+{
+  "camera": {
+    "device": "/dev/v4l/by-id/usb-XC-TECH_DH-1080P_SN00153-video-index0",
+    "width": 640,
+    "height": 480,
+    "fps": 15,
+    "fourcc": "YUYV",
+    "capture_fps": 30,
+    "retry_delay_s": 1.0
+  },
+  "target": {
+    "hsv_lower": [
+      160,
+      8,
+      45
+    ],
+    "hsv_upper": [
+      35,
+      255,
+      255
+    ],
+    "close_kernel_px": 7,
+    "min_area_px": 1500,
+    "min_rect_fill": 0.55,
+    "association_px": 80,
+    "surface_center": true,
+    "nozzle": {
+      "mode": "fixed",
+      "origin_px": [
+        344,
+        344
+      ]
+    },
+    "color_space": "lab",
+    "lab_lower": [
+      50,
+      130,
+      0
+    ],
+    "lab_upper": [
+      255,
+      180,
+      255
+    ]
+  },
+  "hardware_config": "../../Hardware/config.yaml",
+  "airgrip_config": "../airgrip/config.json",
+  "alignment": {
+    "tolerance_px": 8.0,
+    "stable_frames": 4,
+    "gain_per_s": 0.7,
+    "max_linear_m_s": 0.05,
+    "max_angular_rad_s": 0.2,
+    "observation_max_age_s": 0.6,
+    "probe_linear_m_s": 0.04,
+    "probe_angular_rad_s": 0.15,
+    "probe_duration_s": 0.7,
+    "settle_s": 0.4,
+    "min_probe_shift_px": 3.0,
+    "two_point": true
+  },
+  "grasp": {
+    "status_poll_s": 0.1,
+    "open_settle_s": 0.5,
+    "status_max_age_s": 0.8
+  },
+  "snapshot_move": {
+    "surface_size_m": [
+      0.1,
+      0.07
+    ],
+    "forward_image_direction": "down",
+    "position_tolerance_m": 0.008,
+    "yaw_tolerance_rad": 0.06,
+    "heading_gain": 1.0,
+    "max_linear_m_s": 0.05,
+    "min_linear_m_s": 0.02,
+    "max_angular_rad_s": 0.2,
+    "min_turn_rad_s": 0.1,
+    "approach_extra_m": 0.03
+  }
+}

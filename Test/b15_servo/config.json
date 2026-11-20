@@ -1,0 +1,7 @@
+{
+  "clockwise_us": 2400,
+  "counterclockwise_us": 600,
+  "neutral_us": 1500,
+  "tap_duration_s": 0.3,
+  "refresh_hz": 20
+}

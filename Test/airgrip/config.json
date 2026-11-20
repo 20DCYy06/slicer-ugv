@@ -1,0 +1,10 @@
+{
+  "device": "/dev/serial/by-id/usb-MicroPython_Board_in_FS_mode_de654403579b5b2a-if00",
+  "vid": "2e8a",
+  "pid": "1020",
+  "serial_number": "de654403579b5b2a",
+  "baud": 115200,
+  "ack_timeout_s": 0.8,
+  "status_poll_s": 0.5,
+  "link_refresh_s": 0.25
+}

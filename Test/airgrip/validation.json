@@ -1,0 +1,23 @@
+{
+  "tests_passed": 8,
+  "syntax_check": true,
+  "firmware_observed": "1.2T",
+  "device": "/dev/ttyACM0",
+  "usb_serial": "de654403579b5b2a",
+  "read_only_commands": [
+    "PING",
+    "GET_STATUS"
+  ],
+  "pump_observed": false,
+  "system_state_observed": "RELEASE",
+  "real_pump_control_sent": false,
+  "chassis_firmware_modified": false,
+  "old_workspace_modified": false,
+  "files": {
+    "keyboard.py": "3227d4522d2aaef53cf92c5734e54dfc97eb296dc84bc7250d65aba162197891",
+    "test_airgrip.py": "ad02c558f577e149462cde5cade70dabce73467dc8f52bf483782ce492f58baf",
+    "README.md": "79f512cd7133f2adb40cbc9d01367e948be5818e805c1bb07d4b8a14204be04d",
+    "config.json": "82c278f0a33f18f433d2d01d1e7ec9a4d76d299dc81e3e4a25a759f7d213880b",
+    "protocol.py": "561513b33156a95ef4d183b56915328de51010251f7656b429c744709194a166"
+  }
+}
