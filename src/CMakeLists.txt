@@ -1,0 +1,8 @@
+cmake_minimum_required(VERSION 3.0.2)
+project(slicer_ugv)
+
+set(CATKIN_TOPLEVEL TRUE)
+set(CATKIN_TOPLEVEL_FIND_PACKAGE TRUE)
+find_package(catkin REQUIRED NO_POLICY_SCOPE)
+unset(CATKIN_TOPLEVEL_FIND_PACKAGE)
+catkin_workspace()

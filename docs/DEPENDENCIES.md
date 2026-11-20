@@ -9,6 +9,7 @@
 | FKIE | Noetic 发布版 1.3.2-2 为重建候选，提供 fkie_master_discovery、fkie_master_sync、fkie_multimaster_msgs。旧 Dockerfile 检查基镜像中已有的可执行文件，较早配方通过 apt 安装。镜像中的确切版本和层内补丁未确认。[FKIE 发布仓库](https://github.com/fkie-release/multimaster_fkie-release) |
 | GNSS | 既有部署验证用 nmea_navsat_driver 0.6.1、ntrip_client 1.4.1 和 pyserial，由 cup_gnss 负责接收机串口。RTK 站点和杆臂见 gnss_site.yaml。 |
 | 底盘与固件 | 主机设备枚举用 pyserial、fuser（psmisc）。旧盘 v1.4 ELF 的 GCC 标记为 10.3.1。旧包记录 gcc-arm-none-eabi 15:10.3-2021.07-4、binutils-arm-none-eabi 2.38-3ubuntu1+15build1 和 libnewlib-arm-none-eabi 3.3.0-1.3。重建固件要对照工具链和原镜像哈希。 |
+| 视觉和本地交互 | 视觉包通过 rosdep 声明 NumPy、OpenCV、Pillow、ImageTk、Tk、pyserial、PyYAML 和 psmisc。Focal 的 ImageTk 软件包名为 `python3-pil.imagetk`。运行图形界面使用车机已登录的桌面。独立硬件工具用系统 Python，手柄读 Linux 输入设备。 |
 
 本轮用 Ubuntu Base 20.04.5 amd64、Focal `main universe` 与 Noetic 已签名的 `noetic/final/ubuntu` 快照完成构建。实装 Catkin 0.8.12，move_base/GlobalPlanner/DWA 1.17.3，TEB 0.9.1，Gmapping 1.4.2，robot_localization 2.7.7，pointcloud_to_laserscan 1.4.1，FKIE 1.3.2-2。CMake 为 3.16.3；SDK2 按下方提交构建。APT 完整版本及日志留存在本地迁移记录。
 
@@ -24,8 +25,18 @@ sudo cmake --install Livox-SDK2-build
 
 ## 设备和现场配置
 
-- C30D 使用 `src/Online_Navigation_with_RTK/tools/udev/99-c30d.rules` 的板号 5CF0016129。旧系统 /etc 同名规则是较旧的板。恢复的 `80-cup-gnss.rules` 匹配接收机 1a86:55d3、序列号 5185028488，别名为 `/dev/serial/by-id/usb-1a86_USB_Single_Serial_5185028488-if00`。安装匹配的规则后核对别名和 dialout 权限。
+- 首次配置 rosdep 的 Focal 目标环境，安装 `build-essential cmake python3-rosdep ros-noetic-ros-base`，执行一次 `sudo rosdep init`，随后按 README 更新及解析依赖。
+- C30D 使用 `deploy/udev/99-c30d.rules` 的板号 5CF0016129。旧系统 /etc 同名规则是较旧的板。恢复的 `80-cup-gnss.rules` 匹配接收机 1a86:55d3、序列号 5185028488，别名为 `/dev/serial/by-id/usb-1a86_USB_Single_Serial_5185028488-if00`。安装匹配的规则后核对别名和 dialout 权限。
 - 复制安装后的 `slicer_gnss.yaml` 到 `~/.config/slicer/gnss.yaml`，设置实际 serial_port、ntrip_host、ntrip_port、ntrip_mountpoint、ntrip_credentials_file。凭据由操作员提供，0600 JSON 包含 username 和 password，仅留车端。把外部 YAML 的绝对路径传给 `slicer_field_sensors.launch config_file:=...`。默认 YAML 里的 /dev/gnss 和 /run/secrets/ 对应旧容器。
 - 旧 MID360 雷达/主机地址是 192.168.1.192 / 192.168.1.5，旧接口 enP8p1s0。电台车端/飞机端为 192.168.10.33 / 192.168.10.32。在新系统按实际接口确认。旧盘两种 CORS 配置都关联临时服务，当前服务和站点基准由现场确认。
+
+确认目标机使用对应设备后，从仓库根安装规则：
+
+```bash
+sudo install -m 644 deploy/udev/{99-c30d,80-cup-gnss}.rules /etc/udev/rules.d/
+sudo udevadm control --reload-rules
+```
+
+重新连接设备后检查 `/dev/c30d` 和 GNSS 的 by-id 路径。若刚加入 `dialout`，重新登录后再核对权限。
 
 安装后依 [README](../README.md) 运行源码预检、构建和安装检查，在任务交接中记录 APT、SDK、FKIE 和生效的设备配置。

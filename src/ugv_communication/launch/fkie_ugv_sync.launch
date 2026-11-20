@@ -1,0 +1,21 @@
+<launch>
+  <!-- The formal RTK task node is the only default task command consumer. -->
+  <arg name="start_discovery" default="false"/>
+  <arg name="start_relay" default="false"/>
+  <arg name="uav_ip" default="192.168.10.32"/>
+  <arg name="enable_legacy_waypoints" default="false"/>
+  <arg name="waypoint_topic" default="/uav/mission/waypoints"/>
+  <arg name="waypoint_file" default="$(optenv UGV_WAYPOINT_FILE /navigation/waypoints.yaml)"/>
+  <node if="$(arg start_discovery)" pkg="fkie_master_discovery" type="master_discovery"
+        name="master_discovery" output="screen">
+    <rosparam param="robot_hosts" subst_value="true">['$(arg uav_ip)']</rosparam>
+  </node>
+  <node if="$(arg start_relay)" pkg="ugv_communication" type="relay.py"
+        ns="ugv/communication" name="state_relay" output="screen"/>
+  <node pkg="fkie_master_sync" type="master_sync" name="master_sync" output="screen">
+    <rosparam command="load" file="$(find ugv_communication)/config/sync_topics.yaml"/>
+  </node>
+  <node if="$(arg enable_legacy_waypoints)" pkg="ugv_communication" type="waypoint_receiver.py" name="ugv_waypoint_receiver" output="screen">
+    <param name="topic" value="$(arg waypoint_topic)"/><param name="file" value="$(arg waypoint_file)"/>
+  </node>
+</launch>

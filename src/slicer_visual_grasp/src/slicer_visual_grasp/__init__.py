@@ -1,0 +1,1 @@
+"""Slicer visual grasp application."""

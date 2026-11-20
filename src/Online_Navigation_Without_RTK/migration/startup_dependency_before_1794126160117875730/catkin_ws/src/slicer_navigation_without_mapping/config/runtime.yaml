@@ -1,4 +1,0 @@
-ros_master_uri: http://127.0.0.1:11311
-ros_ip: 127.0.0.1
-docker_image: slicer-fkie:latest
-container_name: workspace2-online-navigation
