@@ -26,8 +26,8 @@ encoder_signs:
 wheel_ports:
   left_front: D
   right_front: C
-  left_rear: B
-  right_rear: A
+  left_rear: A
+  right_rear: B
 wheel_diameter: 0.065
 track_width: 0.179
 test_duty_permille: 250

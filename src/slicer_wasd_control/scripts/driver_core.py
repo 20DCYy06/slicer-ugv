@@ -51,7 +51,11 @@ class EncoderTap:
 
 class Odometry:
     """编码器累计平移+板载IMU偏航率；只发布/wheel/odom，EKF独占动态TF。"""
-    def __init__(self,c):self.c=c;self.previous=None;self.x=self.y=self.yaw=0.
+    def __init__(self,c):
+        self.c=c;self.previous=None;self.x=self.y=self.yaw=0.
+        ports=c.get('wheel_ports') or dict(left_front='D',right_front='C',left_rear='B',right_rear='A')
+        self.left=tuple('ABCD'.index(ports[wheel]) for wheel in ('left_front','left_rear'))
+        self.right=tuple('ABCD'.index(ports[wheel]) for wheel in ('right_front','right_rear'))
     def update(self,sample,body):
         if sample is None or sample==self.previous:return None
         previous=self.previous;self.previous=sample
@@ -61,8 +65,13 @@ class Odometry:
         counts=[(((b-a+2**31)%2**32)-2**31)*s for a,b,s in zip(previous[1],sample[1],self.c['encoder_signs'])]
         distances=[n*math.pi*self.c['wheel_diameter']/self.c['counts_per_revolution'] for n in counts]
         ds=sum(distances)/4
-        # 0x93中的wz是Test已验证的下位机IMU反馈；不使用命令角速度当反馈。
-        wz=body['wz'] if body and body['imu_flags']&7==7 else ((distances[0]+distances[2]-distances[1]-distances[3])/2/(self.c['track_width']+self.c['wheelbase'])/dt)
+        # 0x93中的wz是下位机IMU反馈；失效时按实际轮位回退到编码器。
+        if body and body['imu_flags']&7==7:
+            wz=body['wz']
+        else:
+            left=sum(distances[i] for i in self.left)/2
+            right=sum(distances[i] for i in self.right)/2
+            wz=(right-left)/(self.c['track_width']+self.c['wheelbase'])/dt
         da=wz*dt;k=1. if abs(da)<1e-9 else math.sin(da/2)/(da/2)
         self.x+=ds*k*math.cos(self.yaw+da/2);self.y+=ds*k*math.sin(self.yaw+da/2)
         self.yaw=math.atan2(math.sin(self.yaw+da),math.cos(self.yaw+da))

@@ -37,6 +37,10 @@ assert profile['serial_number'] == '5CF0016377'
 assert profile['serial_port'] == '/dev/c30d'
 assert profile['pwm_signs'] == [-1, 1, -1, -1]
 assert profile['encoder_signs'] == [-1, 1, 1, -1]
+ports = dict(left_front='D', right_front='C', left_rear='A', right_rear='B')
+assert profile['wheel_ports'] == ports
+nortk = yaml.safe_load((runtime / 'no_rtk/config/control.yaml').read_text())
+assert nortk['wheel_ports'] == ports
 print('NATIVE_PREFLIGHT_OK: 15 packages, one message definition and both runtime profiles')
 PY
     exit 0

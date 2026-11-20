@@ -38,8 +38,8 @@ chassis:
   wheel_ports:
     left_front: D
     right_front: C
-    left_rear: B
-    right_rear: A
+    left_rear: A
+    right_rear: B
   encoder_signs:
   - -1
   - 1

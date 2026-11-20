@@ -43,7 +43,7 @@ v1.1方向约定：W下发正vx、S下发负vx；A下发正wz、D下发负wz。�
 
 ## 融合手柄入口与外设
 
-`./tools/manual/run_gamepad.sh` 默认启用双摇杆+Y/A舵机+X/B吸放。按键X=3、Y=0、B=1、A=2。Y/A按住转松开停，X/B按一次执行吸放；B不再停车。纯底盘旧模式使用`--drive-only`。无硬件测试 `./tools/manual/run_gamepad.sh --test`。自定义配置使用 `./tools/manual/run_combined_gamepad.sh --run --config FILE`。默认融合配置配合 v1.5 固件使用 1.0 m/s 线速度上限。
+`./tools/manual/run_gamepad.sh` 默认启用双摇杆+Y/A舵机+X/B吸放。按键X=3、Y=0、B=1、A=2。Y/A按住转松开停，X/B按一次执行吸放；B不再停车。纯底盘旧模式使用`--drive-only`。无硬件测试 `./tools/manual/run_gamepad.sh --test`。自定义配置使用 `./tools/manual/run_combined_gamepad.sh --run --config FILE`。默认融合配置在 v1.5 及后续配套固件上使用 1.0 m/s 线速度上限。
 
 - [融合手柄](combined_gamepad/COMBINED_GAMEPAD.md)
 - [PB14/PB15 舵机](b15_servo/README.md)

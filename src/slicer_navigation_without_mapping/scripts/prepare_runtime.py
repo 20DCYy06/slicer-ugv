@@ -54,7 +54,8 @@ def generate(root,output,workspace2=None):
         telemetry_timeout_s=host['control']['telemetry_timeout_s'],max_linear=n['max_forward'],
         max_angular=n['max_angular'],wheel_diameter=v['wheel_diameter'],track_width=v['track_width'],
         wheelbase=v['wheelbase'],counts_per_revolution=serial['counts_per_revolution'],
-        encoder_signs=serial['encoder_signs'],serial_number=serial['serial_number'])
+        encoder_signs=serial['encoder_signs'],serial_number=serial['serial_number'],
+        wheel_ports=v.get('wheel_ports'))
     (output/'config/control.yaml').write_text(yaml.safe_dump(control,sort_keys=False))
     print('ONLINE_RUNTIME',output,'footprint=',footprint,'max_v=',n['max_forward'],'max_w=',n['max_angular'],flush=True)
     return nav

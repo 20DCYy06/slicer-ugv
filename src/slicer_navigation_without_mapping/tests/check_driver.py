@@ -73,6 +73,16 @@ class DriverChecks(unittest.TestCase):
         c=self.config();odom=Odometry(c);self.assertIsNone(odom.update((0,[0]*4),{'imu_flags':7,'wz':0.}))
         value=odom.update((100000,[s*6000 for s in c['encoder_signs']]),{'imu_flags':7,'wz':.5})
         self.assertAlmostEqual(value[3],math.pi*.065,places=8);self.assertAlmostEqual(value[2],.05);self.assertEqual(value[4],.5)
+    def test_rear_axle_mapping_keeps_positive_encoder_yaw_without_imu(self):
+        c=self.config()
+        c['wheel_ports']=dict(left_front='D',left_rear='A',right_front='C',right_rear='B')
+        c['encoder_signs']=[-1,1,1,-1]
+        odom=Odometry(c)
+        self.assertIsNone(odom.update((0,[0]*4),None))
+        result=odom.update((100000,[6000]*4),None)
+        self.assertAlmostEqual(result[3],0.)
+        expected_yaw_rate=2*math.pi*.065*.1/(.179+.13)/.1
+        self.assertAlmostEqual(result[4],expected_yaw_rate)
     def test_new_board_identity_and_verified_polarities(self):
         c=yaml.safe_load((WORKSPACE/'Hardware/config.yaml').read_text())
         self.assertEqual((c['serial']['port'],c['serial']['serial_number']),('/dev/c30d','5CF0016377'))
