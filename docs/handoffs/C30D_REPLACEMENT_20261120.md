@@ -8,4 +8,10 @@ Jetson 开始时位于 `migration/native-noetic`，源码提交 `2bcf515`，工�
 
 车端证据位于 `Hardware/Backups/replacement_5CF0016377_v1.4.Vbh2qEc9/`，含双备份、镜像与构建日志、安装记录、整片读回及零输出记录。需要回退时，以其中 `original/flash_read_1.bin` 的前 16 KiB 作为本板恢复源，先核对另一份备份，再在相同断动力条件下恢复扇区 0 并校验整片和选项字节。恢复尚未实刷。
 
-烧录和零速验收在临时目录使用替换板序列号。正式车体速度配置与 /dev/c30d udev 规则仍指向旧板。启用正式 RTK 或无 RTK 控制链前，需按实际部署所用的 overlay 核对设备绑定和对应控制参数。
+烧录和零速验收在临时目录使用替换板序列号。启用正式 RTK 或无 RTK 控制链前，需按实际部署所用的 overlay 核对正式车体速度配置中的序列号、串口路径和对应控制参数。
+
+## 替换板 udev 别名
+
+`fix/c30d-udev-replacement` 从 `c19fe10` 开始，接手时工作树干净。仓库的 `deploy/udev/99-c30d.rules` 现按 `1a86:55d4 / 5CF0016377` 匹配 `/dev/c30d`。现场开始时没有安装同名规则。静态核对通过，车端安装需要管理员执行，正式车体速度配置仍保留原绑定。此项无需 Catkin 构建或 ROS 测试。
+
+车端安装和加载方式见[依赖说明](../DEPENDENCIES.md#设备和现场配置)。验证时运行 `readlink -e /dev/c30d`，并用 `udevadm info --query=property --name=/dev/c30d` 核对 `ID_SERIAL_SHORT=5CF0016377`。如需回到本次操作前的车端状态，撤下新装的 `/etc/udev/rules.d/99-c30d.rules`，重新加载规则后重新枚举底盘 USB。
