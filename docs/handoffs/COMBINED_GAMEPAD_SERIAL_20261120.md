@@ -7,3 +7,7 @@
 验证包括 `./tools/manual/run_gamepad.sh --test` 的 11 项离线测试，以及车端底盘身份解析 `/dev/ttyACM2 / 1a86:55d4 / 5CF0016377`。现场 AirGrip 查询可用 `./tools/manual/run_airgrip.sh --check` 执行。无需 Catkin 构建或 ROS 回放。
 
 现场人员在桌面终端完成管理员认证，仅对当前 AirGrip 设备节点授予 `ugv` 临时读写 ACL。首次 PING 超时，随后原始查询收到合法心跳及 PING、GET_STATUS 应答，标准检查入口连续三次通过。AirGrip 固件回复 `1.2T.1`、`pump=0`、`system_state=RELEASE`。手柄节点可读，底盘和 AirGrip 串口可读写。未启动融合控制或发送泵动作。AirGrip 重新插拔后需要重新授予临时 ACL。
+
+## 直行方向
+
+现场报告正向手柄指令时车辆后退，日志记录 `vx=+0.052` 和 `+0.041`、`wz=0`。首次手推采样在 Motor OFF 且四轮 PWM 为零时观察到 B 编码器几乎无变化。复测日志 `tools/hardware/logs/feedback_20261120T155450_165159Z.jsonl` 中，275 帧车轮遥测均为 Motor OFF、动力断开、PWM 全零。向前推时 A/B/C/D 原始计数增量为 `[-227294, 225329, 229306, -231364]`，B 已恢复。以候选编码器极性 `[-1, 1, 1, -1]` 离线回放，同一段四轮距离依次为 `[0.7736, 0.7669, 0.7804, 0.7874]` 米。尚需逐路确认 A/B 电机输出极性和左右转反馈，再配对调整配置。本次未下发驱动指令或改动极性。
