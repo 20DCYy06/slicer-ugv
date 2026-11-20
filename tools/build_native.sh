@@ -26,7 +26,7 @@ mkdir -p "$workspace"
 
 export PYTHONDONTWRITEBYTECODE=1
 python3 -s "$repo/src/slicer_navigation_without_mapping/scripts/prepare_runtime.py" \
-    --output "$no_rtk_runtime"
+    --workspace2 "$repo" --output "$no_rtk_runtime"
 python3 -s "$repo/tools/rtk/prepare_workspace.py" --config-dir "$rtk_config"
 
 printf 'Catkin sources: %s\nNoRTK runtime_root: %s\nNoRTK workspace2_root: %s\n' \
