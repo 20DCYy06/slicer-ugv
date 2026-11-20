@@ -18,6 +18,7 @@
 git clone -b migration/native-noetic https://github.com/20DCYy06/slicer-ugv.git
 cd slicer-ugv
 source /opt/ros/noetic/setup.bash
+rosdep update --include-eol-distros
 rosdep install --from-paths src --ignore-src --rosdistro noetic -y
 export SLICER_NATIVE_WS="$HOME/slicer_noetic_dev"
 bash tools/build_native.sh "$SLICER_NATIVE_WS" -j2
@@ -25,7 +26,7 @@ bash tools/check_native.sh "$SLICER_NATIVE_WS"
 source "$SLICER_NATIVE_WS/install/setup.bash"
 ```
 
-脚本直接从仓库 `src/` 构建，并把 NoRTK 运行配置、RTK 生成配置、构建与安装输出写入指定的外部工作区。只检查包布局和配置生成时执行 `bash tools/check_native.sh --static`。车端稳定检出和开发检出使用各自的构建目录。
+脚本直接从仓库 `src/` 构建，并把 NoRTK 运行配置、RTK 生成配置、构建与安装输出写入指定的外部工作区。只检查包布局和配置生成时执行 `bash tools/check_native.sh --static`。从旧布局升级时选用一个新的外部工作区。车端稳定检出和开发检出各有构建目录。
 
 ## 功能入口
 

@@ -3,7 +3,7 @@ name: Native Noetic preflight
 on:
   pull_request:
   push:
-    branches: [main, migration/native-noetic]
+    branches: [main, migration/native-noetic, refactor/ros-layout]
 
 permissions:
   contents: read
@@ -21,4 +21,5 @@ jobs:
         run: |
           bash -n tools/build_native.sh
           bash -n tools/check_native.sh
+          bash -n tools/no_rtk.sh
           bash tools/check_native.sh --static
