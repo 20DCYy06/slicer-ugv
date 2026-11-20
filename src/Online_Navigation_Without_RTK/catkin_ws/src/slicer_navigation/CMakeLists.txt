@@ -27,4 +27,5 @@ catkin_install_python(PROGRAMS scripts/amcl_ready.py scripts/record_ab.py script
   scripts/navigation_visuals.py DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION})
 catkin_install_python(PROGRAMS scripts/diagnose_stall.py scripts/measure_patrol.py DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION})
 install(PROGRAMS scripts/save_map.sh DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION})
-install(DIRECTORY launch config rviz maps docs DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION})
+install(DIRECTORY launch config rviz docs DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION})
+install(DIRECTORY maps DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION} OPTIONAL)
