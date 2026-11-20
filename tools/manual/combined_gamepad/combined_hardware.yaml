@@ -6,13 +6,13 @@ serial:
   baud: 115200
   counts_per_revolution: 60000
   pwm_signs:
-  - 1
   - -1
+  - 1
   - -1
   - -1
   encoder_signs:
-  - 1
   - -1
+  - 1
   - 1
   - -1
 control:
