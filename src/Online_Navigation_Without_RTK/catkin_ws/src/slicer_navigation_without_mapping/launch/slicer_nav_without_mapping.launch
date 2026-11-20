@@ -1,6 +1,7 @@
 <launch>
   <arg name="root" default="/slicer" />
-  <arg name="workspace2_root" default="/workspace2" />
+  <arg name="workspace2_root" default="$(optenv WORKSPACE2_ROOT /workspace2)" />
+  <arg name="host_config" default="$(arg workspace2_root)/Hardware/config.yaml" />
   <arg name="runtime_root" default="$(find slicer_navigation_without_mapping)/.runtime" />
   <arg name="start_sensors" default="true" />
   <arg name="start_control" default="true" />
@@ -15,7 +16,8 @@
     <arg name="publish_tf" value="false" />
     <arg name="mock" value="$(arg control_mock)" />
     <arg name="wait_for_fault_clear" value="true" />
-    <arg name="host_config" value="$(arg workspace2_root)/Hardware/config.yaml" />
+    <arg name="workspace2_root" value="$(arg workspace2_root)" />
+    <arg name="host_config" value="$(arg host_config)" />
     <arg name="config" value="$(arg runtime_root)/config/control.yaml" />
   </include>
   <node pkg="gmapping" type="slam_gmapping" name="slam_gmapping" output="screen" respawn="true">

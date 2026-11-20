@@ -1,0 +1,2 @@
+# Industrial Cup GNSS: only the verified USB serial identity.
+SUBSYSTEM=="tty", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="55d3", ATTRS{serial}=="5185028488", SYMLINK+="serial/by-id/usb-1a86_USB_Single_Serial_5185028488-if00", GROUP="dialout", MODE="0660"

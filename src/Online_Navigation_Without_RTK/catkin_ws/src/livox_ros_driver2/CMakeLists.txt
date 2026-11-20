@@ -175,8 +175,10 @@ if(ROS_EDITION STREQUAL "ROS1")
     RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
   )
 
-  install(DIRECTORY launch_ROS1/
-    DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}/launch_ROS1
+  get_filename_component(ROS1_LAUNCH_DIR "${CMAKE_CURRENT_SOURCE_DIR}/launch_ROS1" REALPATH)
+  get_filename_component(ROS1_CONFIG_DIR "${CMAKE_CURRENT_SOURCE_DIR}/config" REALPATH)
+  install(DIRECTORY "${ROS1_LAUNCH_DIR}" "${ROS1_CONFIG_DIR}"
+    DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}
   )
 
   #---------------------------------------------------------------------------------------

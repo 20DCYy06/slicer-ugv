@@ -1,6 +1,7 @@
 <launch>
   <arg name="geographic" default="true"/>
   <arg name="start_gnss" default="true"/>
+  <arg name="config_file" default="$(find ugv_bringup)/config/slicer_gnss.yaml"/>
   <arg name="site_config" default="$(find ugv_bringup)/config/gnss_site.yaml"/>
   <arg name="session_file" default="$(optenv ROS_HOME /tmp)/geographic-session.json"/>
   <!-- Start once, before field navigation. No chassis or control release.
@@ -14,5 +15,7 @@
     <arg name="site_config" value="$(arg site_config)"/>
     <arg name="session_file" value="$(arg session_file)"/>
   </include>
-  <include if="$(eval arg('geographic') and arg('start_gnss'))" file="$(find ugv_bringup)/launch/slicer_gnss.launch"/>
+  <include if="$(eval arg('geographic') and arg('start_gnss'))" file="$(find ugv_bringup)/launch/slicer_gnss.launch">
+    <arg name="config_file" value="$(arg config_file)"/>
+  </include>
 </launch>
