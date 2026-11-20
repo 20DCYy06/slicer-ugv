@@ -1,8 +1,8 @@
 serial:
-  port: auto
+  port: /dev/c30d
   vid: 1a86
   pid: 55d4
-  serial_number: 5CF0016129
+  serial_number: 5CF0016377
   baud: 115200
   counts_per_revolution: 60000
   pwm_signs:

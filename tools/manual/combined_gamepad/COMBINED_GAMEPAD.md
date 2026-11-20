@@ -16,6 +16,8 @@ Q/Ctrl+C退出：先停止底盘和舵机，再尝试释放本程序启动过的
 吸口ACK等待放在独立串口线程，不中断50Hz底盘刷新。断开AirGrip物理连接不会自动释放，软件不能保证断线释放。
 从工作区根目录运行。配置在 `tools/manual/combined_gamepad/combined_gamepad.json`，引用融合底盘配置、舵机配置和 AirGrip 配置。
 
+融合模式使用 `/dev/c30d`，仍核对底盘的 USB 序列号。AirGrip 使用其 USB by-id 路径，运行账号需要对应设备的读写权限。可以用 `./tools/manual/run_airgrip.sh --check` 单独检查 AirGrip。
+
 无硬件测试：`./tools/manual/run_combined_gamepad.sh --test`。
 run_gamepad.sh默认已统一到此融合程序；旧纯底盘使用`./tools/manual/run_gamepad.sh --drive-only`（其B仍为停车）。`--demo/--check/--config`保留旧纯底盘接口；融合自定义配置使用 `./tools/manual/run_combined_gamepad.sh --run --config FILE`。
 按键边沿打印[BUTTON]标签，Y/A松开后应见当前引脚标签对应的 1500 us；X/B操作后应见[AIRGRIP_PUMP_ACK]设备确认。
