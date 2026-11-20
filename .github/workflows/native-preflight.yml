@@ -11,15 +11,24 @@ permissions:
 jobs:
   prepare:
     runs-on: ubuntu-22.04
+    env:
+      CHECK_HARDWARE: ${{ github.event_name == 'push' && github.ref_name == github.event.repository.default_branch && secrets.SLICER_HARDWARE_READ_TOKEN != '' }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          token: ${{ env.CHECK_HARDWARE == 'true' && secrets.SLICER_HARDWARE_READ_TOKEN || github.token }}
+          submodules: ${{ env.CHECK_HARDWARE == 'true' }}
+          persist-credentials: false
       - name: Install source-check dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y python3-catkin-pkg python3-yaml
-      - name: Check native workspace preparation
+      - name: Check ROS package layout
         run: |
           bash -n tools/build_native.sh
           bash -n tools/check_native.sh
           bash -n tools/no_rtk.sh
-          bash tools/check_native.sh --static
+          bash tools/check_native.sh --layout
+      - name: Check runtime profiles with pinned hardware
+        if: env.CHECK_HARDWARE == 'true'
+        run: bash tools/check_native.sh --static
