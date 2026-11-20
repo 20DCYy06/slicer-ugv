@@ -48,7 +48,7 @@ roslaunch ugv_bringup slicer_field_navigation.launch geographic:=false
 roslaunch ugv_bringup slicer_field_navigation.launch
 ```
 
-**空地执行器只选一个。** V1 是有车端运行哈希的整合对照，V2 已恢复源码与部署配置参考。优先以 V2 仅观测方式验证话题，再由现场任务确定是否启用执行。直接 V2 launch 默认 `monitor_only=false`，旧 Compose 默认 `true`，旧车端 `bridge.env` 明确覆盖为 `false`。启动时显式写明模式和 FKIE 归属。
+**空地执行器只选一个。** 当前原生整合以 V1 为执行基线，依据是车端 V1 运行文件散列与已验证提交相符。11 月 19 日最新 V2 记录证实执行模式进程与话题连接。V2 先按下方命令仅观测，确认飞机选用 V2 且完成验证后再由现场负责人切换为执行。直接 V2 launch 默认 `monitor_only=false`，旧 Compose 默认 `true`，旧车端 `bridge.env` 明确覆盖为 `false`。启动时显式写明模式和 FKIE 归属。
 
 ```bash
 # V1
@@ -57,4 +57,4 @@ roslaunch ugv_bringup slicer_air_ground.launch
 roslaunch ag_ugv_task ugv.launch monitor_only:=true start_fkie:=false
 ```
 
-切导航模式时先结束原任务和原模式控制链，确认只有一套 `map → odom`、最终速度发布者和串口所有者。安装验证脚本只解析 launch 和检查资源。真实 ROS 构建、原生启动、ARM64 与设备结果分别登记在交接中。
+切导航模式时先结束原任务和原模式控制链，确认只有一套 `map → odom`、最终速度发布者和串口所有者。隔离 Focal amd64 已完成 Catkin 构建与安装检查，原生运行和设备验证见 [HANDOFF.md](HANDOFF.md)。

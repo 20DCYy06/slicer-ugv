@@ -10,6 +10,8 @@
 | GNSS | 既有部署验证用 nmea_navsat_driver 0.6.1、ntrip_client 1.4.1 和 pyserial，由 cup_gnss 负责接收机串口。RTK 站点和杆臂见 gnss_site.yaml。 |
 | 底盘与固件 | 主机设备枚举用 pyserial、fuser（psmisc）。旧盘 v1.4 ELF 的 GCC 标记为 10.3.1。旧包记录 gcc-arm-none-eabi 15:10.3-2021.07-4、binutils-arm-none-eabi 2.38-3ubuntu1+15build1 和 libnewlib-arm-none-eabi 3.3.0-1.3。重建固件要对照工具链和原镜像哈希。 |
 
+本轮用 Ubuntu Base 20.04.5 amd64、Focal `main universe` 与 Noetic 已签名的 `noetic/final/ubuntu` 快照完成构建。实装 Catkin 0.8.12，move_base/GlobalPlanner/DWA 1.17.3，TEB 0.9.1，Gmapping 1.4.2，robot_localization 2.7.7，pointcloud_to_laserscan 1.4.1，FKIE 1.3.2-2。CMake 为 3.16.3；SDK2 按下方提交构建。APT 完整版本及日志留存在本地迁移记录。
+
 在目标 Focal 环境构建 Livox SDK2。Catkin 在 /usr/local/lib 查找 liblivox_lidar_sdk_static.a。
 
 ```bash
