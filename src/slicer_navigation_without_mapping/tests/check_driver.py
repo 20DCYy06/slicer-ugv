@@ -48,6 +48,35 @@ class DriverChecks(unittest.TestCase):
         car.speed(.4,-.7)
         self.assertEqual(sent,[(0x16,struct.pack('<Ihh',123,400,-700))])
         self.assertNotIn(0x11,[k for k,p in sent])
+    def test_connect_waits_for_wheel_telemetry_after_imu(self):
+        import time
+        from chassis import load_config
+        car=Chassis.__new__(Chassis)
+        car.config=load_config()
+        car.path='/TEST_ONLY_DELAYED_0X90'
+        car.nonce=123
+        car.replies={}
+        car.body=car.state=None
+        car.last_rx=0.
+        replies={
+            1:(0x81,struct.pack('<4sBBHHI',b'SLC2',2,4,60000,500,car.nonce)),
+            0x12:(0x82,struct.pack('<IB',car.nonce,1)),
+            0x17:(0x84,struct.pack('<IBBBB',car.nonce,1,0xea,7,0)),
+            0x18:(0x85,struct.pack('<IBHHH',car.nonce,100,982,1600,1571)),
+        }
+        car.send=lambda kind,payload: car.replies.update([replies[kind]])
+
+        def poll(timeout):
+            if car.body is None:
+                car.body={'imu_flags':7}
+            elif car.state is None:
+                car.state={'fault_latched':False}
+                car.last_rx=time.monotonic()
+
+        car.poll=poll
+        car.connect()
+        self.assertIsNotNone(car.state)
+        self.assertGreater(car.last_rx,0.)
     def test_forward_curve_pure_spin_reverse_retained(self):
         car=Fake();session=Session(car,self.config())
         for v,w in [(.4,.6),(0.,1.2),(-.2,0.)]:

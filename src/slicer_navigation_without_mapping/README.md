@@ -1,7 +1,7 @@
 # 雷达版在线导航入口
 
 在仓库根目录使用 `tools/no_rtk.sh` 管理 NoRTK 会话。
-`SLICER_NATIVE_WS` 选择构建工作区，默认为 `$HOME/slicer_noetic_dev`。
+`SLICER_NATIVE_WS` 显式选择工作区。运行时默认使用存在的 `$HOME/slicer_noetic_current`，其余情况下使用 `$HOME/slicer_noetic_dev`。构建默认使用开发工作区。无 `DISPLAY` 的终端默认关闭导航图形窗口。
 
 ```bash
 bash tools/no_rtk.sh build

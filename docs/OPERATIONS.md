@@ -5,12 +5,12 @@
 ## 无 RTK 导航
 
 ```bash
-export SLICER_NATIVE_WS="$HOME/slicer_noetic_dev"  # 与实际安装工作区一致
+export SLICER_NATIVE_WS="$HOME/slicer_noetic_current"  # 或指定你的完整安装工作区
 ./tools/no_rtk.sh nav --background
 ./tools/no_rtk.sh stop
 ```
 
-本入口使用生成的 `$SLICER_NATIVE_WS/runtime/no_rtk`，源配置位于 [no_rtk](../src/ugv_bringup/config/no_rtk/)。可用 `./tools/no_rtk.sh nav gui:=false` 在前台启动并观察错误。查看 `rostopic list` 和 RViz 中的地图与规划，Action 为 `/move_base`。Gmapping 发布 `map → odom`，局部 EKF 发布 `odom → base_link`。后台 stop 只结束本工具创建的导航 launch，保留共享 ROS master。
+本入口使用所选工作区生成的 `runtime/no_rtk`，源配置位于 [no_rtk](../src/ugv_bringup/config/no_rtk/)。未设置 `SLICER_NATIVE_WS` 时优先使用车端的 `$HOME/slicer_noetic_current` 安装。启动前会核对本次 launch 的节点是否可执行。未设置 `DISPLAY` 时自动关闭 RViz 和目标坐标窗口，也可用 `./tools/no_rtk.sh nav gui:=false` 显式关闭。查看 `rostopic list` 和 RViz 中的地图与规划，Action 为 `/move_base`。Gmapping 发布 `map → odom`，局部 EKF 发布 `odom → base_link`。后台 stop 只结束本工具创建的导航 launch，保留共享 ROS master。
 
 ## RTK 导航与空地接口
 

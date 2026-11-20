@@ -59,6 +59,7 @@ class Chassis:
     def read_state(self):
         self.wait(lambda:self.state is not None);return self.state
     def connect(self):
+        previous_wheel_rx,previous_body=self.last_rx,self.body
         self.opened_session=True
         self.send(1,struct.pack('<I',self.nonce));self.wait(lambda:0x81 in self.replies)
         expected=(b'SLC2',2,4,self.config['serial']['counts_per_revolution'],500,self.nonce)
@@ -76,7 +77,19 @@ class Chassis:
         expected_ticks=(1600*expected_cap//1000)*percent//100
         if (n,p,maximum,period,ticks)!=(self.nonce,percent,expected_cap,1600,expected_ticks):
             raise RuntimeError('底盘固件输出上限不匹配: expected %d‰, received %d‰' % (expected_cap,maximum))
-        self.wait(lambda:self.body is not None and self.body['imu_flags']&7==7,10.)
+        timeout=self.config['control']['telemetry_timeout_s']
+
+        def telemetry_ready():
+            return (
+                self.state is not None
+                and self.last_rx > previous_wheel_rx
+                and time.monotonic()-self.last_rx <= timeout
+                and self.body is not None
+                and self.body is not previous_body
+                and self.body['imu_flags']&7==7
+            )
+
+        self.wait(telemetry_ready,10.)
         print('[CONNECTED]',self.path,'0x16 vx/wz, PWM cap=%.1f%%, watchdog=500ms'%(maximum/10),flush=True)
     def speed(self,v,w):
         if not math.isfinite(v) or not math.isfinite(w):raise ValueError('速度不是有限值')

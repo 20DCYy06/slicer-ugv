@@ -2,10 +2,15 @@
 set -eo pipefail
 
 repo=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
-workspace=$(realpath -m -- "${SLICER_NATIVE_WS:-$HOME/slicer_noetic_dev}")
-runtime="$workspace/runtime/no_rtk"
 mode=${1:-help}
 if [[ $# -gt 0 ]]; then shift; fi
+default_workspace="$HOME/slicer_noetic_dev"
+active_workspace="$HOME/slicer_noetic_current"
+if [[ "$mode" != build && ( -L "$active_workspace" || -d "$active_workspace" ) ]]; then
+    default_workspace="$active_workspace"
+fi
+workspace=$(realpath -m -- "${SLICER_NATIVE_WS:-$default_workspace}")
+runtime="$workspace/runtime/no_rtk"
 
 case "$mode" in
     -h|--help|help)
@@ -45,8 +50,41 @@ case "$mode" in
     nav)
         mode=foreground
         if [[ ${1:-} == --background ]]; then mode=background; shift; fi
-        set -- roslaunch slicer_navigation_without_mapping slicer_nav_without_mapping.launch \
-            "workspace2_root:=$repo" "runtime_root:=$SLICER_NO_RTK_RUNTIME" "$@"
+        launch=(slicer_navigation_without_mapping slicer_nav_without_mapping.launch
+                "workspace2_root:=$repo" "runtime_root:=$SLICER_NO_RTK_RUNTIME")
+        if [[ -z ${DISPLAY:-} ]]; then launch+=(gui:=false); fi
+        launch+=("$@")
+        python3 - "$workspace" "${launch[@]}" <<'PY'
+import sys
+
+from roslaunch.config import load_config_default
+from roslaunch.core import RLException
+from roslaunch.rlutil import resolve_launch_arguments
+from roslib.packages import find_node
+from rospkg import ResourceNotFound, RosPack
+
+workspace, package, filename, *arguments = sys.argv[1:]
+try:
+    path, *args = resolve_launch_arguments([package, filename, *arguments])
+    config = load_config_default([(path, args)], None, assign_machines=False)
+except RLException as exc:
+    sys.exit(f'NoRTK launch configuration error in {workspace}: {exc}')
+
+rospack = RosPack()
+missing = []
+for node in config.nodes:
+    try:
+        executable = find_node(node.package, node.type, rospack=rospack)
+    except ResourceNotFound:
+        executable = None
+    if not executable:
+        missing.append(f'{node.package}/{node.type}')
+if missing:
+    names = ', '.join(sorted(set(missing)))
+    sys.exit(f'Incomplete NoRTK overlay {workspace}: {names}. '
+             'Select a complete installation with SLICER_NATIVE_WS or run tools/no_rtk.sh build.')
+PY
+        set -- roslaunch "${launch[@]}"
         ;;
 esac
 
