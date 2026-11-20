@@ -1,60 +1,37 @@
 # Slicer UGV
 
-中航工业杯整车工程。当前分支 `migration/native-noetic` 正在迁移到裸 Ubuntu 20.04 / ROS1 Noetic。车端稳定版本以现场验收记录为准。接手先读 [HANDOFF.md](HANDOFF.md) 和 [AGENTS.md](AGENTS.md)。
+中航工业杯整车项目。当前默认分支 `migration/native-noetic` 是 Ubuntu 20.04 / ROS1 Noetic 迁移候选。目标系统与实车验收进展见 [HANDOFF.md](HANDOFF.md)。
 
-## 构建准备
-
-在 Ubuntu 20.04 安装 ROS Noetic、Catkin、rosdep 和 [依赖清单](docs/DEPENDENCIES.md) 中的 Livox SDK2。WSL Jammy 可以运行源码预检。使用 Focal 环境做完整 ROS 构建。
-
-```bash
-bash tools/check_native.sh --static
-NATIVE_WS="$HOME/slicer_noetic_dev"
-bash tools/build_native.sh --prepare-only "$NATIVE_WS"
-source /opt/ros/noetic/setup.bash
-rosdep install --from-paths "$NATIVE_WS/src" --ignore-src --rosdistro noetic -r -y
-bash tools/build_native.sh "$NATIVE_WS" -j2
-bash tools/check_native.sh "$NATIVE_WS"
-```
-
-一个 Catkin 源空间选择现有目录中的 14 个包，同时生成两种模式的参数。一份 `slicer_air_ground_msgs` 供 V1 和 UAV 客户端复用。开发与稳定运行分别使用独立源码检出和绝对路径不同的工作区。每个终端 source 对应工作区的 `install/setup.bash`。
-
-## 包和运行入口
-
-| 职责 | 位置 / 原生入口 |
+| 路径 | 职责 |
 |---|---|
-| 传感器、LIO、局部 EKF | `src/Online_Navigation_Without_RTK/catkin_ws/src` 中的 `slicer_bringup`、`fast_lio`、`livox_ros_driver2`。局部 EKF 发布 `/odom` 和 `odom → base_link`。 |
-| 无 RTK 导航 | `slicer_navigation_without_mapping/slicer_nav_without_mapping.launch`。Gmapping 管 `map → odom`，B 样条 + TEB，Action `/move_base`。 |
-| RTK 导航 | `ugv_bringup` 用 `slicer_field_sensors.launch`、`slicer_body_driver.launch` 和 `slicer_field_navigation.launch`。DWA、Action `/ugv/move_base`。配准后由全局 EKF 拥有 `map → odom`。 |
-| 车体控制 | 两种模式走各自的 Guard 和 Mux。导航输出到 `/cmd_vel/nav_raw`，Guard 发 `/cmd_vel/nav`，当前模式的 Mux 独占 `/cmd_vel`，driver 独占底盘串口。 |
-| 空地任务 | V1 是 `ugv_bringup/slicer_air_ground.launch`。V2 是 `ag_ugv_task/ugv.launch`，源码在 `ag_v2_ws/src/AG_Client`，基于旧盘上游提交 `a2003d4`。 |
-| 通信、现场工具 | `src/conmunication` 提供 `ugv_communication` 与 V1 的 FKIE 接入，V2 有自己的白名单。机电、固件和测试工具见 [Hardware](Hardware/README.md) 和 [Test](Test/README.md)。 |
+| `src/<包名>/` | 统一的 Catkin 源空间。包含传感器、定位、两种导航、控制、通信、空地任务与正式视觉伺服。 |
+| `src/ugv_bringup/config/`、`Hardware/config.yaml` | 导航配置及底盘设备、几何输入。NoRTK 生成输入在 `src/ugv_bringup/config/no_rtk/`。 |
+| `src/slicer_visual_grasp/` | 正式 Visual_Grasp 程序、标定、配套控制与算法测试。 |
+| `tools/manual/`、`Hardware/` | 键盘、手柄和执行机构操作，以及底盘协议、解锁与固件。 |
+| `deploy/udev/`、`docs/` | 设备规则、运行说明和交接。历史部署材料单独标识。 |
 
-**无 RTK 模式**使用生成的参数目录和整车硬件路径。在候选仓根目录启动，按现场情况决定是否打开 GUI。
+## 从克隆到构建
 
-```bash
-source "$NATIVE_WS/install/setup.bash"
-roslaunch slicer_navigation_without_mapping slicer_nav_without_mapping.launch \
-  runtime_root:="$NATIVE_WS/runtime/no_rtk" workspace2_root:="$PWD" gui:=false
-```
-
-**RTK 模式**分别起定位、底盘和导航，顺序参照[户外操作单](src/Online_Navigation_with_RTK/docs/field/AIR_GROUND_FIELD_RUNBOOK.md)。该操作单里的 `run.sh` 和旧 IP 对应原容器环境。原生定位入口所需的 GNSS YAML 由操作员准备，按[依赖清单](docs/DEPENDENCIES.md)填实际串口、差分设置和外部凭据路径。
+使用已获私有仓库访问权限的账号，在 Ubuntu 20.04 / Noetic 环境执行。先按[依赖清单](docs/DEPENDENCIES.md)配置 APT、Livox SDK2 和视觉依赖，然后运行：
 
 ```bash
-# 各终端 source 同一 install，使用同一车端 ROS master
-roslaunch ugv_bringup slicer_field_sensors.launch config_file:="$HOME/.config/slicer/gnss.yaml"
-roslaunch ugv_bringup slicer_body_driver.launch
-roslaunch ugv_bringup slicer_field_navigation.launch geographic:=false
-# 配准成功后仅替换上面的导航终端，定位和底盘保持
-roslaunch ugv_bringup slicer_field_navigation.launch
+git clone -b migration/native-noetic https://github.com/20DCYy06/slicer-ugv.git
+cd slicer-ugv
+source /opt/ros/noetic/setup.bash
+rosdep install --from-paths src --ignore-src --rosdistro noetic -y
+export SLICER_NATIVE_WS="$HOME/slicer_noetic_dev"
+bash tools/build_native.sh "$SLICER_NATIVE_WS" -j2
+bash tools/check_native.sh "$SLICER_NATIVE_WS"
+source "$SLICER_NATIVE_WS/install/setup.bash"
 ```
 
-**空地执行器只选一个。** 当前原生整合以 V1 为执行基线，依据是车端 V1 运行文件散列与已验证提交相符。11 月 19 日最新 V2 记录证实执行模式进程与话题连接。V2 先按下方命令仅观测，确认飞机选用 V2 且完成验证后再由现场负责人切换为执行。直接 V2 launch 默认 `monitor_only=false`，旧 Compose 默认 `true`，旧车端 `bridge.env` 明确覆盖为 `false`。启动时显式写明模式和 FKIE 归属。
+脚本直接从仓库 `src/` 构建，并把 NoRTK 运行配置、RTK 生成配置、构建与安装输出写入指定的外部工作区。只检查包布局和配置生成时执行 `bash tools/check_native.sh --static`。车端稳定检出和开发检出使用各自的构建目录。
 
-```bash
-# V1
-roslaunch ugv_bringup slicer_air_ground.launch
-# 或 V2 静态观测，沿用已有同步或同一 master
-roslaunch ag_ugv_task ugv.launch monitor_only:=true start_fkie:=false
-```
+## 功能入口
 
-切导航模式时先结束原任务和原模式控制链，确认只有一套 `map → odom`、最终速度发布者和串口所有者。隔离 Focal amd64 已完成 Catkin 构建与安装检查，原生运行和设备验证见 [HANDOFF.md](HANDOFF.md)。
+- **无 RTK**用 Gmapping、B 样条和 TEB，Action 为 `/move_base`。后台启动和停止见[操作手册](docs/OPERATIONS.md#无-rtk-导航)。
+- **RTK**用 DWA，Action 为 `/ugv/move_base`。先用 odom 导航配准，随后切到 map 导航。[RTK 现场操作](docs/rtk/field/AIR_GROUND_FIELD_RUNBOOK.md)
+- **空地任务**以 V1 已验证接口为整合基线，V2 独立选用。V2 直接 launch 的 `monitor_only` 默认是 `false`，历史 Compose 默认是 `true`，原现场环境曾覆盖为 `false`。操作时显式写明。一套导航实例只启动一个任务执行器。[V1 接口](docs/rtk/air_ground_interface_v1.md) · [V2 协议](src/ag_uav_client/docs/protocol_v2.md)
+- **视觉、底盘遥控和执行机构**见[操作手册](docs/OPERATIONS.md#独立硬件工具)，包含旧入口对照。
+
+协作前看 [AGENTS.md](AGENTS.md) 和 [HANDOFF.md](HANDOFF.md)。

@@ -24,7 +24,7 @@ sudo cmake --install Livox-SDK2-build
 
 ## 设备和现场配置
 
-- C30D 使用 `src/Online_Navigation_with_RTK/tools/udev/99-c30d.rules` 的板号 5CF0016129。旧系统 /etc 同名规则是较旧的板。恢复的 `80-cup-gnss.rules` 匹配接收机 1a86:55d3、序列号 5185028488，别名为 `/dev/serial/by-id/usb-1a86_USB_Single_Serial_5185028488-if00`。安装匹配的规则后核对别名和 dialout 权限。
+- C30D 使用 `deploy/udev/99-c30d.rules` 的板号 5CF0016129。旧系统 /etc 同名规则是较旧的板。恢复的 `80-cup-gnss.rules` 匹配接收机 1a86:55d3、序列号 5185028488，别名为 `/dev/serial/by-id/usb-1a86_USB_Single_Serial_5185028488-if00`。安装匹配的规则后核对别名和 dialout 权限。
 - 复制安装后的 `slicer_gnss.yaml` 到 `~/.config/slicer/gnss.yaml`，设置实际 serial_port、ntrip_host、ntrip_port、ntrip_mountpoint、ntrip_credentials_file。凭据由操作员提供，0600 JSON 包含 username 和 password，仅留车端。把外部 YAML 的绝对路径传给 `slicer_field_sensors.launch config_file:=...`。默认 YAML 里的 /dev/gnss 和 /run/secrets/ 对应旧容器。
 - 旧 MID360 雷达/主机地址是 192.168.1.192 / 192.168.1.5，旧接口 enP8p1s0。电台车端/飞机端为 192.168.10.33 / 192.168.10.32。在新系统按实际接口确认。旧盘两种 CORS 配置都关联临时服务，当前服务和站点基准由现场确认。
 

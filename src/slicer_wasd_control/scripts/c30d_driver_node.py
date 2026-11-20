@@ -1,0 +1,63 @@
+#!/usr/bin/env python3
+"""唯一串口所有者：/cmd_vel -> Test同款0x16闭环；不产生开环PWM指令。"""
+import copy,math,os,sys,time
+from pathlib import Path
+sys.dont_write_bytecode=True
+sys.path.insert(0,str(Path(__file__).resolve().parent))
+workspace=Path(os.environ.get('WORKSPACE2_ROOT') or Path(__file__).resolve().parents[3])
+sys.path.insert(0,str(workspace/'Hardware/Host'))
+from chassis import Chassis,load_config as load_host
+from control_core import load_config
+from driver_core import Session,EncoderTap,Odometry
+import rospy
+from geometry_msgs.msg import Twist
+from nav_msgs.msg import Odometry as OdomMsg
+from std_msgs.msg import Bool
+
+def main():
+    rospy.init_node('slicer_c30d_driver')
+    c=load_config(rospy.get_param('~config_file'))
+    host=copy.deepcopy(load_host(rospy.get_param('~host_config_file',str(workspace/'Hardware/config.yaml'))))
+    # Test档位上限不限制导航自转；导航仍受原配置及MCU自身0.8m/s、3.5rad/s上限管理。
+    host['speed']['linear_max']=c['max_linear'];host['speed']['angular_max']=c['max_angular']
+    car=None;ready_pub=rospy.Publisher('~ready',Bool,queue_size=1,latch=True)
+    odom_pub=rospy.Publisher(c['odom_topic'],OdomMsg,queue_size=5)
+    ready_pub.publish(False);session=None;odom=Odometry(c)
+    mock=rospy.get_param('~mock',False)
+    def receive(msg):
+        if session is not None:session.command(msg.linear.x,msg.angular.z,time.monotonic())
+    rospy.Subscriber(c['output_topic'],Twist,receive,queue_size=1)
+    try:
+        if not mock:
+            car=Chassis(host);tap=EncoderTap(car.parser);car.parser=tap;car.connect()
+            session=Session(car,c,rospy.get_param('~wait_for_fault_clear',True))
+            rospy.loginfo('Workspace2 v1.1 USB=%s signs=%s/%s; 0x16 vx/wz; PWM cap80%%; lidar-only navigation',host['serial']['serial_number'],host['serial']['pwm_signs'],host['serial']['encoder_signs'])
+        else:rospy.loginfo('MOCK_ONLY: no serial is opened, no physical motor commands')
+        while not rospy.is_shutdown():
+            value=None
+            if session:
+                v,w,ready,first,recovered=session.cycle(time.monotonic());ready_pub.publish(ready)
+                if first:rospy.logerr('MCU_FAULT_HELD flags=%s; zero output; Motor OFF required; navigation retained',session.fault_flags)
+                if session.recovery_error:rospy.logwarn_throttle(3.,'MCU recovery pending: %s',session.recovery_error)
+                if recovered:rospy.loginfo('MCU_RECOVERED: old velocity discarded; only fresh commands accepted')
+                value=odom.update(tap.sample,car.body)
+            else:
+                ready_pub.publish(True);value=(0.,0.,0.,0.,0.)
+            if value:
+                x,y,yaw,v,w=value;msg=OdomMsg();msg.header.stamp=rospy.Time.now()
+                msg.header.frame_id=c['odom_frame'];msg.child_frame_id=c['base_frame']
+                msg.pose.pose.position.x=x;msg.pose.pose.position.y=y
+                msg.pose.pose.orientation.z=math.sin(yaw/2);msg.pose.pose.orientation.w=math.cos(yaw/2)
+                msg.twist.twist.linear.x=v;msg.twist.twist.angular.z=w
+                for i in [0,7,35]:msg.pose.covariance[i]=msg.twist.covariance[i]=.1
+                for i in [14,21,28]:msg.pose.covariance[i]=msg.twist.covariance[i]=1e6
+                odom_pub.publish(msg)
+            time.sleep(1./c['publish_hz'])
+    finally:
+        try:ready_pub.publish(False)
+        except rospy.ROSException:pass
+        if car:car.close()
+if __name__=='__main__':
+    try:main()
+    except (KeyboardInterrupt,rospy.ROSInterruptException):pass
+    except Exception as exc:rospy.logfatal('%s',exc);raise SystemExit(1)

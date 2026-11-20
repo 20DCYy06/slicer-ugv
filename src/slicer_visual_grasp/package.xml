@@ -1,0 +1,19 @@
+<?xml version="1.0"?>
+<package format="2">
+  <name>slicer_visual_grasp</name>
+  <version>1.0.0</version>
+  <description>Standalone Slicer visual grasp and AirGrip desktop application</description>
+  <maintainer email="robot@example.invalid">potato</maintainer>
+  <license>BSD-3-Clause</license>
+  <buildtool_depend>catkin</buildtool_depend>
+  <exec_depend>python3-numpy</exec_depend>
+  <exec_depend>python3-opencv</exec_depend>
+  <exec_depend>python3-pil</exec_depend>
+  <exec_depend>python3-pil-imagetk</exec_depend>
+  <exec_depend>python3-rospkg</exec_depend>
+  <exec_depend>python3-serial</exec_depend>
+  <exec_depend>python3-tk</exec_depend>
+  <exec_depend>python3-yaml</exec_depend>
+  <exec_depend>psmisc</exec_depend>
+  <exec_depend>rospack</exec_depend>
+</package>
