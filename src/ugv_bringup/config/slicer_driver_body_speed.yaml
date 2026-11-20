@@ -1,16 +1,16 @@
 control_mode: body_speed
-serial_port: auto
+serial_port: /dev/c30d
 usb_vid: 6790
 usb_pid: 21972
-serial_number: 5CF0016129
+serial_number: 5CF0016377
 baud: 115200
 counts_per_revolution: 60000
 max_wheel_mm_s: 600
 test_pwm_limit_permille: 750
 ros_driver_pwm_limit_permille: 600
 pwm_signs:
-- 1
 - -1
+- 1
 - -1
 - -1
 test_pwm_signs:
@@ -19,8 +19,8 @@ test_pwm_signs:
 - 1
 - -1
 encoder_signs:
-- 1
 - -1
+- 1
 - 1
 - -1
 wheel_ports:
@@ -55,4 +55,4 @@ body_feedback_timeout_s: 0.3
 body_imu_timeout_ms: 100
 wheelbase: 0.13
 motor_output_limit_percent: 100
-mcu_pwm_accept_max_permille: 800
+mcu_pwm_accept_max_permille: 982

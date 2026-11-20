@@ -10,11 +10,11 @@ frames:
   laser: laser_link
   arm: arm_base_link
 chassis:
-  serial_port: /dev/ttyACM0
+  serial_port: /dev/c30d
   fallback_port: /dev/ttyUSB0
   usb_vid: 6790
   usb_pid: 21972
-  serial_number: 5CF0016129
+  serial_number: 5CF0016377
   baud: 115200
   firmware_confirmed: false
   polarity_verified: false
@@ -41,13 +41,13 @@ chassis:
     left_rear: B
     right_rear: A
   encoder_signs:
-  - 1
   - -1
+  - 1
   - 1
   - -1
   pwm_signs:
-  - 1
   - -1
+  - 1
   - -1
   - -1
   control_hz: 100

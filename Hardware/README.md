@@ -2,7 +2,11 @@
 
 本工程独立于旧工作空间。以下命令从当前工作区根目录运行。独立操作入口见 [机电工具](../tools/manual/README.md)。
 
-## 当前安装：v1.4 PB14
+## v1.5 PB14 替换板固件
+
+替换板 `5CF0016377` 使用 v1.5 配套配置。车体和单轮速度目标上限为 1.0 m/s，闭环 PWM 配置上限为 98.2%，在 1600 计数周期内实际取 1571 ticks。四轮默认 PWM 和编码器极性与手推复测及现场方向一致。运行入口与回退见 [v1.5 说明](Firmware/v1.5/README.md)。
+
+## 历史安装：v1.4 PB14
 
 舵机已由PB15/TIM12_CH2切换至PB14/TIM12_CH1，其他底盘参数沿用v1.2。
 原板双份512KiB备份一致，基线匹配后仅写sector0，整片读回及选项字节校验通过。
@@ -105,7 +109,7 @@ python3 -s Hardware/Unlock/unlock.py --unlock
 
 `Hardware/Audit/old_workspace_before_20261107.json`记录旧树8614项mode/size/mtime/ctime/链接目标，验收对照由`isolation_report.json`给出。旧工作空间及其子目录本次未发现Git仓库，不能伪称git clean；采用文件系统元数据与参考源码SHA256核验。读取可能按文件系统策略更新访问时间atime，不修改内容、mtime或ctime。
 
-## PB14 v1.4（已安装）
+## PB14 v1.4 历史安装
 仅将当前v1.2舵机引脚由PB15/TIM12_CH2替换为PB14/TIM12_CH1。
 四轮闭环、IMU和速度参数不变，不合入独立v1.3提速候选。
 二进制：Firmware/v1.4/bin/firmware.bin；验证：Firmware/v1.4/validation.json。

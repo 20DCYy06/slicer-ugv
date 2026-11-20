@@ -83,11 +83,11 @@ class IntegrationTests(unittest.TestCase):
         v,w=c.gamepad_target({1:-1,2:-1},gear,cfg['gamepad'])
         self.assertEqual((v,w),(.1,.05))
         for _ in range(30):gear.change(1)
-        self.assertEqual((gear.v,gear.w),(.6,.5))
+        self.assertEqual((gear.v,gear.w),(1.,.5))
     def test_combined_config_uses_recovered_speed_and_shared_devices(self):
         config = json.loads((HERE / 'combined_gamepad.json').read_text())
         cfg = c.gamepad_config(c.load_config(HERE / config['hardware_config']))
-        self.assertEqual(cfg['speed']['linear_max'], .8)
+        self.assertEqual(cfg['speed']['linear_max'], 1.)
         for key in ('servo_config', 'airgrip_config'):
             self.assertTrue((HERE / config[key]).is_file())
 

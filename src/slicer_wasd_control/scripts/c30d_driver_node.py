@@ -18,7 +18,7 @@ def main():
     rospy.init_node('slicer_c30d_driver')
     c=load_config(rospy.get_param('~config_file'))
     host=copy.deepcopy(load_host(rospy.get_param('~host_config_file',str(workspace/'Hardware/config.yaml'))))
-    # Test档位上限不限制导航自转；导航仍受原配置及MCU自身0.8m/s、3.5rad/s上限管理。
+    # 导航使用自身的速度参数，MCU 仍执行其编译限幅。
     host['speed']['linear_max']=c['max_linear'];host['speed']['angular_max']=c['max_angular']
     car=None;ready_pub=rospy.Publisher('~ready',Bool,queue_size=1,latch=True)
     odom_pub=rospy.Publisher(c['odom_topic'],OdomMsg,queue_size=5)
@@ -31,7 +31,9 @@ def main():
         if not mock:
             car=Chassis(host);tap=EncoderTap(car.parser);car.parser=tap;car.connect()
             session=Session(car,c,rospy.get_param('~wait_for_fault_clear',True))
-            rospy.loginfo('Workspace2 v1.1 USB=%s signs=%s/%s; 0x16 vx/wz; PWM cap80%%; lidar-only navigation',host['serial']['serial_number'],host['serial']['pwm_signs'],host['serial']['encoder_signs'])
+            rospy.loginfo('C30D USB=%s signs=%s/%s; 0x16 vx/wz; PWM cap=%.1f%%; lidar-only navigation',
+                          host['serial']['serial_number'],host['serial']['pwm_signs'],
+                          host['serial']['encoder_signs'],host['control'].get('mcu_pwm_accept_max_permille',800)/10)
         else:rospy.loginfo('MOCK_ONLY: no serial is opened, no physical motor commands')
         while not rospy.is_shutdown():
             value=None

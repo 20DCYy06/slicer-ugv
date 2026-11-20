@@ -44,7 +44,7 @@ def generate(root,output,workspace2=None):
     slam=yaml.safe_load((root/'templates/gmapping.yaml').read_text())
     slam.update(map_frame=c['frames']['map'],odom_frame=c['frames']['odom'],base_frame=c['frames']['base'])
     save('slam.yaml',slam)
-    # 串口极性和设备身份仅来自Workspace2已验证配置，禁止使用旧板6377的参数。
+    # 车端设备身份和极性来自 Hardware/config.yaml。
     workspace2=Path(workspace2 or os.environ.get('WORKSPACE2_ROOT') or REPO)
     host=yaml.safe_load((workspace2/'Hardware/config.yaml').read_text())
     serial=host['serial']

@@ -14,10 +14,11 @@ sys.path.insert(0,str(SCRIPTS));import c30d_link
 class MigrationTests(unittest.TestCase):
     def test_new_board_identity_signs_and_geometry(self):
         c=yaml.safe_load((ROOT/'src/ugv_bringup/config/slicer_driver_body_speed.yaml').read_text())
-        self.assertEqual(c['control_mode'],'body_speed');self.assertEqual(c['serial_number'],'5CF0016129')
-        self.assertEqual(c['pwm_signs'],[1,-1,-1,-1]);self.assertEqual(c['encoder_signs'],[1,-1,1,-1])
+        self.assertEqual(c['control_mode'],'body_speed')
+        self.assertEqual((c['serial_port'],c['serial_number']),('/dev/c30d','5CF0016377'))
+        self.assertEqual(c['pwm_signs'],[-1,1,-1,-1]);self.assertEqual(c['encoder_signs'],[-1,1,1,-1])
         self.assertEqual((c['wheel_diameter'],c['track_width'],c['wheelbase']),(.065,.179,.13))
-        self.assertEqual((c['motor_output_limit_percent'],c['mcu_pwm_accept_max_permille']),(100,800))
+        self.assertEqual((c['motor_output_limit_percent'],c['mcu_pwm_accept_max_permille']),(100,982))
     def test_new_lidar_mount_and_antenna(self):
         c=yaml.safe_load((ROOT/'src/ugv_bringup/config/online_runtime/config/slicer_config.yaml').read_text())
         self.assertEqual(c['sensors']['base_to_laser']['xyz'],[.065,0.,.095]);self.assertEqual(c['sensors']['scan_min_height'],.05)
@@ -31,6 +32,9 @@ class MigrationTests(unittest.TestCase):
         def invalid(kind,payload):car.output_limit_ack=(123,100,982,1600,1571)
         car.send=invalid
         with self.assertRaises(RuntimeError):car.set_output_limit_percent(100)
+        self.assertEqual(car.set_output_limit_percent(100,982)['pwm_ticks'],1571)
+        car.send=lambda kind,payload: setattr(car,'output_limit_ack',(123,payload[-1],982,1600,785))
+        self.assertEqual(car.set_output_limit_percent(50,982)['pwm_ticks'],785)
     def test_body_twist_wire_format_stays_vx_wz(self):
         car=c30d_link.Chassis.__new__(c30d_link.Chassis);car.nonce=123;sent=[];car.send=lambda kind,data:sent.append((kind,data))
         car.body_speed(.4,-.25);self.assertEqual(sent,[(0x16,struct.pack('<Ihh',123,400,-250))])

@@ -223,8 +223,8 @@ class Chassis:
         self.output_limit_ack=None
         self.send(0x18,struct.pack('<IB',self.nonce,percent))
         self.wait(lambda:self.output_limit_ack is not None,1.)
-        expected=(self.nonce,percent,maximum,1600,1280*percent//100)
-        if self.output_limit_ack!=expected:raise RuntimeError('Workspace2 MCU80% output ceiling mismatch: '+str(self.output_limit_ack))
+        expected=(self.nonce,percent,maximum,1600,(1600*maximum//1000)*percent//100)
+        if self.output_limit_ack!=expected:raise RuntimeError('C30D output ceiling mismatch: '+str(self.output_limit_ack))
         return dict(percent=percent,mcu_max_permille=maximum,period=1600,pwm_ticks=expected[-1])
 
     def require_pwm_test(self):

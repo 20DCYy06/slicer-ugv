@@ -2,7 +2,7 @@
 
 在工作区根目录运行以下命令。开始独立串口控制前，先退出 ROS 底盘驱动和占用同一设备的其他程序。
 
-WASD默认低档：线速度0.10 m/s，角速度0.1 rad/s。R升档、E降档，分别按0.05 m/s与0.1 rad/s递增/递减，独立到各自上限0.60 m/s和1.0 rad/s后饱和；两轴上下限所需档数不同，不强制按同一整数档映射。
+WASD默认低档：线速度0.10 m/s，角速度0.1 rad/s。R升档、E降档，分别按0.05 m/s与0.1 rad/s递增/递减，独立到各自上限 1.0 m/s 和 1.0 rad/s后饱和；两轴上下限所需档数不同，不强制按同一整数档映射。
 
 ## WASD（默认SSH终端）
 
@@ -23,7 +23,7 @@ WASD默认低档：线速度0.10 m/s，角速度0.1 rad/s。R升档、E降档，
 ./tools/manual/run_gamepad.sh
 ```
 
-纯底盘模式（`./tools/manual/run_gamepad.sh --drive-only`）中，左摇杆Y（轴1）给前后油门，右摇杆X（轴2）控制左右转向；v1.1已在底层纠正车体坐标；手柄使用throttle_sign=-1、steering_sign=-1，把Linux左Y向上/右X向左的负轴值转换为正vx/正wz。符号位于gamepad.throttle_sign、steering_sign。手柄角速度档位单独为0.05～0.5 rad/s，每步0.05，线速度仍为0.1～0.6 m/s；WASD角速度仍按原档位。左右各给独立分量，可同时使用。当前USB WirelessGamepad的Linux轴代码[0,1,2,5,16,17]与旧程序对应；不使用左X替代右X。
+纯底盘模式（`./tools/manual/run_gamepad.sh --drive-only`）中，左摇杆Y（轴1）给前后油门，右摇杆X（轴2）控制左右转向；v1.1已在底层纠正车体坐标；手柄使用throttle_sign=-1、steering_sign=-1，把Linux左Y向上/右X向左的负轴值转换为正vx/正wz。符号位于gamepad.throttle_sign、steering_sign。手柄角速度档位单独为0.05～0.5 rad/s，每步0.05，线速度为 0.1～1.0 m/s；WASD角速度仍按原档位。左右各给独立分量，可同时使用。当前USB WirelessGamepad的Linux轴代码[0,1,2,5,16,17]与旧程序对应；不使用左X替代右X。
 
 当前手柄RB/TR对应按钮7升档，LB/TL对应按钮6降档；终端R/E也可调档。B按钮1或空格停止，终端Q/Esc退出。轴回中时平滑归零；停止键后需重新拨杆才恢复。拔出手柄或程序异常会发送全停止；主机断开后MCU原500ms看门狗兜底。其他手柄可在`Hardware/config.yaml`调整device、轴/按键编号与死区。
 
@@ -43,7 +43,7 @@ v1.1方向约定：W下发正vx、S下发负vx；A下发正wz、D下发负wz。�
 
 ## 融合手柄入口与外设
 
-`./tools/manual/run_gamepad.sh` 默认启用双摇杆+Y/A舵机+X/B吸放。按键X=3、Y=0、B=1、A=2。Y/A按住转松开停，X/B按一次执行吸放；B不再停车。纯底盘旧模式使用`--drive-only`。无硬件测试 `./tools/manual/run_gamepad.sh --test`。自定义配置使用 `./tools/manual/run_combined_gamepad.sh --run --config FILE`。从 SSD 恢复的默认融合配置仍使用 0.8 m/s 上限。
+`./tools/manual/run_gamepad.sh` 默认启用双摇杆+Y/A舵机+X/B吸放。按键X=3、Y=0、B=1、A=2。Y/A按住转松开停，X/B按一次执行吸放；B不再停车。纯底盘旧模式使用`--drive-only`。无硬件测试 `./tools/manual/run_gamepad.sh --test`。自定义配置使用 `./tools/manual/run_combined_gamepad.sh --run --config FILE`。默认融合配置配合 v1.5 固件使用 1.0 m/s 线速度上限。
 
 - [融合手柄](combined_gamepad/COMBINED_GAMEPAD.md)
 - [PB14/PB15 舵机](b15_servo/README.md)

@@ -72,9 +72,12 @@ class Chassis:
         percent=self.config['control']['motor_output_limit_percent']
         self.send(0x18,struct.pack('<IB',self.nonce,percent));self.wait(lambda:0x85 in self.replies)
         n,p,maximum,period,ticks=struct.unpack('<IBHHH',self.replies[0x85])
-        if (n,p,maximum,period,ticks)!=(self.nonce,percent,800,1600,1280*percent//100):raise RuntimeError('新固件80%输出上限未确认')
+        expected_cap=self.config['control'].get('mcu_pwm_accept_max_permille',800)
+        expected_ticks=(1600*expected_cap//1000)*percent//100
+        if (n,p,maximum,period,ticks)!=(self.nonce,percent,expected_cap,1600,expected_ticks):
+            raise RuntimeError('底盘固件输出上限不匹配: expected %d‰, received %d‰' % (expected_cap,maximum))
         self.wait(lambda:self.body is not None and self.body['imu_flags']&7==7,10.)
-        print('[CONNECTED]',self.path,'0x16 vx/wz, PWM cap=80%, watchdog=500ms',flush=True)
+        print('[CONNECTED]',self.path,'0x16 vx/wz, PWM cap=%.1f%%, watchdog=500ms'%(maximum/10),flush=True)
     def speed(self,v,w):
         if not math.isfinite(v) or not math.isfinite(w):raise ValueError('速度不是有限值')
         s=self.config['speed']

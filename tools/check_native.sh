@@ -33,7 +33,10 @@ for source in ('no_rtk/.generated', 'rtk_config/online_runtime/.generated'):
     for filename in ('sensor_launch.yaml', 'fusion.yaml', 'lio.yaml', 'scan.yaml', 'MID360.json'):
         assert (runtime / source / filename).is_file(), (source, filename)
 profile = yaml.safe_load((runtime / 'rtk_config/slicer_driver_body_speed.yaml').read_text())
-assert profile['serial_number'] == '5CF0016129'
+assert profile['serial_number'] == '5CF0016377'
+assert profile['serial_port'] == '/dev/c30d'
+assert profile['pwm_signs'] == [-1, 1, -1, -1]
+assert profile['encoder_signs'] == [-1, 1, 1, -1]
 print('NATIVE_PREFLIGHT_OK: 15 packages, one message definition and both runtime profiles')
 PY
     exit 0

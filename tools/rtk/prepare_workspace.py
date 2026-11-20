@@ -32,6 +32,7 @@ def generate(config_dir):
     vehicle = yaml.safe_load((REPOSITORY / 'Hardware/config.yaml').read_text())
     serial = vehicle['serial']
     driver.update(
+        serial_port=serial['port'],
         serial_number=serial['serial_number'],
         pwm_signs=serial['pwm_signs'],
         encoder_signs=serial['encoder_signs'],
@@ -40,7 +41,7 @@ def generate(config_dir):
         track_width=0.179,
         wheelbase=0.13,
         motor_output_limit_percent=vehicle['control']['motor_output_limit_percent'],
-        mcu_pwm_accept_max_permille=800,
+        mcu_pwm_accept_max_permille=vehicle['control'].get('mcu_pwm_accept_max_permille', 800),
     )
     (config_dir / driver_name).write_text(yaml.safe_dump(driver, sort_keys=False))
     print('RTK_WORKSPACE2_PARAMETERS_READY board=' + serial['serial_number'])

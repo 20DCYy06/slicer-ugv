@@ -11,7 +11,7 @@ class Tests(unittest.TestCase):
         g=Gear(load_config())
         self.assertEqual((g.v,g.w),(.1,.1))
         for n in range(1,21):
-            g.change(1);self.assertEqual(g.v,round(min(.6,.1+n*.05),3));self.assertEqual(g.w,round(min(1.,.1+n*.1),3))
+            g.change(1);self.assertEqual(g.v,round(min(1.,.1+n*.05),3));self.assertEqual(g.w,round(min(1.,.1+n*.1),3))
         for n in range(20):g.change(-1)
         self.assertEqual((g.v,g.w),(.1,.1))
     def test_keyboard_curve_release(self):
@@ -28,16 +28,16 @@ class Tests(unittest.TestCase):
     def test_gamepad_range_and_deadzone(self):
         c=gamepad_config(load_config());g=Gear(c)
         self.assertEqual(gamepad_target({2:.05,1:-.04},g,c['gamepad']),(0.,0.))
-        for n in range(11):g.change(1)
-        self.assertEqual(gamepad_target({2:1.,1:-1.},g,c['gamepad']),(.6,-.5))
+        for n in range(18):g.change(1)
+        self.assertEqual(gamepad_target({2:1.,1:-1.},g,c['gamepad']),(1.,-.5))
     def test_gamepad_halved_gears_and_reversed_directions(self):
         c=gamepad_config(load_config());g=Gear(c)
         self.assertEqual((g.v,g.w),(.1,.05))
         self.assertEqual(gamepad_target({1:-1.,2:-1.},g,c['gamepad']),(.1,.05))
-        for n in range(1,12):
+        for n in range(1,19):
             g.change(1);self.assertEqual(g.w,round(min(.5,.05+n*.05),3))
-        self.assertEqual((g.v,g.w),(.6,.5))
-        for n in range(12):g.change(-1)
+        self.assertEqual((g.v,g.w),(1.,.5))
+        for n in range(18):g.change(-1)
         self.assertEqual((g.v,g.w),(.1,.05))
         self.assertEqual(gamepad_target({0:1.},g,c['gamepad']),(0.,0.))
     def test_frame_crc_fragmentation(self):
@@ -47,8 +47,8 @@ class Tests(unittest.TestCase):
         bad=bytearray(f);bad[-1]^=1;self.assertEqual(Parser().feed(bad),[])
     def test_body_only_no_pwm(self):
         c=object.__new__(Chassis);c.config=load_config();c.nonce=123;calls=[];c.send=lambda kind,p:calls.append((kind,p))
-        c.speed(.6,1.);self.assertEqual(calls,[(0x16,struct.pack('<Ihh',123,600,1000))])
-        for v,w in [(float('nan'),0),(.61,0),(0,1.01)]:
+        c.speed(1.,1.);self.assertEqual(calls,[(0x16,struct.pack('<Ihh',123,1000,1000))])
+        for v,w in [(float('nan'),0),(1.001,0),(0,1.01)]:
             with self.assertRaises(ValueError):c.speed(v,w)
     def test_joystick_buttons_and_disconnect(self):
         from control_core import Joystick,EVENT

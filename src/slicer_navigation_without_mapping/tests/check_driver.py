@@ -75,5 +75,7 @@ class DriverChecks(unittest.TestCase):
         self.assertAlmostEqual(value[3],math.pi*.065,places=8);self.assertAlmostEqual(value[2],.05);self.assertEqual(value[4],.5)
     def test_new_board_identity_and_verified_polarities(self):
         c=yaml.safe_load((WORKSPACE/'Hardware/config.yaml').read_text())
-        self.assertEqual(c['serial']['serial_number'],'5CF0016129');self.assertEqual(c['serial']['encoder_signs'],[1,-1,1,-1]);self.assertEqual(c['serial']['pwm_signs'],[1,-1,-1,-1])
+        self.assertEqual((c['serial']['port'],c['serial']['serial_number']),('/dev/c30d','5CF0016377'))
+        self.assertEqual(c['serial']['encoder_signs'],[-1,1,1,-1])
+        self.assertEqual(c['serial']['pwm_signs'],[-1,1,-1,-1])
 if __name__=='__main__':unittest.main(verbosity=2)
