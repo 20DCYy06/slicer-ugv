@@ -24,6 +24,7 @@ def main():
     odom_pub=rospy.Publisher(c['odom_topic'],OdomMsg,queue_size=5)
     ready_pub.publish(False);session=None;odom=Odometry(c)
     mock=rospy.get_param('~mock',False)
+    test_service=None
     def receive(msg):
         if session is not None:session.command(msg.linear.x,msg.angular.z,time.monotonic())
     rospy.Subscriber(c['output_topic'],Twist,receive,queue_size=1)
@@ -31,6 +32,8 @@ def main():
         if not mock:
             car=Chassis(host);tap=EncoderTap(car.parser);car.parser=tap;car.connect()
             session=Session(car,c,rospy.get_param('~wait_for_fault_clear',True))
+            if session.wait_fault and os.environ.get('SLICER_C30D_ENABLE_LOCK_TEST')=='1':
+                test_service=session.link_recovery.start_test_service(rospy)
             rospy.loginfo('C30D USB=%s signs=%s/%s; 0x16 vx/wz; PWM cap=%.1f%%; lidar-only navigation',
                           host['serial']['serial_number'],host['serial']['pwm_signs'],
                           host['serial']['encoder_signs'],host['control'].get('mcu_pwm_accept_max_permille',800)/10)
@@ -39,7 +42,7 @@ def main():
             value=None
             if session:
                 v,w,ready,first,recovered=session.cycle(time.monotonic());ready_pub.publish(ready)
-                if first:rospy.logerr('MCU_FAULT_HELD flags=%s; zero output; Motor OFF required; navigation retained',session.fault_flags)
+                if first:rospy.logerr('MCU_FAULT_HELD flags=%s; zero output during chassis recovery',session.fault_flags)
                 if session.recovery_error:rospy.logwarn_throttle(3.,'MCU recovery pending: %s',session.recovery_error)
                 if recovered:rospy.loginfo('MCU_RECOVERED: old velocity discarded; only fresh commands accepted')
                 value=odom.update(tap.sample,car.body)
@@ -56,6 +59,7 @@ def main():
                 odom_pub.publish(msg)
             time.sleep(1./c['publish_hz'])
     finally:
+        if test_service:test_service.shutdown()
         try:ready_pub.publish(False)
         except rospy.ROSException:pass
         if car:car.close()

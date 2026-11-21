@@ -1,5 +1,6 @@
 """Verified sector-zero upgrade for the current replacement C30D."""
 import argparse
+import json
 import struct
 import sys
 
@@ -9,8 +10,9 @@ from chassis import Chassis
 BOARD = ("1a86", "55d4", "5CF0016377")
 
 
-def read_candidate(version, image_sha):
-    path = flash.ROOT / "Hardware/Firmware" / version / "src/build/c30d_body.bin"
+def read_candidate(version, image_sha, *, archived=False):
+    root = flash.ROOT / "Hardware/Firmware" / version
+    path = root / ("bin/firmware.bin" if archived else "src/build/c30d_body.bin")
     image = path.read_bytes()
     if flash.sha(image) != image_sha:
         raise RuntimeError(f"{version} 镜像哈希与验收记录不匹配")
@@ -20,12 +22,17 @@ def read_candidate(version, image_sha):
     return image
 
 
-def install(version, baseline_sector_sha, image_sha):
+def install(version, baseline_sector_sha, image_sha, *, archived=False):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--power-off-confirmed", action="store_true")
     if not parser.parse_args().power_off_confirmed:
         parser.error("需要确认 Motor OFF、物理断开 12V、仅 USB 供电")
-    candidate = read_candidate(version, image_sha)
+    candidate = read_candidate(version, image_sha, archived=archived)
+    if archived:
+        manifest_path = flash.ROOT / "Hardware/Firmware" / version / "bin/manifest.json"
+        artifact = candidate, json.loads(manifest_path.read_text())
+    else:
+        artifact = None
     config = flash.load_config()
     _, expected = flash.device(config)
     if expected != BOARD:
@@ -49,4 +56,4 @@ def install(version, baseline_sector_sha, image_sha):
 
     flash.SectorZeroROM = VerifiedROM
     sys.argv = [sys.argv[0], "--version", version, "--flash", "--power-off-confirmed"]
-    flash.main()
+    flash.main(artifact=artifact)

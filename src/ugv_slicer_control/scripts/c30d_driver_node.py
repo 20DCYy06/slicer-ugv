@@ -9,6 +9,7 @@ movement, braking or ground stop.
 import hashlib
 import json
 import math
+import os
 from pathlib import Path
 import sys
 import threading
@@ -16,6 +17,7 @@ import time
 import uuid
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.append(str(Path(__file__).resolve().parents[3] / 'Hardware' / 'Host'))
 import rospy
 import tf2_ros
 from diagnostic_msgs.msg import DiagnosticArray, DiagnosticStatus, KeyValue
@@ -29,6 +31,7 @@ import control_core
 import serial_transport
 import slicer_manual
 from c30d_link import Chassis
+from chassis_recovery import LinkRecovery, fault_mask, paired_body_status, recoverable
 from chassis_core import Odometry
 from control_core import load_config, wheel_pwm, wheel_speed_mm_s, limit_pwm, Slew
 
@@ -133,6 +136,8 @@ def main():
     slew, last = Slew(c), time.monotonic()
     previous_speed = [0]*4
     next_motor_register_request = 0.
+    recovery = LinkRecovery(arm_watchdog=body_mode)
+    test_service = None
     try:
         if not mock:
             car = Chassis(c, observe=emit)
@@ -174,6 +179,8 @@ def main():
                     raise RuntimeError('SLC2 continuous PWM capability does not match configuration')
         if body_mode:
             rospy.logwarn('SLC2 body_speed: SI Twist via 0x16, encoder vx + MCU IMU wz; fresh 0x93 feedback required. No host PWM limit or fallback to wheel/PWM mode.')
+            if car and os.environ.get('SLICER_C30D_ENABLE_LOCK_TEST') == '1':
+                test_service = recovery.start_test_service(rospy)
         elif mode == 'wheel_speed':
             rospy.logwarn('SLC2 wheel_speed: target ABCD mm/s via 0x10 after 0x12 configuration; MCU PI/signs/units require physical validation. Host PWM cap is not enforced; MCU reference compiled cap=600 permille, installed firmware unverified.')
         else:
@@ -181,6 +188,7 @@ def main():
                           pwm_limit, c['test_pwm_limit_permille'])
         while not rospy.is_shutdown():
             telemetry_recent = True
+            recovery_hold = False
             if car:
                 car.poll(0)
                 if time.monotonic() - car.last_rx > .25:
@@ -190,12 +198,42 @@ def main():
                             break
                 age = time.monotonic() - car.last_rx
                 if age > c['telemetry_timeout_s']:
+                    previous_body = car.body_telemetry or {}
+                    was_recovering = recovery.active
+                    if body_mode and recovery.wait_for_telemetry(
+                            time.monotonic(), previous_body.get('status_flags'), age):
+                        previous = None  # Rebaseline encoders without resetting the integrated pose.
+                        with lock:
+                            target[:] = [0., 0., -math.inf]
+                        publish_ready(False)
+                        if not was_recovering:
+                            emit('mcu_recovery_hold', reason='telemetry_gap', age_s=age)
+                        time.sleep(1/c['publish_hz'])
+                        continue
                     raise RuntimeError('MCU telemetry timeout (%.3fs): stopping outputs' % age)
                 telemetry_recent = age <= .30
                 if not telemetry_recent:
                     rospy.logwarn_throttle(2, 'MCU telemetry delayed %.3fs; zero motor command until fresh data arrives', age)
                 s = car.status
-                if s['flags'] & 4:
+                if body_mode:
+                    latest_body = car.body_telemetry or {}
+                    body_status = (latest_body['status_flags']
+                                   if telemetry_recent and car.last_body_rx > recovery.need_body_after
+                                   and car.body_feedback_fresh(
+                                       c['body_feedback_timeout_s'], c['body_imu_timeout_ms']) else None)
+                    body_status = paired_body_status(body_status, s['tick'], latest_body.get('mcu_us'))
+                    was_recovering = recovery.active
+                    recovery_hold, recovered = recovery.update(car, time.monotonic(), s['flags'], body_status,
+                                                               last_body_status=latest_body.get('status_flags'))
+                    if recovery_hold:
+                        with lock:
+                            target[:] = [0., 0., -math.inf]
+                        if not was_recovering or recovered:
+                            emit('mcu_recovered' if recovered else 'mcu_recovery_hold',
+                                 fault_mask=fault_mask(body_status))
+                            rospy.loginfo('MCU_RECOVERED' if recovered else 'MCU_RECOVERY_HOLD')
+                if s['flags'] & 4 and (not recovery_hold or
+                                      (body_mode and fault_mask(body_status) and not recoverable(body_status))):
                     if body_mode:
                         car.body_speed(0., 0.)
                     elif mode == 'wheel_speed':
@@ -217,6 +255,8 @@ def main():
             if not telemetry_recent:
                 v, w, stop_reason = 0., 0., 'telemetry_delayed'
             ready = bool(car and telemetry_recent and s['flags'] & 16 and s['flags'] & 32)
+            if recovery_hold:
+                v, w, stop_reason, ready = 0., 0., 'mcu_recovery', False
             if closed_loop and car and not (s['flags'] & 16 and s['flags'] & 32):
                 v, w, stop_reason = 0., 0., 'motor_disabled_or_power_missing'
             if body_mode:
@@ -287,6 +327,8 @@ def main():
         emit('fault', error=str(exc))
         raise
     finally:
+        if test_service:
+            test_service.shutdown()
         try:
             publish_ready(False)
         finally:

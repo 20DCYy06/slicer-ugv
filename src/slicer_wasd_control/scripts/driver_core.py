@@ -1,23 +1,44 @@
 """新底盘ROS适配核心；复用Test使用的Chassis，不另写通信/PWM控制器。"""
 import math,secrets,struct,time
+from chassis_recovery import LinkRecovery, RECOVERY_TELEMETRY_TIMEOUT, paired_body_status
 
 class Session:
     def __init__(self,car,c,wait_for_fault_clear=True):
         self.car,self.c,self.wait_fault=car,c,wait_for_fault_clear
         self.target=(0.,0.,-math.inf);self.held=False;self.retry_at=0.;self.recovery_error='';self.fault_flags=0
+        self.link_recovery=LinkRecovery(arm_watchdog=wait_for_fault_clear)
     def command(self,v,w,now):
         self.target=(v,w,now) if math.isfinite(v) and math.isfinite(w) else (0.,0.,-math.inf)
     def cycle(self,now):
         self.car.poll(0.)
-        if now-self.car.last_rx>self.c['telemetry_timeout_s']:
+        age=now-self.car.last_rx
+        last_body_status=(self.car.body or {}).get('status')
+        body_status=last_body_status
+        if age>self.c['telemetry_timeout_s']:
+            if self.link_recovery.wait_for_telemetry(now,body_status,age):
+                self.target=(0.,0.,-math.inf)
+                self.recovery_error='等待底盘遥测恢复'
+                return 0.,0.,False,False,False
             raise RuntimeError('MCU telemetry timeout; stop and close session')
         state=self.car.state;first=False;recovered=False
+        if body_status is not None and (now-self.car.last_body_rx>RECOVERY_TELEMETRY_TIMEOUT
+                                       or self.car.last_body_rx<=self.link_recovery.need_body_after
+                                       or age>RECOVERY_TELEMETRY_TIMEOUT):
+            body_status=None
+        imu=(self.car.body is not None and self.car.body['imu_flags']&7==7
+             and ('status' not in self.car.body or body_status is not None))
+        body_status=paired_body_status(body_status,state.get('tick'),(self.car.body or {}).get('tick'))
+        hold,recovered=False,False
+        if self.wait_fault:
+            hold,recovered=self.link_recovery.update(self.car,now,state['flags'],body_status,
+                                                      last_body_status=last_body_status)
+        if hold:
+            self.target=(0.,0.,-math.inf)
         if state['fault_latched']:
             if not self.wait_fault:raise RuntimeError('MCU fault latched')
             first=not self.held;self.held=True;self.target=(0.,0.,-math.inf)
             if first:self.fault_flags=state['flags']
-            # HELLO仅在Motor OFF时清故障，不绕过下位机保护。
-            if not state['motor_enabled'] and now>=self.retry_at:
+            if not state['motor_enabled'] and not self.link_recovery.capability_seen and now>=self.retry_at:
                 self.retry_at=now+1.
                 self.car.speed(0.,0.)
                 self.car.replies.clear();self.car.body=None;self.car.nonce=secrets.randbits(32)
@@ -27,15 +48,18 @@ class Session:
                 state=self.car.state
         if self.held:
             self.target=(0.,0.,-math.inf)
-            if not state['fault_latched']:self.held=False;recovered=True
+            if not state['fault_latched'] and not self.link_recovery.active:
+                self.held=False;recovered=True
+        if recovered:
+            self.recovery_error=''
         v,w,stamp=self.target
-        if self.held or now-stamp>=self.c['command_timeout_s']:v,w=0.,0.
+        if hold or self.held or now-stamp>=self.c['command_timeout_s']:v,w=0.,0.
         # 只保留原驱动的失联停车与对称速度上限；不添加转向补偿/二次包络。
         scale=max(1.,abs(v)/self.c['max_linear'],abs(w)/self.c['max_angular'])
         v,w=v/scale,w/scale
         self.car.speed(v,w)
-        imu=self.car.body is not None and self.car.body['imu_flags']&7==7
-        ready=bool(imu and state['configured'] and state['motor_enabled'] and state['motor_power_present'] and not state['fault_latched'])
+        ready=bool(imu and state['configured'] and state['motor_enabled'] and state['motor_power_present']
+                   and not state['fault_latched'] and not hold)
         return v,w,ready,first,recovered
 
 class EncoderTap:

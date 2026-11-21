@@ -6,6 +6,8 @@
 
 替换板 `5CF0016377` 的实际轮位为 A 左后、B 右后、C 右前、D 左前。v1.6 将该轮位用于固件的转向分配及 RTK、无 RTK 的轮速里程计。详见 [v1.6 固件说明](Firmware/v1.6/README.md)。
 
+v1.7 候选增加 Motor ON 时的通信锁存恢复。升级与恢复测试见 [整车操作手册](../docs/OPERATIONS.md#底盘通信锁存恢复与测试)。
+
 ## 历史安装：v1.5 PB14 替换板固件
 
 v1.5 首次部署到替换板 `5CF0016377`。车体和单轮速度目标上限为 1.0 m/s，闭环 PWM 配置上限为 98.2%，在 1600 计数周期内实际取 1571 ticks。四轮默认 PWM 和编码器极性与手推复测及现场方向一致。运行入口与回退见 [v1.5 说明](Firmware/v1.5/README.md)。
@@ -101,11 +103,11 @@ ROM串口76800 8E1；DTR/RTS启动序列复用已确认C30D方案。烧录器仅
 
 ```bash
 python3 -s Hardware/Unlock/unlock.py --check
-# 退出其他控制程序、停车并Motor OFF后执行
+# 退出其他控制程序并停车后执行
 python3 -s Hardware/Unlock/unlock.py --unlock
 ```
 
-`--check`只接收状态，无串口下行命令，不会先清掉故障证据。`--unlock`检查Motor OFF和零PWM后，复用HELLO清软件故障、配置极性并验证状态；不恢复旧目标、不发非零速度、不绕过物理Motor输入。完成后现场人员再开Motor并启动控制程序。退出码0成功、2查询到故障锁存、3通信/状态失败。日志全部在`Hardware/Logs/`。
+`--check` 只接收状态。 `--unlock` 在 Motor OFF 时沿用原 HELLO 清锁流程。安装 v1.7 后也可在 12 V 接通、Motor ON 时清除通信类锁存，由固件确认四轮静止及 PWM 为零。退出码 0 表示成功，2 表示查询到锁存，3 表示通信或状态失败。日志在 `Hardware/Logs/`。
 
 旧终端缺少进程组 `dialout` 时，两条命令会在串口打开被拒后自动复用账号已有的 `dialout` 权限。默认配置按 `/dev/c30d` 和 USB 序列号定位底盘。若提示未找到底盘，可先用 `readlink -e /dev/c30d` 检查设备是否已枚举。
 

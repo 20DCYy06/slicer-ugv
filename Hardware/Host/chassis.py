@@ -26,12 +26,12 @@ def device(config):
 
 def status(data):
     v=struct.unpack('<II4iBH4i4h4hH',data);f=v[6]
-    return dict(flags=f,fault_latched=bool(f&4),configured=bool(f&8),motor_enabled=bool(f&16),
+    return dict(tick=v[0],flags=f,fault_latched=bool(f&4),configured=bool(f&8),motor_enabled=bool(f&16),
         motor_power_present=bool(f&32),wheel_mm_s=list(v[12:16]),pwm_ticks=list(v[16:20]),battery_v=v[20]/1000)
 
 def body_status(data):
     v=struct.unpack('<4BI4h4h3h3h3h3h4h4H',data)
-    return dict(imu_flags=v[1],who=v[2],source=v[3],delta_raw_abcd=list(v[5:9]),
+    return dict(imu_flags=v[1],who=v[2],source=v[3],tick=v[4],delta_raw_abcd=list(v[5:9]),
         vx=v[25]/1000,wz=v[26]/1000,target_vx=v[27]/1000,target_wz=v[28]/1000,
         status=v[30],imu_age_ms=v[31])
 
@@ -40,14 +40,18 @@ class Chassis:
         self.config=config;self.path,expected=device(config)
         self.link=Link(self.path,expected,restore_on_close=False)
         self.parser=Parser();self.seq=0;self.nonce=secrets.randbits(32)
-        self.last_rx=0.;self.state=None;self.body=None;self.replies={};self.opened_session=False
+        self.last_rx=0.;self.last_body_rx=0.;self.state=None;self.body=None;self.replies={};self.opened_session=False
     def poll(self,timeout=0.):
         if not select.select([self.link.fd],[],[],timeout)[0]:return
         raw=os.read(self.link.fd,4096)
         if not raw:raise RuntimeError('底盘USB已断开')
         for kind,seq,data in self.parser.feed(raw):
             if kind==0x90 and len(data)==61:self.state=status(data);self.last_rx=time.monotonic()
-            elif kind==0x93 and len(data)==64:self.body=body_status(data)
+            elif kind==0x93 and len(data)==64 and data[0]==1:
+                sample=body_status(data)
+                if self.body is None or 0 < ((sample['tick']-self.body['tick']) & 0xffffffff) < 0x80000000:
+                    self.last_body_rx=time.monotonic()
+                    self.body=sample
             else:self.replies[kind]=data
     def wait(self,predicate,timeout=3.):
         end=time.monotonic()+timeout

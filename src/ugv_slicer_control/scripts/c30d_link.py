@@ -140,16 +140,17 @@ class Chassis:
                 elif kind == 0x85 and len(data) == 11:
                     self.output_limit_ack = struct.unpack('<IBHHH',data)
                 elif kind == 0x93:
-                    self.body_telemetry = decode_body(data)
+                    sample = decode_body(data)
                     received = time.monotonic()
-                    tick = self.body_telemetry['mcu_us']
+                    tick = sample['mcu_us']
                     # Only progress in the MCU sample clock refreshes this stream.
                     # uint32 subtraction accepts wrap, but rejects duplicates/replay.
                     if self._body_tick is None or 0 < ((tick-self._body_tick) & 0xffffffff) < 0x80000000:
                         self._body_tick = tick
                         self.last_body_rx = received
+                        self.body_telemetry = sample
                     self.record('body_telemetry', host_monotonic_s=received,
-                                mcu_frame_seq=seq, **self.body_telemetry)
+                                mcu_frame_seq=seq, **sample)
                 elif kind == 0x91 and len(data) == 42:
                     self.fault_diagnostic = decode_fault_diagnostic(data)
                 elif kind == 0x92 and len(data) == 60:
@@ -305,9 +306,10 @@ def decode_fault_diagnostic(data):
         raise ValueError('Unsupported MCU fault diagnostic version')
     sources = {0: 'none', 1: 'uart_rx_error', 2: 'uart_rx_overflow',
                3: 'uart_tx_timeout', 4: 'encoder_delta_limit',
-               5: 'closed_loop_stall_or_direction', 6: 'control_loop_late'}
+               5: 'closed_loop_stall_or_direction', 6: 'control_loop_late',
+               7: 'command_watchdog', 8: 'commanded_test_lock'}
     labels = {1: 'UART', 2: 'ENCODER_DELTA', 4: 'PID_STALL_OR_DIRECTION',
-              8: 'CONTROL_TIMING'}
+              8: 'CONTROL_TIMING', 16: 'COMMAND_WATCHDOG', 32: 'TEST_LOCK'}
     return {'version': v[0], 'fault_mask': v[1], 'first_fault_mask': v[2],
             'fault_names': [name for bit, name in labels.items() if v[1] & bit],
             'source': sources.get(v[3], 'unknown_%d' % v[3]),

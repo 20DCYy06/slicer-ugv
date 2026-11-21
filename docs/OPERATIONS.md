@@ -46,6 +46,42 @@ roslaunch ag_ugv_task ugv.launch monitor_only:=true start_fkie:=false
 
 V2 用独立 FKIE 时显式设置 `start_fkie:=true uav_ip:="$UAV_IP"`。V2 真正执行使用 `monitor_only:=false`。V1 的双 master 入口见[通信包说明](../src/ugv_communication/README.md)。切换模式或执行器前结束旧任务、保持停车并停止旧入口。ROS 控制在各模式经 Guard 和 Mux，单一 Mux 发布 `/cmd_vel`，单一 driver 占用底盘串口。
 
+## 底盘通信锁存恢复与测试
+
+使用 C30D v1.7 固件和本节配套 ROS 安装。按正常入口启动即可启用恢复。12 V 接通且 Motor ON 时，驱动检测到 MCU 的 UART、速度指令看门狗或测试锁存后保持零输出。固件确认四轮静止、零 PWM 持续 250 ms 后才允许清锁。驱动收到新的清锁遥测后丢弃故障期间的速度指令，等待新的 `/cmd_vel`。编码器异常、堵转、转向错误或控制周期异常仍按故障停车。
+
+先停车并停止占用底盘的程序。确认 Motor OFF、物理断开 12 V、仅 USB 供电后，烧录随仓库交付的 v1.7 镜像。烧录校验通过后先用断动力命令检查零输出，再接回 12 V。测试终端使用同一个 v1.7 ROS 安装。
+
+```bash
+python3 -s Hardware/Flashing/flash_v1_7_verified.py --power-off-confirmed
+python3 -s Hardware/zero_check.py
+export SLICER_NATIVE_WS="$HOME/slicer_noetic_c30d_v17"
+source "$SLICER_NATIVE_WS/install/setup.bash"
+```
+
+新检出没有该 ROS 安装时，先按 [构建说明](../README.md#从克隆到构建) 用 `bash tools/build_native.sh "$HOME/slicer_noetic_c30d_v17" -j2` 构建。旧终端缺少已授予的 `dialout` 组时，可在烧录前另开已登录的新终端，或先执行 `sg dialout`。
+
+短时遥测中断时，驱动保持停止并等待新遥测，最多等到距最后一帧 3 秒。设备被拔掉或串口返回 I/O 错误时，按原入口结束后重启。测试锁存模拟固件锁存和恢复，不断开 USB。
+
+在可控场地架空车轮，用以下入口启动要测的模式。RTK 只替换[底盘终端](#rtk-导航与空地接口)的启动命令，定位与导航终端沿用原启动步骤。
+
+```bash
+# 无 RTK
+SLICER_C30D_ENABLE_LOCK_TEST=1 ./tools/no_rtk.sh nav --background
+
+# RTK
+SLICER_C30D_ENABLE_LOCK_TEST=1 roslaunch ugv_bringup slicer_body_driver.launch
+```
+
+在同一 ROS master 的另一终端运行。用第一个命令观察 `ready`，再用第二个命令触发一次固件测试锁存。服务返回 `success: True` 表示已收到 MCU 锁存遥测。观察 `ready` 先变为 `False`，随后恢复为 `True`，驱动日志显示 `MCU_RECOVERED`。测试结束后按正常入口重启，关闭测试服务。
+
+```bash
+rostopic echo /slicer_c30d_driver/ready
+rosservice call /slicer_c30d_driver/test_chassis_lock '{}'
+```
+
+导航停止、串口空闲时，可在 12 V 接通、Motor ON、四轮静止状态下用 `python3 -s Hardware/Unlock/unlock.py --unlock` 清除同类通信锁存。安装和回退见 [C30D v1.7 固件说明](../Hardware/Firmware/v1.7/README.md)。
+
 ## 独立硬件工具
 
 这些工具在仓库根目录运行，保持原有直接设备接口。先停止使用同一设备的 ROS driver 或其他独立工具。按键、极性、限幅、设备匹配见[遥控说明](../tools/manual/README.md)和 [Hardware/config.yaml](../Hardware/config.yaml)。

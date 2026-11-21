@@ -95,9 +95,46 @@ class DriverChecks(unittest.TestCase):
         car=Fake();session=Session(car,self.config());car.state.update(fault_latched=True,motor_enabled=False,flags=0x2e)
         car.connect=lambda:(_ for _ in ()).throw(TimeoutError('ACK missing'))
         out=session.cycle(10.);self.assertEqual(out[:2],(0.,0.));self.assertFalse(out[2]);self.assertIn('ACK missing',session.recovery_error)
+    def test_powered_link_lock_recovers_in_place_and_requires_a_new_command(self):
+        car=Fake();car.nonce=123;car.last_body_rx=10.
+        frames=[];car.send=lambda kind,payload:frames.append((kind,payload))
+        session=Session(car,self.config())
+        car.body['status']=0x10c7
+        car.state.update(fault_latched=True,flags=0x3e)
+        session.command(.4,.5,10.)
+        self.assertEqual(session.cycle(10.)[:3],(0.,0.,False))
+        self.assertEqual(frames,[(0x19,struct.pack('<IB',123,0))])
+        car.state.update(fault_latched=False,flags=0x3a);car.body['status']=0x47
+        self.assertEqual(session.cycle(10.05),(0.,0.,False,False,True))
+        self.assertEqual(session.cycle(10.1)[:3],(0.,0.,True))
+        session.command(.3,.2,10.15)
+        self.assertEqual(session.cycle(10.15)[:3],(.3,.2,True))
+        self.assertEqual(car.sessions,0)
     def test_telemetry_loss_stops_with_error(self):
         car=Fake();session=Session(car,self.config())
         with self.assertRaisesRegex(RuntimeError,'telemetry timeout'):session.cycle(12.)
+    def test_recovery_capable_telemetry_gap_holds_until_new_body_sample(self):
+        car=Fake();car.nonce=123;car.last_body_rx=10.
+        car.send=lambda *_:None
+        car.body['status']=0x47
+        session=Session(car,dict(self.config(),telemetry_timeout_s=.25))
+        session.command(.4,.5,10.26)
+        self.assertEqual(session.cycle(10.26)[:3],(0.,0.,False))
+        self.assertEqual(car.sent,[])
+        car.last_rx=10.27
+        self.assertEqual(session.cycle(10.27)[:3],(0.,0.,False))
+        car.last_body_rx=10.28
+        self.assertEqual(session.cycle(10.28),(0.,0.,False,False,True))
+        session.command(.4,.5,10.29)
+        self.assertEqual(session.cycle(10.29)[:3],(.4,.5,True))
+        with self.assertRaisesRegex(RuntimeError,'telemetry timeout'):session.cycle(14.)
+    def test_new_protective_fault_is_not_cleared_by_navigation_in_motor_off(self):
+        car=Fake();car.nonce=123;car.last_body_rx=10.
+        car.body['status']=0x0246
+        car.state.update(fault_latched=True,motor_enabled=False,flags=0x2e)
+        session=Session(car,self.config())
+        self.assertEqual(session.cycle(10.)[:3],(0.,0.,False))
+        self.assertEqual(car.sessions,0)
     def test_encoder_distance_and_imu_yaw_instead_of_command(self):
         c=self.config();odom=Odometry(c);self.assertIsNone(odom.update((0,[0]*4),{'imu_flags':7,'wz':0.}))
         value=odom.update((100000,[s*6000 for s in c['encoder_signs']]),{'imu_flags':7,'wz':.5})

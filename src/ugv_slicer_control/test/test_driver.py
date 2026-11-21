@@ -114,7 +114,7 @@ class DriverTests(unittest.TestCase):
                    body_startup_imu_flags=7, body_telemetry=None,
                    body_imu_flags=None, body_imu_age_ms=None, body_ticks=None,
                    body_frame_seq=None, fail_body=False, body_startup_feedback=True,
-                   body_startup_tick_us=None):
+                   body_startup_tick_us=None, body_status_flags=None):
         driver = self.load_driver()
         link_module = driver.c30d_link
         core = driver.chassis_core
@@ -152,13 +152,14 @@ class DriverTests(unittest.TestCase):
                           *(int(p*1.6) for p in inner.pwm), 12500)
                 inner.emit(0x90, struct.pack('<II4iBH4i4h4hH', *fields))
 
-            def body_status(inner, imu_flags=7, imu_age_ms=0, tick=None, frame_seq=None):
+            def body_status(inner, imu_flags=7, imu_age_ms=0, tick=None, frame_seq=None, status_flags=None):
                 # v1 fixed 64-byte teammate format. Encoder observations stay zero;
                 # body/IMU estimates intentionally differ from wheel odometry.
                 fields = (1, imu_flags, body_who, 1,
                           int(clock[0]*1e6) & 0xffffffff if tick is None else tick,
                           *([0]*20), 11, 22, *inner.target_body,
-                          12500, 56 if inner.configured else 48, imu_age_ms, inner.ack)
+                          12500, (56 if inner.configured else 48) if status_flags is None else status_flags,
+                          imu_age_ms, inner.ack)
                 if frame_seq is not None:
                     inner.seq = (frame_seq - 1) & 65535
                 inner.emit(0x93, struct.pack('<4BI4h4h3h3h3h3h4h4H', *fields))
@@ -285,7 +286,8 @@ class DriverTests(unittest.TestCase):
                 links[0].body_status(imu_flags=7 if body_imu_flags is None else body_imu_flags[i],
                                      imu_age_ms=0 if body_imu_age_ms is None else body_imu_age_ms[i],
                                      tick=None if body_ticks is None else body_ticks[i],
-                                     frame_seq=None if body_frame_seq is None else body_frame_seq[i])
+                                     frame_seq=None if body_frame_seq is None else body_frame_seq[i],
+                                     status_flags=None if body_status_flags is None else body_status_flags[i])
             return False
 
         def sleep(delay):
@@ -730,6 +732,29 @@ class DriverTests(unittest.TestCase):
                 self.assertTrue(all(row == [0, 0] for row in run.body_output))
                 self.assertFalse(any(run.publishers['~ready'].messages))
                 self.assert_body_closed_without_fallback(run)
+
+    def test_powered_link_fault_holds_rtk_driver_and_discards_pre_recovery_twist(self):
+        run = self.run_driver([(.1, .2), (.2, .3), (.2, .3), (.2, .3), None, (.3, .4)],
+                              config=self.body_config(), flags=[56,60,60,56,56,56],
+                              body_startup_tick_us=9000000,
+                              body_status_flags=[0x47,0x1057,0x10d7,0x57,0x57,0x57])
+        self.assert_clean(run)
+        self.assertEqual(run.body_output[:-10], [[100,200],[0,0],[0,0],[0,0],[0,0],[300,400]])
+        recovery = [struct.unpack('<IB', data) for kind, _, data in run.frames if kind == 0x19]
+        self.assertEqual(recovery, [(run.links[0].nonce, 2),(run.links[0].nonce, 0)])
+        self.assertEqual([name for name, _ in run.records if name.startswith('mcu_recover')],
+                         ['mcu_recovery_hold', 'mcu_recovered'])
+
+    def test_rtk_waits_past_legacy_telemetry_timeout_for_recoverable_lock(self):
+        run = self.run_driver([(.1,.2),(.2,.3),(.2,.3),(.2,.3),(.3,.4)],
+                              config=self.body_config(), interval=.6,
+                              telemetry=[True,False,True,True,True],
+                              body_telemetry=[True,False,True,True,True],
+                              body_startup_tick_us=9000000,
+                              flags=[56,56,60,56,56], body_status_flags=[0x47,0x57,0x10d7,0x57,0x57])
+        self.assert_clean(run)
+        self.assertEqual(run.body_output[:-10], [[100,200],[0,0],[0,0],[300,400]])
+        self.assertIn('mcu_recovered', [name for name, _ in run.records])
 
     def test_body_serial_and_observation_failures_keep_explicit_zero_and_close(self):
         for options in (dict(fail_body=True), dict(diagnostics_fail=True), dict(ready_fail_at=4)):
