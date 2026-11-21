@@ -10,6 +10,9 @@ from c30d_servo import Servo
 from .paths import device_config
 
 
+POST_GRASP_LIFT_S = 2.0
+
+
 def save_json(path, value):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -23,6 +26,7 @@ class Runtime:
         self.cfg, self.root, self.camera = cfg, root, camera
         self.cancel, self.log = cancel, log
         self.lowered_s = 0.0
+        self.holding = False
         self.pump_lock = threading.Lock()
 
     def observation(self):
@@ -44,8 +48,8 @@ class Runtime:
 
     def pick(self):
         from .snapshot_move import make_plan,LockedMove
-        if self.lowered_s > 0:
-            raise RuntimeError('吸嘴尚有未回升的行程，请先点击释放')
+        if self.holding or self.lowered_s > 0:
+            raise RuntimeError('还有持物或未回升的行程，请先点击释放')
         servo, max_lower_s = self.servo_settings()
         cfg = self.cfg['snapshot_move']
         if cfg['forward_image_direction'] not in ('up','down','left','right'):
@@ -127,8 +131,11 @@ class Runtime:
             self.log(f'[STATE] LOWER：下放吸嘴，最长 {max_lower_s:g} s')
             self.move_servo('down', max_lower_s, servo, grip_confirmed)
             self.check_cancelled()
-            attached = True
-            self.log(f'[DONE] 已吸附，已停止下降，记录下放时间 t={self.lowered_s:.3f} s')
+            attached = self.holding = True
+            lowered_s = self.lowered_s
+            self.log(f'[STATE] LIFT_AFTER_GRASP：已吸附，下放 t={lowered_s:.3f} s，回升 {POST_GRASP_LIFT_S:g} s')
+            self.move_servo('up', POST_GRASP_LIFT_S, servo)
+            self.log(f'[DONE] 抓取后抬升结束，释放时剩余回升 {self.lowered_s:.3f} s')
         finally:
             pump.close(release=requested and not attached)
 
@@ -189,7 +196,9 @@ class Runtime:
             dev = AirGrip(cfg)
             try:
                 time.sleep(self.cfg['grasp']['open_settle_s'])
-                return dev.set_pump(False)
+                result = dev.set_pump(False)
+                self.holding = False
+                return result
             finally:
                 dev.ser.close()
 

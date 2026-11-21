@@ -74,9 +74,12 @@ class SnapshotTests(unittest.TestCase):
             self.assertLess(np.linalg.norm(p[:2]-xy),.012)
             self.assertLessEqual(abs(wrap(p[2])),cfg['yaw_tolerance_rad']+.001)
 
-    def test_pipeline_reads_camera_once_then_moves_and_sucks(self):
+    def test_pipeline_moves_grasps_and_lifts_then_releases_remaining_travel(self):
         from slicer_visual_grasp import pipeline
         clock=[0.];commands=[];camera_calls=[];pump_commands=[];poses=[];servo_pulses=[];pump_closes=[]
+        attach_after = [3.19]
+        interrupt_lift = [False]
+        release_device = Mock()
         class Camera:
             def snapshot(self):
                 camera_calls.append(1)
@@ -92,16 +95,18 @@ class SnapshotTests(unittest.TestCase):
                 commands.append((v,w,servo));clock[0]+=dt
             def close(self):commands.append((0,0,'neutral'))
         class ClockEvent:
-            def is_set(self):return False
-            def wait(self,seconds):clock[0]+=seconds;return False
+            def is_set(self):
+                return (interrupt_lift[0] and len(servo_pulses) >= 2
+                        and all(value == 2100 for _, value in servo_pulses[-2:]))
+            def wait(self,seconds):clock[0]+=max(seconds, 1e-9);return False
         class FakeServo:
             def __init__(self,*a):pass
             def check(self, *, required_pin):
                 if required_pin != 14:
                     raise AssertionError('visual grasp requires PB14')
-            def pulse(self,value):servo_pulses.append(value)
+            def pulse(self,value):servo_pulses.append((clock[0], value))
             def receive(self):return []
-            def close(self):servo_pulses.append(1500)
+            def close(self):servo_pulses.append((clock[0], 1500))
         class Pump:
             def __init__(self,*a):self.on=False;self.since=0
             def start(self):pass
@@ -109,18 +114,40 @@ class SnapshotTests(unittest.TestCase):
                 self.on=on;self.since=clock[0]
                 pump_commands.append((on,tuple(poses[-1]),commands[-1]))
             def snapshot(self):
-                attached=self.on and clock[0]-self.since>=.09
+                attached=self.on and clock[0]-self.since>=attach_after[0]
                 return Pressure(clock[0],self.on,attached,'SUCTION_ATTACHED' if attached else 'SUCTION_FREE',self.on)
             def close(self, release=False):pump_closes.append(release)
-        with tempfile.TemporaryDirectory() as folder:
-            root=Path(folder);(root/'pump.json').write_text('{"ack_timeout_s": 0.8}');cfg=copy.deepcopy(CFG);cfg['airgrip_config']='pump.json'
-            with patch.object(pipeline,'Motion',Motion),patch.object(pipeline,'PressureLink',Pump),patch.object(pipeline,'Servo',FakeServo),patch('slicer_visual_grasp.pipeline.time.monotonic',side_effect=lambda:clock[0]):
-                runtime=Runtime(cfg,root,Camera(),ClockEvent(),lambda s:None)
-                runtime.pick()
-            self.assertAlmostEqual(runtime.lowered_s, .1)
-            self.assertEqual(servo_pulses[-1], 1500)
-            self.assertTrue(all(value==900 for value in servo_pulses[:-1]))
-            self.assertTrue(servo_pulses[:-1])
+        def assert_lift(pulses, duration):
+            self.assertTrue(pulses[:-1])
+            self.assertTrue(all(value == 2100 for _, value in pulses[:-1]))
+            self.assertEqual(pulses[-1][1], 1500)
+            self.assertAlmostEqual(pulses[-1][0] - pulses[0][0], duration)
+
+        with tempfile.TemporaryDirectory() as folder, \
+                patch.object(pipeline, 'Motion', Motion), patch.object(pipeline, 'PressureLink', Pump), \
+                patch.object(pipeline, 'Servo', FakeServo), patch.object(pipeline.time, 'sleep'), \
+                patch.object(pipeline.time, 'monotonic', side_effect=lambda: clock[0]), \
+                patch('airgrip.keyboard.AirGrip', return_value=release_device):
+            root = Path(folder)
+            (root/'pump.json').write_text('{"ack_timeout_s": 0.8}')
+            cfg = copy.deepcopy(CFG)
+            cfg['airgrip_config'] = 'pump.json'
+            cfg['grasp']['max_lower_s'] = 20.
+            runtime = Runtime(cfg, root, Camera(), ClockEvent(), lambda s: None)
+            runtime.pick()
+            first_neutral = next(i for i, (_, value) in enumerate(servo_pulses) if value == 1500)
+            self.assertGreater(first_neutral, 0)
+            self.assertTrue(all(value == 900 for _, value in servo_pulses[:first_neutral]))
+            t = servo_pulses[first_neutral][0] - servo_pulses[0][0]
+            self.assertGreater(t, 2.)
+            assert_lift(servo_pulses[first_neutral+1:], 2.)
+            self.assertAlmostEqual(runtime.lowered_s, t - 2.)
+            servo_pulses.clear()
+            release_device.set_pump.side_effect = lambda on: self.assertFalse(servo_pulses)
+            runtime.release()
+            release_device.set_pump.assert_called_once_with(False)
+            assert_lift(servo_pulses, t - 2.)
+            self.assertAlmostEqual(runtime.lowered_s, 0.)
             self.assertEqual(pump_closes,[False])
             self.assertEqual(len(camera_calls),1)
             plan=json.loads((root/'data/last_move_plan.json').read_text())
@@ -132,14 +159,45 @@ class SnapshotTests(unittest.TestCase):
             self.assertTrue(pump_commands[0][0])
             self.assertEqual(pump_commands[0][2][:2],(0,0))
             self.assertLess(np.linalg.norm(np.array(pump_commands[0][1][:2])-plan['body_xy_m']),.012)
-            with patch.object(pipeline,'Motion',Motion),patch.object(pipeline,'PressureLink',Pump),patch.object(pipeline,'Servo',FakeServo),patch('slicer_visual_grasp.pipeline.time.monotonic',side_effect=lambda:clock[0]):
-                cfg['grasp']['max_lower_s'] = .05
-                camera_calls.clear()
-                runtime=Runtime(cfg,root,Camera(),ClockEvent(),lambda s:None)
-                with self.assertRaisesRegex(TimeoutError, '下降时限'):
-                    runtime.pick()
+            attach_after[0] = .09
+            camera_calls.clear()
+            servo_pulses.clear()
+            runtime = Runtime(cfg, root, Camera(), ClockEvent(), lambda s: None)
+            runtime.pick()
+            first_neutral = next(i for i, (_, value) in enumerate(servo_pulses) if value == 1500)
+            assert_lift(servo_pulses[first_neutral+1:], 2.)
+            self.assertEqual(runtime.lowered_s, 0.)
+            with self.assertRaisesRegex(RuntimeError, '先点击释放'):
+                runtime.pick()
+            self.assertEqual(len(camera_calls), 1)
+            servo_pulses.clear()
+            release_device.set_pump.reset_mock()
+            runtime.release()
+            release_device.set_pump.assert_called_once_with(False)
+            self.assertEqual(servo_pulses, [])
+
+            attach_after[0] = 3.19
+            camera_calls.clear()
+            interrupt_lift[0] = True
+            runtime = Runtime(cfg, root, Camera(), ClockEvent(), lambda s: None)
+            with self.assertRaises(InterruptedError):
+                runtime.pick()
+            self.assertEqual(servo_pulses[-1][1], 1500)
+            self.assertAlmostEqual(runtime.lowered_s, t - .1)
+            interrupt_lift[0] = False
+            servo_pulses.clear()
+            runtime.release()
+            assert_lift(servo_pulses, t - .1)
+
+            cfg['grasp']['max_lower_s'] = .05
+            camera_calls.clear()
+            servo_pulses.clear()
+            runtime = Runtime(cfg, root, Camera(), ClockEvent(), lambda s: None)
+            with self.assertRaisesRegex(TimeoutError, '下降时限'):
+                runtime.pick()
             self.assertAlmostEqual(runtime.lowered_s, .05)
-            self.assertEqual(servo_pulses[-1], 1500)
-            self.assertEqual(pump_closes,[False, True])
+            self.assertEqual(servo_pulses[-1][1], 1500)
+            self.assertFalse(any(value == 2100 for _, value in servo_pulses))
+            self.assertEqual(pump_closes,[False, False, False, True])
 
 if __name__=='__main__':unittest.main()
