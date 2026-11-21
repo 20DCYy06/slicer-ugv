@@ -76,6 +76,7 @@ case "$mode" in
         exec roslaunch --wait "$navigation/launch/local_desktop.launch" "waypoint_file:=$waypoints" "$@"
         ;;
     nav)
+        nav_arguments=("$@")
         mode=foreground
         if [[ ${1:-} == --background ]]; then mode=background; shift; fi
         launch=("$navigation/launch/slicer_nav_without_mapping.launch"
@@ -92,10 +93,17 @@ case "$mode" in
             launch+=(gui:=false)
         fi
         launch+=("$@")
-        python3 - "$workspace" "${launch[@]}" <<'PY'
+        launch_group=$(python3 - "$workspace" "${launch[@]}" <<'PY'
+import grp
 import json
+import os
+import pwd
+import shutil
 import socket
 import sys
+from pathlib import Path
+
+import yaml
 
 from roslaunch.config import load_config_default
 from roslaunch.core import RLException
@@ -105,8 +113,8 @@ from rospkg import ResourceNotFound, RosPack
 
 workspace, filename, *arguments = sys.argv[1:]
 try:
-    path, *args = resolve_launch_arguments([filename, *arguments])
-    config = load_config_default([(path, args)], None, assign_machines=False)
+    path, = resolve_launch_arguments([filename])
+    config = load_config_default([(path, arguments)], None, assign_machines=False)
 except RLException as exc:
     sys.exit(f'NoRTK launch configuration error in {workspace}: {exc}')
 
@@ -138,7 +146,42 @@ if '/user_config_path' in config.params:
                              'Check the Jetson Ethernet IPv4 address and the MID360 network profile.')
     except (OSError, ValueError, KeyError) as exc:
         sys.exit(f'Cannot read MID360 network configuration {filename}: {exc}')
+
+mock = config.params.get('/slicer_c30d_driver/mock')
+if mock is not None and not mock.value:
+    filename = config.params['/slicer_c30d_driver/host_config_file'].value
+    try:
+        port = yaml.safe_load(Path(filename).read_text())['serial']['port']
+    except (OSError, TypeError, KeyError, yaml.YAMLError) as exc:
+        sys.exit(f'Cannot read C30D serial configuration {filename}: {exc}')
+    if not isinstance(port, str) or not port:
+        sys.exit(f'C30D serial port must be a device path or auto in {filename}.')
+    if port != 'auto' and not os.access(port, os.R_OK | os.W_OK):
+        try:
+            port_group = os.stat(port).st_gid
+        except OSError as exc:
+            sys.exit(f'C30D serial port unavailable: {port}: {exc}')
+        user = pwd.getpwuid(os.getuid())
+        active_groups = set(os.getgroups()) | {os.getgid()}
+        try:
+            dialout = grp.getgrnam('dialout').gr_gid
+        except KeyError:
+            dialout = None
+        if (port_group == dialout and dialout not in active_groups
+                and dialout in os.getgrouplist(user.pw_name, user.pw_gid)
+                and shutil.which('sg')):
+            print('dialout')
+        else:
+            sys.exit(f'C30D serial port {port} requires read/write access. '
+                     'Check the device permissions and this user’s dialout membership.')
 PY
+        )
+        if [[ "$launch_group" == dialout ]]; then
+            echo 'Using existing dialout membership for the C30D serial port.' >&2
+            # Re-enter before registering a PID so stop can signal roslaunch directly.
+            exec python3 -c 'import os, shlex, sys; os.execlp("sg", "sg", "dialout", "-c",
+                "exec " + shlex.join(sys.argv[1:]))' "$repo/tools/no_rtk.sh" nav "${nav_arguments[@]}"
+        fi
         set -- roslaunch "${launch[@]}"
         ;;
 esac

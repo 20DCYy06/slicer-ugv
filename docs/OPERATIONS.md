@@ -13,6 +13,8 @@ export SLICER_NATIVE_WS="$HOME/slicer_noetic_current"  # 或指定你的完整�
 
 启动脚本使用同一用户已登录的 Jetson 本地 X11 桌面。未登录桌面时以无界面模式运行，也可传入 `gui:=false`。导航已运行时可用 `./tools/no_rtk.sh rviz` 单独打开本地 RViz、目标坐标窗口和录点节点。
 
+真实底盘启动前会检查 `Hardware/config.yaml` 中显式配置的串口路径。若当前终端早于账号加入 `dialout`，脚本会为本次启动加载账号已有的组权限。串口不可访问时会在启动前显示设备路径和原因。
+
 - **2D Nav Goal** 在地图上点住并拖动确定朝向，经 `/move_base_simple/goal` 发送给 `/move_base`。
 - **Record Waypoint** 可连续点击打点。录点节点写入 `src/slicer_navigation_without_mapping/config/waypoints.yaml`，可用 `rostopic echo /slicer/waypoint_record/status` 确认 `SAVED`。巡航读取该文件。在线 SLAM 重新建图后需要重新确认航点坐标。
 
