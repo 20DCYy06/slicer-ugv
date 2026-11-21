@@ -19,6 +19,7 @@ HERE=Path(__file__).resolve().parent
 sys.path.insert(0,str(HERE.parent))
 from control_core import Chassis,Gear,Slew,Joystick,EVENT,gamepad_config,gamepad_target,load_config
 from airgrip.keyboard import AirGrip, ping_on_open
+from c30d_servo import CAPABILITY_QUERY, CAPABILITY_REPLY, PULSE_COMMAND, decode_capability, pulse_payload
 
 
 def wheel_pwm_log(pwm_ticks,period):
@@ -69,18 +70,16 @@ class HeldJoystick(Joystick):
 class CombinedChassis(Chassis):
     """四轮0x16与舵机0x31共用一个连接；从能力回复识别实际输出引脚。"""
     def servo_check(self):
-        self.replies.pop(0x86,None);self.send(0x30)
-        self.wait(lambda:0x86 in self.replies)
-        info=struct.unpack('<4sBBHH',self.replies[0x86])
-        magic,version,pin,neutral,watchdog=info
-        if (magic,pin) not in ((b'B14P',14),(b'B15P',15)) or (version,neutral,watchdog)!=(1,1500,500):
-            raise RuntimeError('舵机能力接口不匹配，请核实固件')
+        self.replies.pop(CAPABILITY_REPLY, None)
+        self.send(CAPABILITY_QUERY)
+        self.wait(lambda: CAPABILITY_REPLY in self.replies)
+        pin, _, _ = decode_capability(self.replies[CAPABILITY_REPLY])
         self.servo_pin=pin
         print('[SERVO] PB%d/TIM12_CH%d接口已确认'%(pin,1 if pin==14 else 2),flush=True)
-        if pin==15:print('[NOTICE] 当前固件仍输出PB15；刷入v1.4后才会切换到PB14。',flush=True)
+        if pin==15:print('[NOTICE] 当前固件使用PB15，请核对舵机接线。',flush=True)
 
     def servo_pulse(self,value):
-        self.send(0x31,struct.pack('<H',value))
+        self.send(PULSE_COMMAND, pulse_payload(value))
 
 
 class PumpWorker:

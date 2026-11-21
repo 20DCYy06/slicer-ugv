@@ -1,17 +1,33 @@
-import copy,json,math,tempfile,threading,unittest
+import copy,json,math,struct,tempfile,threading,unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock,patch
 import numpy as np
 from slicer_visual_grasp.paths import DEFAULT_CONFIG
 from slicer_visual_grasp.logic import Observation,Pressure
 from slicer_visual_grasp.snapshot_move import make_plan,LockedMove,FeedbackPose,wrap
-from slicer_visual_grasp.pipeline import Runtime
+from slicer_visual_grasp.pipeline import Runtime,Servo
 ROOT=Path(__file__).resolve().parent
 CFG=json.loads(DEFAULT_CONFIG.read_text())
 Q=[[200,150],[400,150],[400,290],[200,290]]
 
 
 class SnapshotTests(unittest.TestCase):
+    def test_visual_servo_rejects_pb15_without_sending_a_pulse(self):
+        servo = Servo.__new__(Servo)
+        servo.moved = False
+        servo.link = Mock()
+        servo.send = Mock()
+        servo.receive = Mock(return_value=[
+            (0x86, 1, struct.pack('<4sBBHH', b'B15P', 1, 15, 1500, 500))
+        ])
+        runtime = Runtime(CFG, ROOT, None, threading.Event(), lambda _: None)
+        with patch('slicer_visual_grasp.pipeline.Servo', return_value=servo):
+            with self.assertRaisesRegex(RuntimeError, 'PB14.*PB15'):
+                runtime.move_servo('up', .1)
+        servo.send.assert_called_once_with(0x30)
+        servo.link.close.assert_called_once()
+        self.assertEqual(runtime.lowered_s, 0.)
+
     def test_release_uses_recorded_lowering_time_after_pump_off(self):
         runtime = Runtime(CFG, ROOT, None, threading.Event(), lambda _: None)
         runtime.lowered_s = .23
@@ -80,7 +96,9 @@ class SnapshotTests(unittest.TestCase):
             def wait(self,seconds):clock[0]+=seconds;return False
         class FakeServo:
             def __init__(self,*a):pass
-            def check(self):pass
+            def check(self, *, required_pin):
+                if required_pin != 14:
+                    raise AssertionError('visual grasp requires PB14')
             def pulse(self,value):servo_pulses.append(value)
             def receive(self):return []
             def close(self):servo_pulses.append(1500)

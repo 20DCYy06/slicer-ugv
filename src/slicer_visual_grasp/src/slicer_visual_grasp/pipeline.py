@@ -6,7 +6,7 @@ import threading
 import time
 import cv2
 from .devices import Motion, PressureLink
-from b15_servo.keyboard import Servo
+from c30d_servo import Servo
 from .paths import device_config
 
 
@@ -156,7 +156,7 @@ class Runtime:
         servo = Servo(device_config(self.cfg, self.root, 'hardware_config'))
         started = None
         try:
-            servo.check()
+            servo.check(required_pin=14)
             while True:
                 self.check_cancelled()
                 if finished is not None and finished():

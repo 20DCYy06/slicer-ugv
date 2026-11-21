@@ -61,6 +61,7 @@ done
 [[ -x "$workspace/install/lib/fast_lio/fastlio_mapping" ]]
 [[ -x "$workspace/install/lib/livox_ros_driver2/livox_ros_driver2_node" ]]
 [[ $(rosmsg md5 slicer_air_ground_msgs/Command) == b574bb9bb1240c0d2ae262d6c3feb2bf ]]
+rosrun slicer_visual_grasp run.sh --check
 
 roslaunch --nodes ugv_bringup slicer_field_sensors.launch
 roslaunch --nodes ugv_bringup slicer_field_navigation.launch geographic:=false

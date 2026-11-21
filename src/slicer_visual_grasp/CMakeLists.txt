@@ -18,6 +18,7 @@ install(DIRECTORY config tests
 set(workspace_root "${CMAKE_CURRENT_SOURCE_DIR}/../..")
 set(support "${CATKIN_PACKAGE_SHARE_DESTINATION}/support")
 install(FILES
+  "${workspace_root}/Hardware/Host/c30d_servo.py"
   "${workspace_root}/Hardware/Host/chassis.py"
   "${workspace_root}/Hardware/Host/protocol.py"
   "${workspace_root}/Hardware/Host/transport.py"
@@ -30,7 +31,6 @@ install(FILES "${workspace_root}/tools/manual/serial_group.sh"
   DESTINATION "${support}/tools/manual"
 )
 install(FILES
-  "${workspace_root}/tools/manual/b15_servo/keyboard.py"
   "${workspace_root}/tools/manual/b15_servo/config.json"
   DESTINATION "${support}/tools/manual/b15_servo"
 )

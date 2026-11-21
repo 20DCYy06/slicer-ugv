@@ -1,12 +1,14 @@
 # 单次视觉位移 + 3 cm 靠近补偿 + 开泵
 
 ```bash
-source "$HOME/slicer_noetic_current/install/setup.bash"
+source "$HOME/slicer_noetic_c30d_v17/install/setup.bash"
 rosrun slicer_visual_grasp run.sh
 rosrun slicer_visual_grasp run.sh --run
 ```
 
 默认在 Jetson 本地桌面预览，使用 `--run` 启用三个动作按钮。启用前先退出占用底盘或 AirGrip 串口的程序。启动器会复用账号已有的 `dialout` 权限。
+
+升降使用 C30D 的 PB14（TIM12_CH1）。下发升降脉宽前，程序查询固件确认输出引脚。默认脉宽和组合手柄一致，Y 对应上升 2100 µs，A 对应下降 900 µs，停止回中 1500 µs，指令刷新 20 Hz。
 
 - **移动并抓取**：以当前相机红点为吸嘴原点，锁定目标并移动底盘。停稳且释放底盘串口后开启抽气，收到本次开泵反馈才下放吸嘴。新鲜反馈确认吸附时回中并记录下降时间 `t`。下降到时限仍未吸附或反馈中断时回中并请求关泵。
 - **释放**：确认关泵后，按本窗口记录的下降时间回升并回中。如先前的回升被打断，下一次释放使用剩余时间。
