@@ -118,6 +118,10 @@ def main():
              and observer.board.recent('frame', time.monotonic()) == 'odom'
              and observer.board.recent('action_stamp', time.monotonic(), .3) is not None
              and observer.goal_pub.impl.has_connection('/ugv/move_base'))
+        readable = [dashboard.status, dashboard.registration, dashboard.own, *dashboard.points,
+                    *(row for _, row in dashboard.system.values())]
+        assert all(row.font().pointSize() >= max(15, dashboard.rtk.font().pointSize() - 2)
+                   for row in readable)
         panel = next(w for w in window.findChildren(QtWidgets.QWidget)
                      if 'RenderPanel' in w.metaObject().className())
         toolbar = window.findChild(QtWidgets.QToolBar, 'DesktopTools')

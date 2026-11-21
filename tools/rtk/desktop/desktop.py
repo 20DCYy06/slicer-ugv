@@ -96,8 +96,10 @@ class Readouts(QtWidgets.QWidget):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        size = min(19, max(11, min(self.width() // 25, self.height() // 30)))
-        self.setFont(QtGui.QFont('Noto Sans CJK SC', size))
+        size = min(22, max(15, min(self.width() // 22, self.height() // 35)))
+        body_font = QtGui.QFont('Noto Sans CJK SC', size)
+        for readout in self.findChildren(QtWidgets.QLabel):
+            readout.setFont(body_font)
         self.rtk.setFont(QtGui.QFont('Noto Sans CJK SC', size + 2, QtGui.QFont.Bold))
         self.destination.setFont(QtGui.QFont('Noto Sans CJK SC', size + 1, QtGui.QFont.Bold))
 
