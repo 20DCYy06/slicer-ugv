@@ -12,31 +12,15 @@ Q=[[200,150],[400,150],[400,290],[200,290]]
 
 
 class SnapshotTests(unittest.TestCase):
-    def test_manual_servo_jog_uses_configured_direction_and_releases_link(self):
-        from slicer_visual_grasp import pipeline
-        events = []
-        cancel = threading.Event()
-
-        class FakeServo:
-            def __init__(self, path): events.append(('open', path.name))
-            def check(self): events.append(('check',))
-            def pulse(self, value): events.append(('pulse', value)); cancel.set()
-            def receive(self): return []
-            def close(self): events.append(('close',))
-
-        with tempfile.TemporaryDirectory() as folder:
-            root = Path(folder)
-            (root / 'servo.json').write_text(json.dumps({
-                'clockwise_us': 2100, 'counterclockwise_us': 900,
-                'neutral_us': 1500, 'tap_duration_s': 0.3, 'refresh_hz': 20,
-            }))
-            for setting, expected in [('clockwise', 2100), ('counterclockwise', 900)]:
-                cancel.clear()
-                events.clear()
-                cfg = dict(CFG, servo_config='servo.json', servo_up_direction=setting)
-                with patch.object(pipeline, 'Servo', FakeServo, create=True):
-                    Runtime(cfg, root, None, cancel, lambda _message: None).jog_servo('up')
-                self.assertEqual(events, [('open', 'config.yaml'), ('check',), ('pulse', expected), ('close',)])
+    def test_release_uses_recorded_lowering_time_after_pump_off(self):
+        runtime = Runtime(CFG, ROOT, None, threading.Event(), lambda _: None)
+        runtime.lowered_s = .23
+        with patch.object(runtime, 'pump_off', create=True) as pump, \
+                patch.object(runtime, 'move_servo', create=True) as lift:
+            pump.side_effect = lambda: self.assertFalse(lift.called)
+            runtime.release()
+        pump.assert_called_once()
+        lift.assert_called_once_with('up', .23)
 
     def test_known_surface_converts_pixels_to_body_meters(self):
         obs=Observation(1,0,(300,220),(344,344),1,None,Q)
@@ -76,7 +60,7 @@ class SnapshotTests(unittest.TestCase):
 
     def test_pipeline_reads_camera_once_then_moves_and_sucks(self):
         from slicer_visual_grasp import pipeline
-        clock=[0.];commands=[];camera_calls=[];pump_commands=[];poses=[]
+        clock=[0.];commands=[];camera_calls=[];pump_commands=[];poses=[];servo_pulses=[];pump_closes=[]
         class Camera:
             def snapshot(self):
                 camera_calls.append(1)
@@ -91,6 +75,15 @@ class SnapshotTests(unittest.TestCase):
                 dt=.02;self.pose[:2]+=v*dt*np.array([math.cos(self.pose[2]+w*dt/2),math.sin(self.pose[2]+w*dt/2)]);self.pose[2]+=w*dt
                 commands.append((v,w,servo));clock[0]+=dt
             def close(self):commands.append((0,0,'neutral'))
+        class ClockEvent:
+            def is_set(self):return False
+            def wait(self,seconds):clock[0]+=seconds;return False
+        class FakeServo:
+            def __init__(self,*a):pass
+            def check(self):pass
+            def pulse(self,value):servo_pulses.append(value)
+            def receive(self):return []
+            def close(self):servo_pulses.append(1500)
         class Pump:
             def __init__(self,*a):self.on=False;self.since=0
             def start(self):pass
@@ -98,13 +91,19 @@ class SnapshotTests(unittest.TestCase):
                 self.on=on;self.since=clock[0]
                 pump_commands.append((on,tuple(poses[-1]),commands[-1]))
             def snapshot(self):
-                attached=self.on and clock[0]-self.since>=.1
+                attached=self.on and clock[0]-self.since>=.09
                 return Pressure(clock[0],self.on,attached,'SUCTION_ATTACHED' if attached else 'SUCTION_FREE',self.on)
-            def close(self):pass
+            def close(self, release=False):pump_closes.append(release)
         with tempfile.TemporaryDirectory() as folder:
-            root=Path(folder);(root/'pump.json').write_text('{}');cfg=copy.deepcopy(CFG);cfg['airgrip_config']='pump.json'
-            with patch.object(pipeline,'Motion',Motion),patch.object(pipeline,'PressureLink',Pump),patch('slicer_visual_grasp.pipeline.time.monotonic',side_effect=lambda:clock[0]):
-                Runtime(cfg,root,Camera(),threading.Event(),lambda s:None).pick()
+            root=Path(folder);(root/'pump.json').write_text('{"ack_timeout_s": 0.8}');cfg=copy.deepcopy(CFG);cfg['airgrip_config']='pump.json'
+            with patch.object(pipeline,'Motion',Motion),patch.object(pipeline,'PressureLink',Pump),patch.object(pipeline,'Servo',FakeServo),patch('slicer_visual_grasp.pipeline.time.monotonic',side_effect=lambda:clock[0]):
+                runtime=Runtime(cfg,root,Camera(),ClockEvent(),lambda s:None)
+                runtime.pick()
+            self.assertAlmostEqual(runtime.lowered_s, .1)
+            self.assertEqual(servo_pulses[-1], 1500)
+            self.assertTrue(all(value==900 for value in servo_pulses[:-1]))
+            self.assertTrue(servo_pulses[:-1])
+            self.assertEqual(pump_closes,[False])
             self.assertEqual(len(camera_calls),1)
             plan=json.loads((root/'data/last_move_plan.json').read_text())
             np.testing.assert_allclose(plan['vision_body_xy_m'],[-.062,-.022],atol=1e-6)
@@ -115,5 +114,14 @@ class SnapshotTests(unittest.TestCase):
             self.assertTrue(pump_commands[0][0])
             self.assertEqual(pump_commands[0][2][:2],(0,0))
             self.assertLess(np.linalg.norm(np.array(pump_commands[0][1][:2])-plan['body_xy_m']),.012)
+            with patch.object(pipeline,'Motion',Motion),patch.object(pipeline,'PressureLink',Pump),patch.object(pipeline,'Servo',FakeServo),patch('slicer_visual_grasp.pipeline.time.monotonic',side_effect=lambda:clock[0]):
+                cfg['grasp']['max_lower_s'] = .05
+                camera_calls.clear()
+                runtime=Runtime(cfg,root,Camera(),ClockEvent(),lambda s:None)
+                with self.assertRaisesRegex(TimeoutError, '下降时限'):
+                    runtime.pick()
+            self.assertAlmostEqual(runtime.lowered_s, .05)
+            self.assertEqual(servo_pulses[-1], 1500)
+            self.assertEqual(pump_closes,[False, True])
 
 if __name__=='__main__':unittest.main()

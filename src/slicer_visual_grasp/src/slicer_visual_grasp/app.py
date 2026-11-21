@@ -28,35 +28,19 @@ class App:
         self.messages=queue.Queue();self.cancel=threading.Event()
         self.busy=self.closing=self.closed=self.reconnecting=False
         self.stopping_pump=False
-        self.servo_jogging=False
-        self.calibrating_origin=False
-        self.action_done=threading.Event();self.action_done.set()
         self.signal_exit_requested=False;self.close_started=None;self.refresh_job=None
         self.last_camera_error=None;self.drag=self.selection=None
         self.camera=Camera(cfg['camera'],cfg['target'],root);self.camera.start()
+        self.runtime=Runtime(cfg,root,self.camera,self.cancel,self.log)
         win.title('Visual Grasp — 单次位移抓取'+(' / 可执行' if enabled else ' / 只预览'))
         win.option_add('*Font','Sans 14')
         bar=tk.Frame(win);bar.pack(fill='x');self.buttons=[]
-        for label,action in [('移动并抓取',self.pick),('释放',self.release),('停止抽气',self.stop_pump)]:
+        for label,action in [('移动并抓取',self.pick),('释放',self.release),('立即停止',self.emergency_stop)]:
             button=tk.Button(bar,text=label,command=action,height=2)
             button.pack(side='left',fill='x',expand=True);self.buttons.append(button)
-        self.pump_stop_button=self.buttons[-1]
-        self.servo_buttons=[]
-        for label,direction in [('上升','up'),('下降','down')]:
-            button=tk.Button(bar,text=label,height=2)
-            button.pack(side='left',fill='x',expand=True)
-            button.bind('<ButtonPress-1>',lambda event,d=direction:self.start_servo(d))
-            button.bind('<ButtonRelease-1>',self.stop_servo)
-            button.bind('<Leave>',self.stop_servo)
-            self.servo_buttons.append(button)
-        self.buttons.extend(self.servo_buttons)
-        controls=tk.Frame(win);controls.pack(fill='x')
-        self.enable_button=tk.Button(controls,command=self.toggle_enabled)
-        self.enable_button.pack(side='left')
-        self.calibrate_button=tk.Button(controls,text='校准红点',command=self.start_origin_calibration)
-        self.calibrate_button.pack(side='left')
-        self.hint=tk.Label(controls,font=('Sans',11),wraplength=470)
-        self.hint.pack(side='left',fill='x',expand=True)
+        self.stop_button=self.buttons[-1]
+        self.hint=tk.Label(win,font=('Sans',11),wraplength=750)
+        self.hint.pack(fill='x')
         self.scale=min(1.,max(300,win.winfo_screenwidth()-290)/cfg['camera']['width'],max(220,win.winfo_screenheight()-140)/cfg['camera']['height'])
         body=tk.Frame(win);body.pack(fill='both',expand=True)
         self.canvas=tk.Canvas(body,width=round(cfg['camera']['width']*self.scale),height=round(cfg['camera']['height']*self.scale),bg='#20252a',highlightthickness=0)
@@ -64,13 +48,11 @@ class App:
         self.logs=tk.Text(body,width=29,height=12,state='disabled',font=('Monospace',11));self.logs.pack(side='left',fill='both',expand=True)
         self.canvas.bind('<ButtonPress-1>',self.start_box);self.canvas.bind('<B1-Motion>',self.move_box)
         self.canvas.bind('<ButtonRelease-1>',self.end_box);self.canvas.bind('<Button-3>',self.set_origin)
-        tk.Label(win,text='按住升降点动；Esc/空格停止。停止抽气可能释放物块。',font=('Sans',11),fg='#a02020').pack()
-        win.bind('<Escape>',lambda e:self.stop());win.bind('<space>',lambda e:self.stop())
+        tk.Label(win,text='右键保存吸嘴红点；Esc/空格立即停止并关闭抽气。',font=('Sans',11),fg='#a02020').pack()
+        win.bind('<Escape>',lambda e:self.emergency_stop());win.bind('<space>',lambda e:self.emergency_stop())
         win.bind('<r>',lambda e:self.reconnect_camera());win.bind('<R>',lambda e:self.reconnect_camera())
-        win.bind('<FocusOut>',self.stop_servo)
-        win.bind('<ButtonRelease-1>',self.stop_servo,add='+')
         win.protocol('WM_DELETE_WINDOW',self.close)
-        self.log('[READY] 一次识别加3cm靠近补偿；升降为手动点动。')
+        self.log('[READY] 移动并抓取 / 释放 / 立即停止；红点为吸嘴原点。')
         self.refresh()
 
     def log(self,text):
@@ -80,53 +62,19 @@ class App:
         self.messages.put(('log',text))
 
     def update_buttons(self):
-        idle=not (self.busy or self.closing or self.stopping_pump or self.reconnecting)
-        self.enable_button.config(text='切回预览' if self.enabled else '启用操作',
-                                  state='normal' if idle else 'disabled')
-        self.calibrate_button.config(text='取消校准' if self.calibrating_origin else '校准红点',
-                                     state='normal' if idle else 'disabled')
+        enabled=self.enabled and not self.closing and not self.stopping_pump
         for button in self.buttons:
-            available=self.enabled and not self.closing and not self.stopping_pump
-            if button is not self.pump_stop_button:
-                available=available and idle and not self.calibrating_origin
+            available=enabled and (button is self.stop_button or not (self.busy or self.reconnecting))
             button.config(state='normal' if available else 'disabled')
 
-    def toggle_enabled(self):
-        if self.busy or self.stopping_pump or self.closing or self.reconnecting:
-            return
-        self.enabled=not self.enabled
-        self.win.title('Visual Grasp — 单次位移抓取'+(' / 可执行' if self.enabled else ' / 只预览'))
-        self.log('[MODE] '+('操作已启用' if self.enabled else '已切回只预览'))
-        self.update_buttons()
-
-    def start_origin_calibration(self):
-        if self.busy or self.stopping_pump or self.closing or self.reconnecting:
-            return
-        self.calibrating_origin=not self.calibrating_origin
-        self.drag=self.selection=None
-        self.update_buttons()
-
-    def start_servo(self,direction):
-        if self.launch(lambda runtime:runtime.jog_servo(direction)):
-            self.servo_jogging=True
-            self.update_buttons()
-        return 'break'
-
-    def stop_servo(self,event=None):
-        if self.servo_jogging:
-            self.cancel.set()
-
     def start_box(self,e):
-        if not self.busy and not self.calibrating_origin:
+        if not self.busy:
             self.drag=(round(e.x/self.scale),round(e.y/self.scale))
 
     def move_box(self,e):
         if self.drag:self.selection=(*self.drag,round(e.x/self.scale),round(e.y/self.scale))
 
     def end_box(self,e):
-        if self.calibrating_origin:
-            self.set_origin(e)
-            return
         if self.drag is None:return
         x,y=self.drag;self.drag=self.selection=None
         u=max(0,min(self.cfg['camera']['width']-1,round(e.x/self.scale)))
@@ -153,44 +101,41 @@ class App:
             self.log('[ORIGIN_ERROR] '+str(exc))
             return
         nozzle.update(updated)
-        self.calibrating_origin=False
         self.update_buttons()
         self.log('[ORIGIN] 吸嘴中心像素=%s，已保存为红点原点'%point)
 
     def launch(self,operation):
         if (self.busy or self.stopping_pump or self.closing or self.reconnecting
-                or self.calibrating_origin or not self.enabled):
+                or not self.enabled):
             return False
-        self.busy=True;self.cancel.clear();self.action_done.clear()
+        self.busy=True;self.cancel.clear()
         def work():
-            try:operation(Runtime(self.cfg,self.root,self.camera,self.cancel,self.log))
-            except InterruptedError:self.log('[STOP] 已中断，底盘停止，泵保持当前状态')
+            try:operation(self.runtime)
+            except InterruptedError:self.log('[STOP] 动作已中断')
             except Exception as exc:
                 logging.getLogger('visual_grasp').exception('任务失败')
                 self.log('[ERROR] '+str(exc))
-            finally:self.action_done.set();self.messages.put(('finished',None))
+            finally:self.messages.put(('finished',None))
         threading.Thread(target=work,daemon=True,name='snapshot-grasp').start()
         return True
 
     def pick(self):self.launch(lambda r:r.pick())
     def release(self):self.launch(lambda r:r.release())
 
-    def stop_pump(self):
-        """先中断旧任务并等它释放串口，再关泵，避免两个线程抢同一设备。"""
+    def emergency_stop(self):
+        """立即取消运动；气泵在其串口可用时独立关停。"""
         if not self.enabled or self.closing or self.stopping_pump:return
         self.stopping_pump=True;self.cancel.set()
-        self.log('[STOP_PUMP] 正在中断移动并关闭抽气')
+        self.log('[STOP] 正在中断底盘、升降并关闭抽气')
         def work():
             try:
-                self.action_done.wait()
-                Runtime(self.cfg,self.root,self.camera,threading.Event(),self.log).release()
+                self.runtime.pump_off()
                 self.log('[STOP_PUMP] 气泵关闭指令已确认')
             except Exception as exc:self.log('[STOP_PUMP_ERROR] '+str(exc))
             finally:self.messages.put(('pump_stopped',None))
         threading.Thread(target=work,daemon=True,name='stop-pump').start()
 
     def stop(self):
-        self.calibrating_origin=False
         self.cancel.set();self.log('[STOP] 已请求停止，不自动释放')
 
     def reconnect_camera(self):
@@ -228,10 +173,10 @@ class App:
     def refresh_view(self):
         while not self.messages.empty():
             kind,value=self.messages.get_nowait()
-            if kind=='finished':self.busy=self.servo_jogging=False
+            if kind=='finished':self.busy=False
             elif kind=='pump_stopped':self.stopping_pump=False
             elif kind=='camera_ready':
-                self.camera=value;self.reconnecting=False;self.last_camera_error=None
+                self.camera=self.runtime.camera=value;self.reconnecting=False;self.last_camera_error=None
                 if self.closing:self.camera.close(wait=False)
                 self.log('[CAMERA] 已重连')
             elif kind=='camera_failed':self.reconnecting=False;self.log('[CAMERA_ERROR] '+value)
@@ -256,10 +201,8 @@ class App:
             self.canvas.delete('all');self.canvas.create_image(0,0,anchor='nw',image=self.photo)
             if self.selection:self.canvas.create_rectangle(*(n*self.scale for n in self.selection),outline='yellow',width=2)
         if error:self.hint.config(text='相机错误：'+error)
-        elif self.calibrating_origin:self.hint.config(text='点击吸嘴中心以保存红点；Esc取消')
-        elif self.servo_jogging:self.hint.config(text='舵机点动；松手或移出按钮即停')
         elif self.busy:self.hint.config(text='动作正在执行；Esc/空格停止')
-        elif not self.enabled:self.hint.config(text='只预览；点击“启用操作”可使用动作按钮')
+        elif not self.enabled:self.hint.config(text='只预览；使用 run.sh --run 启用操作')
         elif obs.center is not None and obs.nozzle_center is not None:
             d=[obs.center[i]-obs.nozzle_center[i] for i in range(2)]
             self.hint.config(text='相对原点=(%.1f,%.1f)px；可见面7×10cm；正向对应画面朝下'%tuple(d))

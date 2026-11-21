@@ -46,6 +46,7 @@ class PressureLink:
         self.pending = None
         self.ready = threading.Event()
         self.quit = threading.Event()
+        self.release_on_close = False
         self.thread = threading.Thread(target=self.run, daemon=True, name='pressure-link')
         self.on_ack = False
 
@@ -80,6 +81,7 @@ class PressureLink:
 
     def run(self):
         dev = None
+        pump_requested = False
         try:
             dev = AirGrip(self.cfg)
             # USB CDC刚打开时首条命令可能丢失；只在连接时等待DTR生效。
@@ -93,6 +95,7 @@ class PressureLink:
                 with self.lock:
                     command, self.pending = self.pending, None
                 if command is not None:
+                    pump_requested = command
                     dev.set_pump(command)
                     with self.lock:
                         self.on_ack = command
@@ -118,9 +121,18 @@ class PressureLink:
             # 抓住后关闭程序不能自动松泵让物料掉落！释放只能由明确的Release执行。
             # 官方板端断线保留原状态，这里只关串口，不调用会PUMP_OFF的AirGrip.close。
             if dev is not None and dev.ser is not None:
-                dev.ser.close()
+                try:
+                    if self.release_on_close or (pump_requested and self.error):
+                        try:
+                            dev.set_pump(False)
+                            self.log('[STOP] 本次气泵已关闭')
+                        except Exception as exc:
+                            self.log('[STOP_ERROR] 气泵关停未确认：'+str(exc))
+                finally:
+                    dev.ser.close()
 
-    def close(self):
+    def close(self, release=False):
+        self.release_on_close = release
         self.quit.set()
         # 在任务工作线程中等待串口真正释放，关泵按钮随后才能建立新连接。
         self.thread.join()

@@ -34,36 +34,7 @@ class BrokenCamera:
 
 
 class ResilienceTests(unittest.TestCase):
-    def test_servo_release_cancels_jog_without_parallel_grasp(self):
-        started, stopped = threading.Event(), threading.Event()
-
-        class FakeRuntime:
-            def __init__(self, cfg, root, camera, cancel, log):
-                self.cancel = cancel
-
-            def jog_servo(self, direction):
-                if direction == 'up':
-                    started.set()
-                self.cancel.wait(2.)
-                stopped.set()
-
-        with tempfile.TemporaryDirectory() as folder, patch.object(app, 'Camera', BrokenCamera), \
-                patch.object(app, 'Runtime', FakeRuntime):
-            win = tk.Tk()
-            a = app.App(win, CFG, Path(folder), True)
-            try:
-                a.start_servo('up')
-                self.assertTrue(started.wait(1.))
-                self.assertFalse(a.launch(lambda runtime: runtime.pick()))
-                a.stop_servo()
-                self.assertTrue(stopped.wait(1.))
-                self.pump(win, .25)
-                self.assertFalse(a.servo_jogging)
-            finally:
-                a.close()
-                self.pump(win, .25)
-
-    def test_preview_controls_can_be_enabled_and_origin_is_saved(self):
+    def test_three_buttons_and_right_click_saves_origin(self):
         class LiveCamera(BrokenCamera):
             def snapshot(self):
                 frame, observation, box, _ = super().snapshot()
@@ -71,17 +42,13 @@ class ResilienceTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as folder, patch.object(app, 'Camera', LiveCamera):
             win = tk.Tk()
-            a = app.App(win, copy.deepcopy(CFG), Path(folder), False)
+            a = app.App(win, copy.deepcopy(CFG), Path(folder), True)
             try:
-                self.assertTrue(all(button['state'] == 'disabled' for button in a.buttons))
-                a.enable_button.invoke()
+                self.assertEqual([b['text'] for b in a.buttons], ['移动并抓取', '释放', '立即停止'])
                 self.assertTrue(all(button['state'] == 'normal' for button in a.buttons))
-                a.calibrate_button.invoke()
-                self.assertEqual(a.servo_buttons[0]['state'], 'disabled')
-                a.end_box(SimpleNamespace(x=round(400*a.scale), y=round(390*a.scale)))
+                a.set_origin(SimpleNamespace(x=round(400*a.scale), y=round(390*a.scale)))
                 saved = json.loads((Path(folder)/'config.json').read_text())
                 self.assertEqual(saved['target']['nozzle']['origin_px'], [400, 390])
-                self.assertFalse(a.calibrating_origin)
             finally:
                 a.close()
                 self.pump(win, .25)
@@ -96,7 +63,9 @@ class ResilienceTests(unittest.TestCase):
     def test_camera_loss_keeps_timer_stop_and_window_close_responsive(self):
         with tempfile.TemporaryDirectory() as folder,patch.object(app,'Camera',BrokenCamera):
             win=tk.Tk();a=app.App(win,CFG,Path(folder),False)
-            self.pump(win,.25)
+            deadline=time.monotonic()+1.
+            while a.camera.calls<3 and time.monotonic()<deadline:
+                self.pump(win,.05)
             self.assertGreaterEqual(a.camera.calls,3)
             self.assertIn('相机错误',a.hint['text'])
             a.stop();self.assertTrue(a.cancel.is_set())
@@ -155,7 +124,7 @@ class ResilienceTests(unittest.TestCase):
             self.assertEqual(old.close_wait,[True])
             a.close();self.pump(win,.2);self.assertTrue(a.closed)
 
-    def test_stop_pump_is_available_during_motion_and_waits_for_serial_cleanup(self):
+    def test_immediate_stop_cancels_motion_and_independently_closes_pump(self):
         order=[];started=threading.Event()
         class FakeRuntime:
             def __init__(self,cfg,root,camera,cancel,log):self.cancel=cancel
@@ -163,28 +132,28 @@ class ResilienceTests(unittest.TestCase):
                 started.set();self.cancel.wait()
                 order.append('motion_and_serial_closed')
                 raise InterruptedError('cancelled')
-            def release(self):
-                if order!=['motion_and_serial_closed']:raise AssertionError('串口尚未释放就试图关泵')
+            def pump_off(self):
+                if not self.cancel.is_set():raise AssertionError('运动取消没有先发出')
                 order.append('pump_off')
         with tempfile.TemporaryDirectory() as folder,patch.object(app,'Camera',BrokenCamera),patch.object(app,'Runtime',FakeRuntime):
             win=tk.Tk();a=app.App(win,CFG,Path(folder),True)
             a.pick();self.assertTrue(started.wait(.5));a.refresh_view()
             self.assertEqual(a.buttons[0]['state'],'disabled')
-            self.assertEqual(a.pump_stop_button['state'],'normal')
-            before=time.monotonic();a.stop_pump();self.assertLess(time.monotonic()-before,.1)
+            self.assertEqual(a.stop_button['state'],'normal')
+            before=time.monotonic();a.emergency_stop();self.assertLess(time.monotonic()-before,.1)
             self.pump(win,.3)
-            self.assertEqual(order,['motion_and_serial_closed','pump_off'])
+            self.assertCountEqual(order,['motion_and_serial_closed','pump_off'])
             self.assertFalse(a.busy);self.assertFalse(a.stopping_pump)
             a.close();self.pump(win,.2)
 
-    def test_stop_pump_also_works_when_idle(self):
+    def test_immediate_stop_also_works_when_idle(self):
         calls=[]
         class FakeRuntime:
             def __init__(self,*a):pass
-            def release(self):calls.append('pump_off')
+            def pump_off(self):calls.append('pump_off')
         with tempfile.TemporaryDirectory() as folder,patch.object(app,'Camera',BrokenCamera),patch.object(app,'Runtime',FakeRuntime):
             win=tk.Tk();a=app.App(win,CFG,Path(folder),True)
-            a.stop_pump();self.pump(win,.2)
+            a.emergency_stop();self.pump(win,.2)
             self.assertEqual(calls,['pump_off']);self.assertFalse(a.stopping_pump)
             a.close();self.pump(win,.2)
 
