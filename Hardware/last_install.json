@@ -1,20 +1,20 @@
 {
-  "directory": "/home/ugv/slicer-ugv/Hardware/Backups/board_5CF0016377_1795192351667235307",
-  "version": "v1.6",
+  "directory": "/home/ugv/slicer-ugv/Hardware/Backups/board_5CF0016377_1795270966021742526",
+  "version": "v1.7",
   "usb_serial": "5CF0016377",
-  "device": "/dev/ttyACM2",
+  "device": "/dev/ttyACM1",
   "verified": true,
   "erased": true,
   "option_bytes_written": false,
-  "image_sha256": "87fead14af4644975f4602afb0ca080f2943ae92aa9d83c4a4e6d706cb73b4ec",
-  "before_sha256": "031d3119bfeb5c3f69d10d4e2bf1019b45c7ab3ad754b21ee9575fb5343653d9",
+  "image_sha256": "4e9bcafeab040d7f1bd0ad8758948bc180e1c231afa247f8c492fd8a21e4431a",
+  "before_sha256": "2ee9b66c495c1e4535ee2766fe37f68b44d3f38d3f6603640745a2b8c94c499c",
   "backup_verified": true,
-  "expected_sha256": "2ee9b66c495c1e4535ee2766fe37f68b44d3f38d3f6603640745a2b8c94c499c",
+  "expected_sha256": "81067fa115fdcc426f6b4d3e2ef50517ef6767a4f442877db54052e45c4d7153",
   "erase_started": true,
   "sectors_changed": [
     0
   ],
-  "readback_sha256": "2ee9b66c495c1e4535ee2766fe37f68b44d3f38d3f6603640745a2b8c94c499c",
+  "readback_sha256": "81067fa115fdcc426f6b4d3e2ef50517ef6767a4f442877db54052e45c4d7153",
   "options_unchanged": true,
   "rom_commands": [
     "0x0",
