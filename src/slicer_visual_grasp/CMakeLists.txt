@@ -26,6 +26,9 @@ install(FILES
 install(FILES "${workspace_root}/Hardware/config.yaml"
   DESTINATION "${support}/Hardware"
 )
+install(FILES "${workspace_root}/tools/manual/serial_group.sh"
+  DESTINATION "${support}/tools/manual"
+)
 install(FILES
   "${workspace_root}/tools/manual/airgrip/__init__.py"
   "${workspace_root}/tools/manual/airgrip/keyboard.py"

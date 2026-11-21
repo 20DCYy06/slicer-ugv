@@ -1,5 +1,6 @@
 """在Xvfb中使用假相机测试800×480界面；绝不连接串口或真实摄像头。"""
 import tkinter as tk
+from types import SimpleNamespace
 from unittest.mock import patch
 import numpy as np
 from slicer_visual_grasp.paths import DEFAULT_CONFIG
@@ -8,7 +9,8 @@ from slicer_visual_grasp.logic import Observation
 
 
 class FakeCamera:
-    def __init__(self,*args):pass
+    def __init__(self,*args):
+        self.thread=SimpleNamespace(is_alive=lambda:False)
     def start(self):pass
     def close(self,wait=True):pass
     def select(self,box):pass

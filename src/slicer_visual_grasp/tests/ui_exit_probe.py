@@ -2,6 +2,7 @@
 import os
 from pathlib import Path
 import time
+from types import SimpleNamespace
 from unittest.mock import patch
 import numpy as np
 from slicer_visual_grasp import app
@@ -9,7 +10,8 @@ from slicer_visual_grasp.logic import Observation
 
 
 class FakeCamera:
-    def __init__(self,*args):pass
+    def __init__(self,*args):
+        self.thread=SimpleNamespace(is_alive=lambda:False)
     def start(self):pass
     def snapshot(self):
         return np.zeros((480,640,3),np.uint8),Observation(1,time.monotonic(),None),(5,5,30,30),'simulated camera disconnect'

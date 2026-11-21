@@ -53,6 +53,31 @@ class ResilienceTests(unittest.TestCase):
             self.pump(win,.2)
             self.assertTrue(a.closed)
 
+    def test_window_close_waits_for_camera_capture_to_release(self):
+        released = threading.Event()
+
+        class ClosingCamera(BrokenCamera):
+            def __init__(self, *args):
+                super().__init__(*args)
+                self.thread = SimpleNamespace(is_alive=lambda: not released.is_set())
+
+        with tempfile.TemporaryDirectory() as folder, patch.object(app, 'Camera', ClosingCamera):
+            win = tk.Tk()
+            try:
+                a = app.App(win, CFG, Path(folder), False)
+                a.close()
+                self.pump(win, .25)
+                self.assertFalse(a.closed)
+                self.assertEqual(a.camera.close_wait, [False])
+                released.set()
+                self.pump(win, .25)
+                self.assertTrue(a.closed)
+            finally:
+                try:
+                    win.destroy()
+                except tk.TclError:
+                    pass
+
     def test_unexpected_render_error_does_not_remove_refresh_timer(self):
         class FailingOnce(BrokenCamera):
             def snapshot(self):

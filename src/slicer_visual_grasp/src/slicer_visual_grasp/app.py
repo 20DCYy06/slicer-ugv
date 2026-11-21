@@ -135,7 +135,8 @@ class App:
         try:
             if self.signal_exit_requested and not self.closing:self.close()
             if self.closing:
-                if not self.busy and not self.reconnecting and not self.stopping_pump:
+                if (not self.busy and not self.reconnecting and not self.stopping_pump
+                        and not self.camera.thread.is_alive()):
                     self.closed=True;self.win.destroy();return
                 if time.monotonic()-self.close_started>=3:os._exit(130)
             self.refresh_view()
@@ -175,7 +176,7 @@ class App:
                 cv2.putText(frame,'(0,0)',(point[0]+12,point[1]-10),0,.5,(0,0,255),1)
                 if obs.center is not None:cv2.arrowedLine(frame,point,tuple(round(n) for n in obs.center),(0,255,255),2)
             frame=cv2.resize(frame,None,fx=self.scale,fy=self.scale)
-            self.photo=ImageTk.PhotoImage(Image.fromarray(cv2.cvtColor(frame,cv2.COLOR_BGR2RGB)))
+            self.photo=ImageTk.PhotoImage(Image.fromarray(cv2.cvtColor(frame,cv2.COLOR_BGR2RGB)),master=self.canvas)
             self.canvas.delete('all');self.canvas.create_image(0,0,anchor='nw',image=self.photo)
             if self.selection:self.canvas.create_rectangle(*(n*self.scale for n in self.selection),outline='yellow',width=2)
         if error:self.hint.config(text='相机错误：'+error)

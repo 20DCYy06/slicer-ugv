@@ -1,12 +1,12 @@
 # 单次视觉位移 + 3 cm 靠近补偿 + 开泵
 
 ```bash
-source devel/setup.bash
+source "$HOME/slicer_noetic_current/install/setup.bash"
 rosrun slicer_visual_grasp run.sh
 rosrun slicer_visual_grasp run.sh --run
 ```
 
-默认只在 Jetson 本地桌面预览。使用 `--run` 启用动作按钮前，先退出 ROS 底盘驱动、独立手柄和 AirGrip 控制程序，将底盘与气泵串口留给本程序。
+默认只在 Jetson 本地桌面预览。使用 `--run` 启用动作按钮前，先退出 ROS 底盘驱动、独立手柄和 AirGrip 控制程序，将底盘与气泵串口留给本程序。启动器会复用账号已有的 `dialout` 权限。
 
 界面保留画面和控制台日志，三个按钮：**移动并抓取 / 释放 / 停止抽气**。
 程序不再控制升降舵机，不读取舵机配置，不发送PB14/PB15能力查询或PWM命令。
