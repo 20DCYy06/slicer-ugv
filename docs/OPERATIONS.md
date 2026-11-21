@@ -65,3 +65,5 @@ V2 用独立 FKIE 时显式设置 `start_fkie:=true uav_ip:="$UAV_IP"`。V2 真�
 | 正式视觉伺服 | `./Test/Visual_Grasp/run.sh` | source 整车 install 后执行 `rosrun slicer_visual_grasp run.sh` |
 
 组合手柄的配置、按键和协议测试已随原实现恢复。视觉界面、配置和无设备检查见 [slicer_visual_grasp](../src/slicer_visual_grasp/README.md)。`Vision_adjust` 只作为[历史参考](archive/VISION_ADJUST.md)保留在提交历史。
+
+舵机和组合手柄独占 C30D，运行前先停止正在占用底盘串口的导航或其他工具。气夹单独运行时也需要独占其串口。三个入口会复用账号已有的 `dialout` 权限。停止工具后换插 USB 口，再用原命令启动。C30D 通过 `/dev/c30d` 定位，AirGrip 和组合手柄通过 USB by-id 路径定位。

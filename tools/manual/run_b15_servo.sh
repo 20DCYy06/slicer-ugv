@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+HERE=$(dirname "$(readlink -f "$0")")
 export PYTHONDONTWRITEBYTECODE=1
-exec /usr/bin/python3 -s "$(dirname "$(readlink -f "$0")")/b15_servo/keyboard.py" "$@"
+source "$HERE/serial_group.sh"
+run_serial_tool /usr/bin/python3 -s "$HERE/b15_servo/keyboard.py" "$@"

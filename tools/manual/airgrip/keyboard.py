@@ -21,6 +21,16 @@ else:
 HERE=Path(__file__).resolve().parent
 
 
+def ping_on_open(device):
+    # The first request can time out while the CDC link comes up after opening.
+    for attempt in range(3):
+        try:
+            return device.request('PING')
+        except TimeoutError:
+            if attempt == 2:
+                raise
+
+
 class AirGrip:
     def __init__(self,cfg):
         self.cfg=cfg; self.seq=0; self.buffer=bytearray(); self.status={}
@@ -94,7 +104,7 @@ def run(args):
     def interrupted(*unused):raise KeyboardInterrupt()
     for sig in (signal.SIGINT,signal.SIGTERM,signal.SIGHUP):signal.signal(sig,interrupted)
     try:
-        print('[PING]',json.dumps(dev.request('PING'),ensure_ascii=False),flush=True)
+        print('[PING]',json.dumps(ping_on_open(dev),ensure_ascii=False),flush=True)
         print('[STATUS]',json.dumps(dev.request('GET_STATUS'),ensure_ascii=False),flush=True)
         if not args.run:return
         fd=sys.stdin.fileno();old=termios.tcgetattr(fd);tty.setcbreak(fd)

@@ -30,7 +30,7 @@ speed:
   angular_max: 1.0
   angular_step: 0.1
 gamepad:
-  device: /dev/input/js0
+  device: /dev/input/by-id/usb-2563_USB_WirelessGamepad-joystick
   throttle_axis: 1
   steering_axis: 2
   dead_zone: 0.1

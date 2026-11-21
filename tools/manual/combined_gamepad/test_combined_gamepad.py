@@ -88,8 +88,27 @@ class IntegrationTests(unittest.TestCase):
         config = json.loads((HERE / 'combined_gamepad.json').read_text())
         cfg = c.gamepad_config(c.load_config(HERE / config['hardware_config']))
         self.assertEqual(cfg['speed']['linear_max'], 1.)
+        self.assertTrue(cfg['gamepad']['device'].startswith('/dev/input/by-id/'))
         for key in ('servo_config', 'airgrip_config'):
             self.assertTrue((HERE / config[key]).is_file())
+
+    def test_pump_start_retries_first_ping_timeout(self):
+        requests = []
+
+        class SlowStartPump(FakePump):
+            def request(self, cmd):
+                requests.append(cmd)
+                if len(requests) == 1:
+                    raise TimeoutError('first PING timed out')
+                return super().request(cmd)
+
+        cfg = json.loads((HERE.parent / 'airgrip/config.json').read_text())
+        worker = c.PumpWorker(cfg, SlowStartPump)
+        try:
+            worker.start()
+            self.assertEqual(requests, ['PING', 'PING', 'GET_STATUS'])
+        finally:
+            worker.close()
 
     def test_pump_ack_does_not_block_caller_and_latest_release(self):
         cfg=json.loads((HERE.parent/'airgrip/config.json').read_text())

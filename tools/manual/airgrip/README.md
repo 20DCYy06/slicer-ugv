@@ -10,7 +10,7 @@ A接通吸取（PUMP_ON）；D/空格断开释放（PUMP_OFF）；Q/Ctrl+C退出
 
 只读查询：`./tools/manual/run_airgrip.sh --check`，不发送PUMP_ON/PUMP_OFF/SET_LINK。
 离线测试：`cd tools/manual/airgrip && python3 -B -m unittest -v test_airgrip.py`。
-配置：tools/manual/airgrip/config.json。当前/dev/ttyACM0由by-id路径定位，波特率115200。
+配置：`tools/manual/airgrip/config.json`。设备通过 USB by-id 路径及序列号定位，波特率 115200。换 USB 口后重新运行即可。启动仅在 PING 超时时重试。
 依赖Python3、pyserial（已安装）；无需ROS、Docker、编译或新固件。
 
 协议直接逐函数复用官方host/python/host_ros.py：UTF-8文本`@seq|cmd|payload|CRC\n`；CRC16-Modbus。

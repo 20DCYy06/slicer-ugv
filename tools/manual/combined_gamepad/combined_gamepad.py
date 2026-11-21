@@ -18,7 +18,7 @@ import tty
 HERE=Path(__file__).resolve().parent
 sys.path.insert(0,str(HERE.parent))
 from control_core import Chassis,Gear,Slew,Joystick,EVENT,gamepad_config,gamepad_target,load_config
-from airgrip.keyboard import AirGrip
+from airgrip.keyboard import AirGrip, ping_on_open
 
 
 def wheel_pwm_log(pwm_ticks,period):
@@ -103,7 +103,7 @@ class PumpWorker:
         dev=None
         try:
             dev=self.factory(self.cfg)
-            self.messages.put(('READY',dev.request('PING')))
+            self.messages.put(('READY',ping_on_open(dev)))
             self.messages.put(('STATUS',dev.request('GET_STATUS')))
             self.ready.set();last_link=last_status=0.;last_state=None
             while not self.stop_event.is_set():
