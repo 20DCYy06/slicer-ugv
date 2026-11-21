@@ -46,6 +46,20 @@ roslaunch ag_ugv_task ugv.launch monitor_only:=true start_fkie:=false
 
 V2 用独立 FKIE 时显式设置 `start_fkie:=true uav_ip:="$UAV_IP"`。V2 真正执行使用 `monitor_only:=false`。V1 的双 master 入口见[通信包说明](../src/ugv_communication/README.md)。切换模式或执行器前结束旧任务、保持停车并停止旧入口。ROS 控制在各模式经 Guard 和 Mux，单一 Mux 发布 `/cmd_vel`，单一 driver 占用底盘串口。
 
+### RTK 本地分屏桌面
+
+Jetson 登录本地 X11 桌面后，在连接现有 RTK ROS master 的终端从仓库根目录执行。脚本根据主屏几何将 RViz 放在左侧 75%，状态看板放在右侧 25%。
+
+```bash
+./tools/rtk_desktop_ui.sh
+```
+
+看板常驻显示 RTK 解算、卫星数和新鲜度。准备阶段显示配准、MID360 扫描、LIO、底盘和 Mux。进入已配准的 `map` 导航后显示车辆与当前目标的经纬度和 XY。RViz 固定坐标系随运行中的全局代价地图切换，启动阶段默认显示 `odom`。
+
+- **2D Nav Goal** 在 RViz 平面按住并拖动指定位置和朝向。此入口使用现有 `/ugv/move_base` 和正常停车保护。Mux 保持停车、急停、配准采集或已有导航任务时，终端会提示当前阻塞原因。
+- **Waypoint 打点** 可在地图地面平面连续点击。启动终端会打印坐标。配准后使用当前 WGS84 原点换算经纬度，并在 TF 可用时给出 `odom` 坐标。配准前可读取当前固定坐标系的 XY。打点数据只输出到终端。
+- 点击工具栏的 **关闭** 或按 **Esc** 结束分屏。可用 `SLICER_NATIVE_WS` 选择与现有导航一致的 ROS 安装目录。
+
 ## 底盘通信锁存恢复与测试
 
 使用 C30D v1.7 固件和本节配套 ROS 安装。无 RTK 和 RTK 都按正常入口启动。12 V 接通且 Motor ON 时，驱动检测到 MCU 的 UART、速度指令看门狗或测试锁存后保持零输出，并在固件确认四轮静止、零 PWM 持续 250 ms 后自动运行 `unlock.py --unlock`。驱动确认清锁后丢弃故障期间的速度指令，等待新的 `/cmd_vel`。编码器异常、堵转、转向错误或控制周期异常仍按故障停车。

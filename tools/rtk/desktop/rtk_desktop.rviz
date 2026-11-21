@@ -1,0 +1,94 @@
+Panels:
+  - Class: rviz/Displays
+    Name: 显示
+Visualization Manager:
+  Class: ""
+  Displays:
+    - Class: rviz/Grid
+      Name: 地面网格
+      Enabled: true
+      Alpha: 0.38
+      Cell Size: 0.5
+      Color: 105; 128; 148
+      Plane Cell Count: 80
+      Reference Frame: <Fixed Frame>
+    - Class: rviz/Map
+      Name: 全局代价地图
+      Enabled: true
+      Topic: /ugv/move_base/global_costmap/costmap
+      Alpha: 0.52
+      Color Scheme: costmap
+      Draw Behind: true
+    - Class: rviz/Map
+      Name: 局部代价地图
+      Enabled: true
+      Topic: /ugv/move_base/local_costmap/costmap
+      Alpha: 0.48
+      Color Scheme: costmap
+    - Class: rviz/LaserScan
+      Name: MID360 扫描
+      Enabled: true
+      Topic: /scan
+      Alpha: 0.85
+      Color: 224; 238; 249
+      Color Transformer: FlatColor
+      Position Transformer: XYZ
+      Style: Flat Squares
+      Size (m): 0.035
+      Queue Size: 5
+    - Class: rviz/Path
+      Name: 全局路径
+      Enabled: true
+      Topic: /ugv/move_base/GlobalPlanner/plan
+      Color: 38; 207; 255
+      Buffer Length: 1
+      Line Style: Lines
+    - Class: rviz/Path
+      Name: DWA 局部路径
+      Enabled: true
+      Topic: /ugv/move_base/DWAPlannerROS/local_plan
+      Color: 75; 232; 144
+      Buffer Length: 1
+      Line Style: Lines
+    - Class: rviz/Pose
+      Name: 当前目标
+      Enabled: true
+      Topic: /ugv/move_base/current_goal
+      Color: 255; 121; 179
+      Alpha: 1
+      Shape: Arrow
+    - Class: rviz/Polygon
+      Name: 车身轮廓
+      Enabled: true
+      Topic: /ugv/move_base/local_costmap/footprint
+      Color: 255; 177; 76
+      Alpha: 1
+  Enabled: true
+  Global Options:
+    Background Color: 22; 33; 45
+    Default Light: true
+    Fixed Frame: odom
+    Frame Rate: 25
+  Name: root
+  Tools:
+    - Class: rviz/MoveCamera
+    - Class: rviz/SetGoal
+      Topic: manual_goal
+    - Class: rviz/SetGoal
+      Topic: waypoint
+  Value: true
+  Views:
+    Current:
+      Class: rviz/TopDownOrtho
+      Angle: 0
+      Name: Current View
+      Near Clip Distance: 0.01
+      Scale: 40
+      Target Frame: <Fixed Frame>
+      Value: TopDownOrtho (rviz)
+      X: 0
+      Y: 0
+    Saved: ~
+Window Geometry:
+  Hide Left Dock: true
+  Hide Right Dock: true
