@@ -12,6 +12,32 @@ Q=[[200,150],[400,150],[400,290],[200,290]]
 
 
 class SnapshotTests(unittest.TestCase):
+    def test_manual_servo_jog_uses_configured_direction_and_releases_link(self):
+        from slicer_visual_grasp import pipeline
+        events = []
+        cancel = threading.Event()
+
+        class FakeServo:
+            def __init__(self, path): events.append(('open', path.name))
+            def check(self): events.append(('check',))
+            def pulse(self, value): events.append(('pulse', value)); cancel.set()
+            def receive(self): return []
+            def close(self): events.append(('close',))
+
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            (root / 'servo.json').write_text(json.dumps({
+                'clockwise_us': 2100, 'counterclockwise_us': 900,
+                'neutral_us': 1500, 'tap_duration_s': 0.3, 'refresh_hz': 20,
+            }))
+            for setting, expected in [('clockwise', 2100), ('counterclockwise', 900)]:
+                cancel.clear()
+                events.clear()
+                cfg = dict(CFG, servo_config='servo.json', servo_up_direction=setting)
+                with patch.object(pipeline, 'Servo', FakeServo, create=True):
+                    Runtime(cfg, root, None, cancel, lambda _message: None).jog_servo('up')
+                self.assertEqual(events, [('open', 'config.yaml'), ('check',), ('pulse', expected), ('close',)])
+
     def test_known_surface_converts_pixels_to_body_meters(self):
         obs=Observation(1,0,(300,220),(344,344),1,None,Q)
         cfg={**CFG['snapshot_move'],'approach_extra_m':0.}

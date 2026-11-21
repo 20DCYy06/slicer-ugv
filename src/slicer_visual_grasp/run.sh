@@ -21,11 +21,9 @@ case "${1:-}" in
         ;;
 esac
 
-enable_actions=false
 for argument in "$@"; do
     case "$argument" in
         --check|--help|-h) exec /usr/bin/python3 -s -m slicer_visual_grasp.app "$@" ;;
-        --run) enable_actions=true ;;
     esac
 done
 
@@ -39,8 +37,5 @@ if [[ ! -r "$auth" ]]; then
 fi
 export XAUTHORITY="$auth"
 
-if [[ "$enable_actions" == true ]]; then
-    source "$serial_tools/serial_group.sh"
-    run_serial_tool /usr/bin/python3 -s -m slicer_visual_grasp.app "$@"
-fi
-exec /usr/bin/python3 -s -m slicer_visual_grasp.app "$@"
+source "$serial_tools/serial_group.sh"
+run_serial_tool /usr/bin/python3 -s -m slicer_visual_grasp.app "$@"

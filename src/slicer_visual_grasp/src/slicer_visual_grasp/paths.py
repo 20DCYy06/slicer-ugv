@@ -16,6 +16,7 @@ MANUAL = SUPPORT_ROOT / 'tools/manual'
 DEVICE_CONFIGS = {
     'hardware_config': HARDWARE / 'config.yaml',
     'airgrip_config': MANUAL / 'airgrip/config.json',
+    'servo_config': MANUAL / 'b15_servo/config.json',
 }
 
 

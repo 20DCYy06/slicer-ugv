@@ -25,8 +25,9 @@ def key_pulse(key,cfg):
 
 
 class Servo:
-    def __init__(self):
-        path,expected=device(load_config())
+    def __init__(self, host_config=None):
+        config=load_config() if host_config is None else load_config(host_config)
+        path,expected=device(config)
         self.link=Link(path,expected,restore_on_close=False)
         self.parser=Parser(); self.seq=secrets.randbits(16)
         self.path=path; self.moved=False

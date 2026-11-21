@@ -30,6 +30,11 @@ install(FILES "${workspace_root}/tools/manual/serial_group.sh"
   DESTINATION "${support}/tools/manual"
 )
 install(FILES
+  "${workspace_root}/tools/manual/b15_servo/keyboard.py"
+  "${workspace_root}/tools/manual/b15_servo/config.json"
+  DESTINATION "${support}/tools/manual/b15_servo"
+)
+install(FILES
   "${workspace_root}/tools/manual/airgrip/__init__.py"
   "${workspace_root}/tools/manual/airgrip/keyboard.py"
   "${workspace_root}/tools/manual/airgrip/protocol.py"

@@ -30,7 +30,7 @@ if __name__=='__main__':
         instance=app.App(win,cfg,DEFAULT_CONFIG.parent,False)
         win.update()
         assert all(b['state']=='disabled' for b in instance.buttons)
-        assert [b['text'] for b in instance.buttons]==['移动并抓取','释放','停止抽气']
+        assert [b['text'] for b in instance.buttons]==['移动并抓取','释放','停止抽气','上升','下降']
         assert win.winfo_width() <= 800, win.winfo_width()
         assert win.winfo_height() <= 480, win.winfo_height()
         print('[UI_CHECK] 800x480 fits:',win.winfo_width(),win.winfo_height())

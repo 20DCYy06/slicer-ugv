@@ -6,10 +6,9 @@ rosrun slicer_visual_grasp run.sh
 rosrun slicer_visual_grasp run.sh --run
 ```
 
-默认只在 Jetson 本地桌面预览。使用 `--run` 启用动作按钮前，先退出 ROS 底盘驱动、独立手柄和 AirGrip 控制程序，将底盘与气泵串口留给本程序。启动器会复用账号已有的 `dialout` 权限。
+默认在 Jetson 本地桌面预览，点 **启用操作** 或用 `--run` 开启动作按钮。启用前先退出 ROS 底盘驱动、独立手柄和 AirGrip 控制程序，将底盘与气泵串口留给本程序。启动器会复用账号已有的 `dialout` 权限。
 
-界面保留画面和控制台日志，三个按钮：**移动并抓取 / 释放 / 停止抽气**。
-程序不再控制升降舵机，不读取舵机配置，不发送PB14/PB15能力查询或PWM命令。
+动作按钮为 **移动并抓取 / 释放 / 停止抽气 / 上升 / 下降**。按住升降按钮点动，松手、移出按钮或窗口失焦即停止。每次点动受舵机配置的时长限制，默认 0.3 秒。上升 2100 µs、下降 900 µs、中位 1500 µs。抓取与升降共用底盘串口，按顺序执行。自动抓取仍只移动底盘并开泵。
 
 ## 执行流程
 
@@ -30,13 +29,13 @@ rosrun slicer_visual_grasp run.sh --run
 该过程在工作线程中执行，不阻塞界面，也不与原任务争抢串口。
 “释放”在空闲时同样发送PUMP_OFF。现有接口没有在本程序中实现独立的“停泵且保持负压”动作，因此停止抽气可能释放物块。
 Esc/空格只停止底盘任务；退出仍保持当前气泵状态，不自动释放。
-Ctrl+C、窗口关闭、相机重连和单实例逻辑沿用现有实现。R重连相机，右键修改固定红点。
+Ctrl+C、窗口关闭、相机重连和单实例逻辑沿用现有实现。R 重连相机。点击 **校准红点** 后在画面点选吸嘴中心，或直接右键点选。
 
 ## 配置
 
 包内默认值见 [config/config.json](config/config.json)。右键校准保存到 `~/.config/slicer_visual_grasp/config.json`，设置了 `XDG_CONFIG_HOME` 时使用该目录。随后启动会读取该用户配置。也可用 `--config /path/to/config.json` 指定并编辑现有配置。
 
-设备默认使用随包提供的底盘与 AirGrip 配置。自定义配置可通过 `hardware_config` 和 `airgrip_config` 指定绝对路径或相对当前配置文件的路径。固定红点是正式模式。模板模式读取相对当前配置文件目录的 `target.nozzle.template_dir`，默认是 `data/nozzle_templates`。
+设备默认使用随包提供的底盘、AirGrip 和舵机配置。`hardware_config`、`airgrip_config`、`servo_config` 可指定绝对路径或相对当前配置文件的路径。升降方向由 `servo_up_direction` 指定，当前为 `clockwise`。固定红点是正式模式。模板模式读取相对当前配置文件目录的 `target.nozzle.template_dir`，默认是 `data/nozzle_templates`。
 
 ```json
 "snapshot_move": {

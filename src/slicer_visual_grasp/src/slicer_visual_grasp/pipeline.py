@@ -4,6 +4,7 @@ from pathlib import Path
 import time
 import cv2
 from .devices import Motion, PressureLink
+from b15_servo.keyboard import Servo
 from .paths import device_config
 
 
@@ -88,6 +89,32 @@ class Runtime:
                 if pump:pump.close()
                 self.camera.set_active(False)
 
+
+    def jog_servo(self, direction):
+        servo_config = json.loads(device_config(self.cfg, self.root, 'servo_config').read_text())
+        up = self.cfg.get('servo_up_direction', 'clockwise')
+        if up not in ('clockwise', 'counterclockwise') or direction not in ('up', 'down'):
+            raise ValueError('舵机方向配置无效')
+        clockwise = (direction == 'up') == (up == 'clockwise')
+        pulse = servo_config['clockwise_us' if clockwise else 'counterclockwise_us']
+        duration, refresh = servo_config['tap_duration_s'], servo_config['refresh_hz']
+        if (type(pulse) is not int or not 500 <= pulse <= 2500
+                or servo_config['neutral_us'] != 1500
+                or not 0 < duration <= 1 or not 5 <= refresh <= 100):
+            raise ValueError('舵机脉宽、中位、点动时长或刷新频率无效')
+        if self.cancel.is_set():
+            return
+
+        servo = Servo(device_config(self.cfg, self.root, 'hardware_config'))
+        try:
+            servo.check()
+            deadline = time.monotonic() + duration
+            while not self.cancel.is_set() and time.monotonic() < deadline:
+                servo.pulse(pulse)
+                servo.receive()
+                self.cancel.wait(max(0., min(1 / refresh, deadline - time.monotonic())))
+        finally:
+            servo.close()  # Reuse the manual tool's neutral command and serial release.
 
     def release(self):
         cfg = json.loads(device_config(self.cfg, self.root, 'airgrip_config').read_text())

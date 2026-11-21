@@ -1,4 +1,5 @@
 """在Xvfb中执行：模拟相机掉线及退出，不连接任何真实设备。"""
+import copy
 import json
 import os
 from pathlib import Path
@@ -33,6 +34,58 @@ class BrokenCamera:
 
 
 class ResilienceTests(unittest.TestCase):
+    def test_servo_release_cancels_jog_without_parallel_grasp(self):
+        started, stopped = threading.Event(), threading.Event()
+
+        class FakeRuntime:
+            def __init__(self, cfg, root, camera, cancel, log):
+                self.cancel = cancel
+
+            def jog_servo(self, direction):
+                if direction == 'up':
+                    started.set()
+                self.cancel.wait(2.)
+                stopped.set()
+
+        with tempfile.TemporaryDirectory() as folder, patch.object(app, 'Camera', BrokenCamera), \
+                patch.object(app, 'Runtime', FakeRuntime):
+            win = tk.Tk()
+            a = app.App(win, CFG, Path(folder), True)
+            try:
+                a.start_servo('up')
+                self.assertTrue(started.wait(1.))
+                self.assertFalse(a.launch(lambda runtime: runtime.pick()))
+                a.stop_servo()
+                self.assertTrue(stopped.wait(1.))
+                self.pump(win, .25)
+                self.assertFalse(a.servo_jogging)
+            finally:
+                a.close()
+                self.pump(win, .25)
+
+    def test_preview_controls_can_be_enabled_and_origin_is_saved(self):
+        class LiveCamera(BrokenCamera):
+            def snapshot(self):
+                frame, observation, box, _ = super().snapshot()
+                return frame, observation, box, None
+
+        with tempfile.TemporaryDirectory() as folder, patch.object(app, 'Camera', LiveCamera):
+            win = tk.Tk()
+            a = app.App(win, copy.deepcopy(CFG), Path(folder), False)
+            try:
+                self.assertTrue(all(button['state'] == 'disabled' for button in a.buttons))
+                a.enable_button.invoke()
+                self.assertTrue(all(button['state'] == 'normal' for button in a.buttons))
+                a.calibrate_button.invoke()
+                self.assertEqual(a.servo_buttons[0]['state'], 'disabled')
+                a.end_box(SimpleNamespace(x=round(400*a.scale), y=round(390*a.scale)))
+                saved = json.loads((Path(folder)/'config.json').read_text())
+                self.assertEqual(saved['target']['nozzle']['origin_px'], [400, 390])
+                self.assertFalse(a.calibrating_origin)
+            finally:
+                a.close()
+                self.pump(win, .25)
+
     def pump(self,win,duration):
         end=time.monotonic()+duration
         while time.monotonic()<end:
