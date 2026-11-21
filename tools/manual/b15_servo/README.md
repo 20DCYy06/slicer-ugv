@@ -4,7 +4,7 @@
 融合入口仍为`./tools/manual/run_combined_gamepad.sh --run`。
 启动时查询并打印实际引脚。PB14固件回复B14P/pin14，旧固件回复B15P/pin15。
 若打印PB15，说明板子尚未刷入v1.4，修改上位机无法改变物理输出引脚。
-配置脉宽保持原值，A/Y对应2400us，D/A对应600us，中位1500us。
+当前配置脉宽为顺时针 2100 µs、逆时针 900 µs、中位 1500 µs。独立工具用 A/D，组合手柄用 Y/A。
 新固件路径：Hardware/Firmware/v1.4/bin/firmware.bin。
 接线时先断开舵机电源，再将信号线由PB15移至PB14，电源和地线不变。
 
