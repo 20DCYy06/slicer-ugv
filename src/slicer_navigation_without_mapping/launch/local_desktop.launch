@@ -1,0 +1,10 @@
+<launch>
+  <arg name="waypoint_file" />
+  <node pkg="slicer_navigation" type="waypoint_recorder.py" name="slicer_waypoint_recorder" output="screen">
+    <param name="file" value="$(arg waypoint_file)" />
+  </node>
+  <node pkg="rviz" type="rviz" name="slicer_online_rviz" output="screen" args="-d $(dirname)/../rviz/online.rviz">
+    <env name="DISABLE_ROS1_EOL_WARNINGS" value="1" />
+  </node>
+  <node pkg="slicer_navigation_without_mapping" type="goal_display.py" name="online_goal_coordinates" output="screen" />
+</launch>

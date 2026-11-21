@@ -6,6 +6,7 @@
   <arg name="start_control" default="true" />
   <arg name="control_mock" default="false" />
   <arg name="gui" default="true" />
+  <arg name="waypoint_file" default="$(arg workspace2_root)/src/slicer_navigation_without_mapping/config/waypoints.yaml" />
   <include if="$(arg start_sensors)" file="$(find slicer_bringup)/launch/sensors.launch">
     <arg name="root" value="$(arg runtime_root)" />
     <arg name="rviz" value="false" />
@@ -36,6 +37,7 @@
     <param name="control_config_file" value="$(arg runtime_root)/config/control.yaml" />
     <rosparam command="load" file="$(find slicer_navigation)/config/arc_guard.yaml" />
   </node>
-  <node if="$(arg gui)" pkg="rviz" type="rviz" name="slicer_online_rviz" output="screen" args="-d $(find slicer_navigation_without_mapping)/rviz/online.rviz" />
-  <node if="$(arg gui)" pkg="slicer_navigation_without_mapping" type="goal_display.py" name="online_goal_coordinates" output="screen" />
+  <include if="$(arg gui)" file="$(dirname)/local_desktop.launch">
+    <arg name="waypoint_file" value="$(arg waypoint_file)" />
+  </include>
 </launch>

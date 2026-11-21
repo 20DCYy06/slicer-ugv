@@ -7,10 +7,16 @@
 ```bash
 export SLICER_NATIVE_WS="$HOME/slicer_noetic_current"  # 或指定你的完整安装工作区
 ./tools/no_rtk.sh nav --background
-./tools/no_rtk.sh stop
 ```
 
-本入口使用所选工作区生成的 `runtime/no_rtk`，源配置位于 [no_rtk](../src/ugv_bringup/config/no_rtk/)。未设置 `SLICER_NATIVE_WS` 时优先使用车端的 `$HOME/slicer_noetic_current` 安装。启动前会核对本次 launch 的节点是否可执行。未设置 `DISPLAY` 时自动关闭 RViz 和目标坐标窗口，也可用 `./tools/no_rtk.sh nav gui:=false` 显式关闭。查看 `rostopic list` 和 RViz 中的地图与规划，Action 为 `/move_base`。Gmapping 发布 `map → odom`，局部 EKF 发布 `odom → base_link`。后台 stop 只结束本工具创建的导航 launch，保留共享 ROS master。
+本入口使用所选工作区生成的 `runtime/no_rtk`，源配置位于 [no_rtk](../src/ugv_bringup/config/no_rtk/)。未设置 `SLICER_NATIVE_WS` 时优先使用车端的 `$HOME/slicer_noetic_current` 安装。启动前核对 launch 节点和 MID360 配置中的主机地址。当前车端 MID360 通过 Jetson `eth0` 连接，主机 `192.168.1.5/24`，雷达 `192.168.1.192`。检查 `ip -br -4 addr show eth0` 和 `rostopic hz /livox/lidar`。
+
+启动脚本使用同一用户已登录的 Jetson 本地 X11 桌面。未登录桌面时以无界面模式运行，也可传入 `gui:=false`。导航已运行时可用 `./tools/no_rtk.sh rviz` 单独打开本地 RViz、目标坐标窗口和录点节点。
+
+- **2D Nav Goal** 在地图上点住并拖动确定朝向，经 `/move_base_simple/goal` 发送给 `/move_base`。
+- **Record Waypoint** 可连续点击打点。录点节点写入 `src/slicer_navigation_without_mapping/config/waypoints.yaml`，可用 `rostopic echo /slicer/waypoint_record/status` 确认 `SAVED`。巡航读取该文件。在线 SLAM 重新建图后需要重新确认航点坐标。
+
+Gmapping 发布 `map → odom`，局部 EKF 发布 `odom → base_link`。用 `./tools/no_rtk.sh stop` 结束登记的后台导航。单独运行的 `rviz` 入口可在启动终端按 Ctrl+C 结束。
 
 ## RTK 导航与空地接口
 

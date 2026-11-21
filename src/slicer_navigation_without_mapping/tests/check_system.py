@@ -22,6 +22,14 @@ class MigrationChecks(unittest.TestCase):
         for key in ['global_costmap','local_costmap']:
             names=[p['name'] for p in c[key]['plugins']]
             self.assertIn('obstacle_layer',names);self.assertEqual(names.count('inflation_layer'),1);self.assertNotIn('depth_layer',names)
+    def test_desktop_goal_and_waypoint_wiring(self):
+        desktop = ET.parse(PACKAGE / 'launch/local_desktop.launch')
+        recorder = desktop.find(".//node[@type='waypoint_recorder.py']")
+        self.assertEqual(recorder.find("param[@name='file']").get('value'), '$(arg waypoint_file)')
+        config = yaml.safe_load((PACKAGE / 'rviz/online.rviz').read_text())
+        tools = {tool['Class']: tool for tool in config['Visualization Manager']['Tools']}
+        self.assertEqual(tools['rviz/SetGoal']['Topic'], '/move_base_simple/goal')
+        self.assertIn('slicer_navigation/RecordWaypoint', tools)
     def test_latest_geometry_and_generated_control(self):
         source=CONFIG_ROOT/'slicer_config.yaml';before=source.read_bytes()
         with tempfile.TemporaryDirectory() as d:

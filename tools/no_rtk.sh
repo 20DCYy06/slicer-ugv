@@ -14,13 +14,13 @@ runtime="$workspace/runtime/no_rtk"
 
 case "$mode" in
     -h|--help|help)
-        echo "Usage: $0 {build|check|nav [--background] [launch arguments]|stop|goal|patrol|record|diagnose|reset-map|goal-ui}"
+        echo "Usage: $0 {build|check|nav [--background] [launch arguments]|stop|rviz|goal|patrol|record|diagnose|reset-map|goal-ui}"
         exit 0
         ;;
     build) exec bash "$repo/tools/build_native.sh" "$workspace" "$@" ;;
     check) exec bash "$repo/tools/check_native.sh" "$workspace" "$@" ;;
     stop) ;;
-    nav|goal|patrol|record|diagnose|reset-map|goal-ui)
+    nav|rviz|goal|patrol|record|diagnose|reset-map|goal-ui)
         setup="$workspace/install/setup.bash"
         if [[ ! -f "$setup" ]]; then setup="$workspace/devel/setup.bash"; fi
         if [[ ! -f "$setup" ]]; then
@@ -39,22 +39,62 @@ case "$mode" in
     *) echo "Unknown NoRTK command: $mode" >&2; exit 2 ;;
 esac
 
-waypoints="$repo/src/slicer_navigation_without_mapping/config/waypoints.yaml"
+navigation="$repo/src/slicer_navigation_without_mapping"
+waypoints="$navigation/config/waypoints.yaml"
+
+use_local_desktop() {
+    local desktop_runtime="/run/user/$UID"
+    local desktop_bus="unix:path=$desktop_runtime/bus"
+    local name value display='' authority=''
+    while IFS='=' read -r name value; do
+        case "$name" in
+            DISPLAY) display=$value ;;
+            XAUTHORITY) authority=$value ;;
+        esac
+    done < <(XDG_RUNTIME_DIR="$desktop_runtime" DBUS_SESSION_BUS_ADDRESS="$desktop_bus" \
+        systemctl --user show-environment 2>/dev/null)
+    [[ "$display" =~ ^:[0-9]+(\.[0-9]+)?$ && -r "$authority" ]] || return 1
+    DISPLAY="$display" XAUTHORITY="$authority" xset q >/dev/null 2>&1 || return 1
+    export DISPLAY="$display" XAUTHORITY="$authority" QT_QPA_PLATFORM=xcb
+    export XDG_RUNTIME_DIR="$desktop_runtime" DBUS_SESSION_BUS_ADDRESS="$desktop_bus"
+}
+
 case "$mode" in
     goal) exec rosrun slicer_navigation_without_mapping send_goal.py "$@" ;;
     patrol) exec roslaunch slicer_navigation_without_mapping patrol.launch "file:=$waypoints" "$@" ;;
     record) exec rosrun slicer_navigation waypoint_recorder.py "_file:=$waypoints" "$@" ;;
     diagnose) exec rosrun slicer_navigation_without_mapping diagnose_navigation.py "$@" ;;
     reset-map) exec rosrun slicer_navigation_without_mapping reset_map.py "$@" ;;
-    goal-ui) exec rosrun slicer_navigation_without_mapping goal_display.py "$@" ;;
+    rviz|goal-ui)
+        if ! use_local_desktop; then
+            echo 'No Jetson X11 desktop available. Log in to the local desktop as this user.' >&2
+            exit 1
+        fi
+        if [[ "$mode" == goal-ui ]]; then
+            exec rosrun slicer_navigation_without_mapping goal_display.py "$@"
+        fi
+        exec roslaunch --wait "$navigation/launch/local_desktop.launch" "waypoint_file:=$waypoints" "$@"
+        ;;
     nav)
         mode=foreground
         if [[ ${1:-} == --background ]]; then mode=background; shift; fi
-        launch=(slicer_navigation_without_mapping slicer_nav_without_mapping.launch
+        launch=("$navigation/launch/slicer_nav_without_mapping.launch"
                 "workspace2_root:=$repo" "runtime_root:=$SLICER_NO_RTK_RUNTIME")
-        if [[ -z ${DISPLAY:-} ]]; then launch+=(gui:=false); fi
+        gui=auto
+        for argument in "$@"; do
+            if [[ "$argument" == gui:=* ]]; then gui=${argument#gui:=}; fi
+        done
+        if [[ "${gui,,}" != false ]] && ! use_local_desktop; then
+            if [[ "${gui,,}" != auto ]]; then
+                echo 'No Jetson X11 desktop available. Log in locally or pass gui:=false.' >&2
+                exit 1
+            fi
+            launch+=(gui:=false)
+        fi
         launch+=("$@")
         python3 - "$workspace" "${launch[@]}" <<'PY'
+import json
+import socket
 import sys
 
 from roslaunch.config import load_config_default
@@ -63,9 +103,9 @@ from roslaunch.rlutil import resolve_launch_arguments
 from roslib.packages import find_node
 from rospkg import ResourceNotFound, RosPack
 
-workspace, package, filename, *arguments = sys.argv[1:]
+workspace, filename, *arguments = sys.argv[1:]
 try:
-    path, *args = resolve_launch_arguments([package, filename, *arguments])
+    path, *args = resolve_launch_arguments([filename, *arguments])
     config = load_config_default([(path, args)], None, assign_machines=False)
 except RLException as exc:
     sys.exit(f'NoRTK launch configuration error in {workspace}: {exc}')
@@ -83,6 +123,21 @@ if missing:
     names = ', '.join(sorted(set(missing)))
     sys.exit(f'Incomplete NoRTK overlay {workspace}: {names}. '
              'Select a complete installation with SLICER_NATIVE_WS or run tools/no_rtk.sh build.')
+
+if '/user_config_path' in config.params:
+    filename = config.params['/user_config_path'].value
+    try:
+        with open(filename) as stream:
+            host = json.load(stream)['MID360']['host_net_info']
+        for address in sorted({value for key, value in host.items() if key.endswith('_ip') and value}):
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
+                try:
+                    probe.bind((address, 0))
+                except OSError as exc:
+                    sys.exit(f'MID360 cannot bind host IP {address}: {exc}. '
+                             'Check the Jetson Ethernet IPv4 address and the MID360 network profile.')
+    except (OSError, ValueError, KeyError) as exc:
+        sys.exit(f'Cannot read MID360 network configuration {filename}: {exc}')
 PY
         set -- roslaunch "${launch[@]}"
         ;;
