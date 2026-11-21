@@ -26,7 +26,7 @@ def device(config):
 
 def status(data):
     v=struct.unpack('<II4iBH4i4h4hH',data);f=v[6]
-    return dict(tick=v[0],flags=f,fault_latched=bool(f&4),configured=bool(f&8),motor_enabled=bool(f&16),
+    return dict(tick=v[0],ack=v[7],flags=f,fault_latched=bool(f&4),configured=bool(f&8),motor_enabled=bool(f&16),
         motor_power_present=bool(f&32),wheel_mm_s=list(v[12:16]),pwm_ticks=list(v[16:20]),battery_v=v[20]/1000)
 
 def body_status(data):
@@ -60,6 +60,7 @@ class Chassis:
             self.poll(.05)
     def send(self,kind,payload=b''):
         self.seq=(self.seq+1)&65535;self.link.send(packet(kind,self.seq,payload))
+        return self.seq
     def read_state(self):
         self.wait(lambda:self.state is not None);return self.state
     def connect(self):

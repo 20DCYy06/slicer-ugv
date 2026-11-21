@@ -13,6 +13,30 @@ import time
 from pathlib import Path
 sys.dont_write_bytecode=True
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'Host'))
+from chassis_commands import OWNER_SERIAL_ENV, call_owner
+
+
+def owner_unlock(serial):
+    result = call_owner(serial, 'unlock')
+    if result is not None:
+        success, detail = result
+        print('[UNLOCKED]' if success else '[ERROR]', detail, flush=True)
+        return 0 if success else 3
+    return None
+
+
+if __name__ == '__main__' and sys.argv[1:] == ['--unlock'] and os.environ.get(OWNER_SERIAL_ENV):
+    # The driver invokes this mode asynchronously. It never opens a serial port.
+    try:
+        code = owner_unlock(os.environ[OWNER_SERIAL_ENV])
+        if code is None:
+            raise RuntimeError('底盘驱动已退出')
+    except (OSError, RuntimeError, ValueError) as error:
+        print('[ERROR]', error, file=sys.stderr)
+        code = 3
+    raise SystemExit(code)
+
+
 from chassis import Chassis,load_config,save_log,CONFIG
 from chassis_recovery import (LinkRecovery, RECOVERY_TELEMETRY_TIMEOUT, fault_mask,
                               paired_body_status, recoverable)
@@ -73,10 +97,24 @@ def main():
     car=None;record={'action':'unlock' if a.unlock else 'check','nonzero_command_sent':False};code=0
     try:
         config = load_config(a.config)
+        serial = config['serial']['serial_number'] if a.unlock else None
+        if serial is not None:
+            result = owner_unlock(serial)
+            if result is not None:
+                record['via_driver']=True
+                record['success']=result==0
+                return result
         try:
             car = Chassis(config)
         except PermissionError as error:
             retry_with_dialout(error)
+            raise
+        except (OSError,RuntimeError):
+            if serial is not None:
+                result = owner_unlock(serial)
+                if result is not None:
+                    record.update(via_driver=True,success=result==0)
+                    return result
             raise
         before=car.read_state();record['before']=before
         print('[STATUS]',json.dumps(before,ensure_ascii=False),flush=True)

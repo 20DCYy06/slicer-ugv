@@ -48,7 +48,7 @@ V2 用独立 FKIE 时显式设置 `start_fkie:=true uav_ip:="$UAV_IP"`。V2 真�
 
 ## 底盘通信锁存恢复与测试
 
-使用 C30D v1.7 固件和本节配套 ROS 安装。按正常入口启动即可启用恢复。12 V 接通且 Motor ON 时，驱动检测到 MCU 的 UART、速度指令看门狗或测试锁存后保持零输出。固件确认四轮静止、零 PWM 持续 250 ms 后才允许清锁。驱动收到新的清锁遥测后丢弃故障期间的速度指令，等待新的 `/cmd_vel`。编码器异常、堵转、转向错误或控制周期异常仍按故障停车。
+使用 C30D v1.7 固件和本节配套 ROS 安装。无 RTK 和 RTK 都按正常入口启动。12 V 接通且 Motor ON 时，驱动检测到 MCU 的 UART、速度指令看门狗或测试锁存后保持零输出，并在固件确认四轮静止、零 PWM 持续 250 ms 后自动运行 `unlock.py --unlock`。驱动确认清锁后丢弃故障期间的速度指令，等待新的 `/cmd_vel`。编码器异常、堵转、转向错误或控制周期异常仍按故障停车。
 
 尚未安装 v1.7 的板先停车并停止占用底盘的程序。确认 Motor OFF、物理断开 12 V、仅 USB 供电后，烧录随仓库交付的镜像。烧录校验通过后先在断动力状态检查零输出，再接回 12 V。
 
@@ -68,28 +68,20 @@ source "$SLICER_NATIVE_WS/install/setup.bash"
 
 短时遥测中断时，驱动保持停止并等待新遥测，最多等到距最后一帧 3 秒。设备被拔掉或串口返回 I/O 错误时，按原入口结束后重启。测试锁存模拟固件锁存和恢复，不断开 USB。
 
-在可控场地架空车轮，用以下入口启动要测的模式。RTK 只替换[底盘终端](#rtk-导航与空地接口)的启动命令，定位与导航终端沿用原启动步骤。
+在 Jetson 上从仓库根目录运行这两个命令。导航运行时，命令把操作交给当前底盘驱动。挂机且串口空闲时，命令直接连接底盘。
 
 ```bash
-# 无 RTK
-SLICER_C30D_ENABLE_LOCK_TEST=1 ./tools/no_rtk.sh nav --background
-
-# RTK
-SLICER_C30D_ENABLE_LOCK_TEST=1 roslaunch ugv_bringup slicer_body_driver.launch
+python3 -s Hardware/LockDown/lock.py
+python3 -s Hardware/Unlock/unlock.py --unlock
 ```
 
-在同一 ROS master 的另一终端运行。用第一个命令观察 `ready`，再用第二个命令触发一次固件测试锁存。服务返回 `success: True` 表示已收到 MCU 锁存遥测。观察 `ready` 先变为 `False`，随后恢复为 `True`，驱动日志显示 `MCU_RECOVERED`。测试结束后按正常入口重启，关闭测试服务。
+首次带动力测试请架空车轮。测试锁定需要 12 V 接通、Motor ON、四轮静止且 PWM 为零。`[LOCKED]` 表示已收到下位机测试锁存遥测。挂机时锁存会保留，手动执行解锁命令可清除。两种导航运行期间，驱动会自动调用解锁工具并记录 `[UNLOCKED]` 和 `MCU_RECOVERED`。
 
-```bash
-rostopic echo /slicer_c30d_driver/ready
-rosservice call /slicer_c30d_driver/test_chassis_lock '{}'
-```
-
-导航停止、串口空闲时，可在 12 V 接通、Motor ON、四轮静止状态下用 `python3 -s Hardware/Unlock/unlock.py --unlock` 清除同类通信锁存。安装和回退见 [C30D v1.7 固件说明](../Hardware/Firmware/v1.7/README.md)。
+可用 `rostopic echo /slicer_c30d_driver/ready` 观察导航期间的就绪状态。独立 `unlock.py --check` 在串口空闲时读取故障遥测。安装和回退见 [C30D v1.7 固件说明](../Hardware/Firmware/v1.7/README.md)。
 
 ## 独立硬件工具
 
-这些工具在仓库根目录运行，保持原有直接设备接口。先停止使用同一设备的 ROS driver 或其他独立工具。按键、极性、限幅、设备匹配见[遥控说明](../tools/manual/README.md)和 [Hardware/config.yaml](../Hardware/config.yaml)。
+这些工具在仓库根目录运行。使用直接设备入口前，先停止占用同一设备的程序。底盘测试锁定和解锁也可通过运行中的导航驱动执行。按键、极性、限幅、设备匹配见[遥控说明](../tools/manual/README.md)和 [Hardware/config.yaml](../Hardware/config.yaml)。
 
 | 功能 | 旧入口 | 新入口 |
 |---|---|---|
@@ -97,6 +89,7 @@ rosservice call /slicer_c30d_driver/test_chassis_lock '{}'
 | 手柄 | `./Test/run_gamepad.sh` | `./tools/manual/run_gamepad.sh` |
 | 检查解锁 | `python3 -s Hardware/Unlock/unlock.py --check` | `python3 -s Hardware/Unlock/unlock.py --check` |
 | 解锁底盘 | `python3 -s Hardware/Unlock/unlock.py --unlock` | `python3 -s Hardware/Unlock/unlock.py --unlock` |
+| 触发底盘测试锁存 | `rosservice call /slicer_c30d_driver/test_chassis_lock '{}'` | `python3 -s Hardware/LockDown/lock.py` |
 | 无 RTK 启动 | 在旧 NoRTK 目录运行 `./run.sh nav --background` | `./tools/no_rtk.sh nav --background` |
 | 无 RTK 停止 | 同目录 `./run.sh stop` | `./tools/no_rtk.sh stop` |
 | B15 舵机 | `./Test/run_b15_servo.sh --run` | `./tools/manual/run_b15_servo.sh --run` |

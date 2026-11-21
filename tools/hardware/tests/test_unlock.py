@@ -16,7 +16,7 @@ class Fake:
     def close(self):pass
 class UnlockTests(unittest.TestCase):
     def run_action(self,arg):
-        with patch.object(unlock,'Chassis',Fake),patch.object(unlock,'save_log'),patch.object(sys,'argv',['unlock.py',arg]):return unlock.main()
+        with patch.object(unlock,'Chassis',Fake),patch.object(unlock,'save_log'),patch.object(unlock,'call_owner',return_value=None),patch.object(sys,'argv',['unlock.py',arg]):return unlock.main()
     def test_passive_check_never_handshakes(self):
         Fake.initial={'motor_enabled':False,'pwm_ticks':[0]*4,'fault_latched':True}
         self.assertEqual(self.run_action('--check'),2);self.assertFalse(Fake.instances[-1].connected)
@@ -36,7 +36,8 @@ class UnlockPermissionTests(unittest.TestCase):
         device = SimpleNamespace(st_gid=device_group, st_mode=stat.S_IFCHR | 0o660)
         patches = (
             patch.object(sys, 'argv', args),
-            patch.object(unlock, 'load_config'),
+            patch.object(unlock, 'load_config', return_value={'serial': {'serial_number': 'TEST'}}),
+            patch.object(unlock, 'call_owner', return_value=None),
             patch.object(unlock, 'Chassis', side_effect=denied),
             patch.object(unlock, 'save_log'),
             patch('grp.getgrnam', return_value=SimpleNamespace(gr_gid=20)),
@@ -103,6 +104,7 @@ class PoweredUnlockTests(unittest.TestCase):
 
                 car.wait.side_effect = wait
                 with patch.object(unlock, 'Chassis', return_value=car), patch.object(unlock, 'save_log'), \
+                     patch.object(unlock, 'call_owner', return_value=None), \
                      patch.object(sys, 'argv', ['unlock.py', '--unlock']):
                     self.assertEqual(unlock.main(), 0 if mask == 0x10 else 3)
                 self.assertEqual(car.send.call_count, int(mask == 0x10))

@@ -333,6 +333,7 @@ class DriverTests(unittest.TestCase):
                 return ready
 
             with patch.object(link_module, 'Link', FakeLink), \
+                    patch.object(driver, 'CommandServer'), \
                     patch.object(link_module, 'identity', return_value=('1a86', '55d4', 'TEST_ONLY')), \
                     patch.object(link_module.glob, 'glob', return_value=['/TEST_ONLY_SERIAL']), \
                     patch.object(driver.time, 'monotonic', side_effect=lambda: clock[0]), \

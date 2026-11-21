@@ -1,6 +1,6 @@
 """新底盘ROS适配核心；复用Test使用的Chassis，不另写通信/PWM控制器。"""
 import math,secrets,struct,time
-from chassis_recovery import LinkRecovery, RECOVERY_TELEMETRY_TIMEOUT, paired_body_status
+from chassis_recovery import LinkRecovery, RECOVERY_TELEMETRY_TIMEOUT, paired_body_status, stopped
 
 class Session:
     def __init__(self,car,c,wait_for_fault_clear=True):
@@ -31,7 +31,9 @@ class Session:
         hold,recovered=False,False
         if self.wait_fault:
             hold,recovered=self.link_recovery.update(self.car,now,state['flags'],body_status,
-                                                      last_body_status=last_body_status)
+                                                      last_body_status=last_body_status,
+                                                      stationary=stopped(state.get('wheel_mm_s'),state.get('pwm_ticks')),
+                                                      ack=state.get('ack'))
         if hold:
             self.target=(0.,0.,-math.inf)
         if state['fault_latched']:
@@ -57,7 +59,8 @@ class Session:
         # 只保留原驱动的失联停车与对称速度上限；不添加转向补偿/二次包络。
         scale=max(1.,abs(v)/self.c['max_linear'],abs(w)/self.c['max_angular'])
         v,w=v/scale,w/scale
-        self.car.speed(v,w)
+        if self.link_recovery.test_stop_seq is None:
+            self.car.speed(v,w)
         ready=bool(imu and state['configured'] and state['motor_enabled'] and state['motor_power_present']
                    and not state['fault_latched'] and not hold)
         return v,w,ready,first,recovered

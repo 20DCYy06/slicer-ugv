@@ -4,9 +4,12 @@ import copy,math,os,sys,time
 from pathlib import Path
 sys.dont_write_bytecode=True
 sys.path.insert(0,str(Path(__file__).resolve().parent))
-workspace=Path(os.environ.get('WORKSPACE2_ROOT') or Path(__file__).resolve().parents[3])
+prefix=Path(__file__).resolve().parents[2]
+workspace=Path(os.environ.get('WORKSPACE2_ROOT') or (prefix if (prefix/'Hardware/Host').is_dir()
+                                                    else Path(__file__).resolve().parents[3]))
 sys.path.insert(0,str(workspace/'Hardware/Host'))
 from chassis import Chassis,load_config as load_host
+from chassis_commands import CommandServer
 from control_core import load_config
 from driver_core import Session,EncoderTap,Odometry
 import rospy
@@ -24,7 +27,7 @@ def main():
     odom_pub=rospy.Publisher(c['odom_topic'],OdomMsg,queue_size=5)
     ready_pub.publish(False);session=None;odom=Odometry(c)
     mock=rospy.get_param('~mock',False)
-    test_service=None
+    test_service=None;commands=None
     def receive(msg):
         if session is not None:session.command(msg.linear.x,msg.angular.z,time.monotonic())
     rospy.Subscriber(c['output_topic'],Twist,receive,queue_size=1)
@@ -32,6 +35,9 @@ def main():
         if not mock:
             car=Chassis(host);tap=EncoderTap(car.parser);car.parser=tap;car.connect()
             session=Session(car,c,rospy.get_param('~wait_for_fault_clear',True))
+            if session.wait_fault:
+                commands=CommandServer(host['serial']['serial_number'],session.link_recovery)
+                commands.start(workspace/'Hardware/Unlock/unlock.py')
             if session.wait_fault and os.environ.get('SLICER_C30D_ENABLE_LOCK_TEST')=='1':
                 test_service=session.link_recovery.start_test_service(rospy)
             rospy.loginfo('C30D USB=%s signs=%s/%s; 0x16 vx/wz; PWM cap=%.1f%%; lidar-only navigation',
@@ -59,10 +65,14 @@ def main():
                 odom_pub.publish(msg)
             time.sleep(1./c['publish_hz'])
     finally:
+        if commands:session.link_recovery.stop_requests()
         if test_service:test_service.shutdown()
         try:ready_pub.publish(False)
         except rospy.ROSException:pass
-        if car:car.close()
+        try:
+            if car:car.close()
+        finally:
+            if commands:commands.close()
 if __name__=='__main__':
     try:main()
     except (KeyboardInterrupt,rospy.ROSInterruptException):pass

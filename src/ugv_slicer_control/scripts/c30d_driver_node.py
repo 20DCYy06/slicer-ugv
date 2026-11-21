@@ -31,7 +31,8 @@ import control_core
 import serial_transport
 import slicer_manual
 from c30d_link import Chassis
-from chassis_recovery import LinkRecovery, fault_mask, paired_body_status, recoverable
+from chassis_commands import CommandServer
+from chassis_recovery import LinkRecovery, fault_mask, paired_body_status, recoverable, stopped
 from chassis_core import Odometry
 from control_core import load_config, wheel_pwm, wheel_speed_mm_s, limit_pwm, Slew
 
@@ -138,6 +139,7 @@ def main():
     next_motor_register_request = 0.
     recovery = LinkRecovery(arm_watchdog=body_mode)
     test_service = None
+    commands = None
     try:
         if not mock:
             car = Chassis(c, observe=emit)
@@ -179,6 +181,13 @@ def main():
                     raise RuntimeError('SLC2 continuous PWM capability does not match configuration')
         if body_mode:
             rospy.logwarn('SLC2 body_speed: SI Twist via 0x16, encoder vx + MCU IMU wz; fresh 0x93 feedback required. No host PWM limit or fallback to wheel/PWM mode.')
+            if car:
+                module = Path(__file__).resolve()
+                unlock_script = module.parent / 'c30d_tools/Unlock/unlock.py'
+                if not unlock_script.is_file():
+                    unlock_script = module.parents[3] / 'Hardware/Unlock/unlock.py'
+                commands = CommandServer(c['serial_number'], recovery)
+                commands.start(unlock_script)
             if car and os.environ.get('SLICER_C30D_ENABLE_LOCK_TEST') == '1':
                 test_service = recovery.start_test_service(rospy)
         elif mode == 'wheel_speed':
@@ -224,7 +233,8 @@ def main():
                     body_status = paired_body_status(body_status, s['tick'], latest_body.get('mcu_us'))
                     was_recovering = recovery.active
                     recovery_hold, recovered = recovery.update(car, time.monotonic(), s['flags'], body_status,
-                                                               last_body_status=latest_body.get('status_flags'))
+                                                               last_body_status=latest_body.get('status_flags'),
+                                                               stationary=stopped(s['mm_s'],s['pwm']), ack=s['ack'])
                     if recovery_hold:
                         with lock:
                             target[:] = [0., 0., -math.inf]
@@ -281,7 +291,8 @@ def main():
             if car:
                 publish_ready(ready)
                 if body_mode:
-                    sequence = car.body_speed(v, w)
+                    if recovery.test_stop_seq is None:
+                        sequence = car.body_speed(v, w)
                 else:
                     sequence = car.speed(output) if mode == 'wheel_speed' else car.pwm(output)
             emit('command_tx', command_seq=sequence, command_rx_monotonic_s=received if math.isfinite(received) else None,
@@ -327,13 +338,19 @@ def main():
         emit('fault', error=str(exc))
         raise
     finally:
+        if commands:
+            recovery.stop_requests()
         if test_service:
             test_service.shutdown()
         try:
             publish_ready(False)
         finally:
-            if car:
-                car.close()
+            try:
+                if car:
+                    car.close()
+            finally:
+                if commands:
+                    commands.close()
         emit('shutdown', serial_closed=True)
 
 

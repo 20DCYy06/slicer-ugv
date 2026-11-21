@@ -27,16 +27,19 @@ class NavigationRecoveryTests(unittest.TestCase):
         self.car.send.assert_not_called()
 
     def test_test_injection_is_confirmed_by_fresh_fault_telemetry(self):
+        self.car.send.return_value = 7
         request = self.recovery.queue_test()
-        self.assertEqual(self.recovery.update(self.car, 0, 0x3a, 0x47), (True, False))
-        self.car.send.assert_called_once_with(0x19, struct.pack('<IB', 123, 1))
+        self.assertEqual(self.recovery.update(self.car, 0, 0x3a, 0x57, stationary=True), (True, False))
+        self.recovery.update(self.car, .05, 0x3a, 0x57, stationary=True, ack=7)
+        self.car.send.assert_called_with(0x19, struct.pack('<IB', 123, 1))
         self.assertFalse(request.done())
         self.assertEqual(self.recovery.update(self.car, .1, 0x3e, 0x2047), (True, False))
         self.assertTrue(request.result()[0])
 
     def test_missing_test_confirmation_keeps_the_driver_stopped(self):
+        self.car.send.return_value = 7
         request = self.recovery.queue_test()
-        self.recovery.update(self.car, 0, 0x3a, 0x47)
+        self.recovery.update(self.car, 0, 0x3a, 0x57, stationary=True)
         self.assertEqual(self.recovery.update(self.car, 1.1, 0x3a, None), (True, False))
         self.assertFalse(request.result()[0])
         self.assertEqual(self.recovery.update(self.car, 1.15, 0x3a, 0x47), (True, True))
