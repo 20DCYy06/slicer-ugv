@@ -13,7 +13,11 @@ import time
 import tty
 
 HERE=Path(__file__).resolve().parent
-sys.path.insert(0,str(HERE.parents[2]/'Hardware/Host'))
+TOOLS = HERE.parents[1]
+sys.path.append(str(TOOLS))
+from hardware_path import hardware_root
+
+sys.path.insert(0, str(hardware_root(TOOLS.parent) / 'Host'))
 from protocol import packet,Parser
 from c30d_servo import Servo
 

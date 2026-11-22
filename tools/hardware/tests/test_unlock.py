@@ -3,7 +3,12 @@ from contextlib import ExitStack
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
-sys.path.insert(0,str(Path(__file__).resolve().parents[3]/'Hardware/Unlock'))
+TOOLS = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(TOOLS))
+from hardware_path import hardware_root
+
+HARDWARE = hardware_root(TOOLS.parent)
+sys.path.insert(0, str(HARDWARE / 'Unlock'))
 import unlock
 class Fake:
     instances=[]
