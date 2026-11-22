@@ -150,7 +150,7 @@ def build_environment(workspace, sdk, build_command):
             key, _, value = line.partition('=')
             if key in ('CMAKE_C_COMPILER:FILEPATH', 'CMAKE_CXX_COMPILER:FILEPATH',
                        'CMAKE_HOME_DIRECTORY:INTERNAL', 'CMAKE_INSTALL_PREFIX:PATH',
-                       'LIVOX_SDK2_ROOT:PATH'):
+                       'LIVOX_SDK2_ROOT:PATH', 'SLICER_HARDWARE_CONFIG:FILEPATH'):
                 cache[key] = value
         for key, expected in (
             ('CMAKE_HOME_DIRECTORY:INTERNAL', workspace / 'src'),
@@ -165,9 +165,11 @@ def build_environment(workspace, sdk, build_command):
     ):
         toolchain[name] = command(path, '--version').decode(errors='replace').splitlines()[0]
     toolchain['python'] = platform.python_version()
+    config = cache.get('SLICER_HARDWARE_CONFIG:FILEPATH')
+    hardware_input = ({'path': config, 'sha256': digest_file(Path(config))} if config else None)
     return {
         'command': build_command, 'os': os_release, 'architecture': platform.machine(),
-        'toolchain': toolchain,
+        'toolchain': toolchain, 'hardware_config_input': hardware_input,
     }
 
 
