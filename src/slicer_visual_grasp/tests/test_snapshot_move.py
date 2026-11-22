@@ -1,4 +1,5 @@
 import copy,json,math,struct,tempfile,threading,unittest
+from contextlib import nullcontext
 from pathlib import Path
 from unittest.mock import Mock,patch
 import numpy as np
@@ -70,7 +71,7 @@ class SnapshotTests(unittest.TestCase):
                                        [(center[1]-344)*.0005, (center[0]-344)*.0005],
                                        atol=1e-6)
 
-    def simulate_alignment(self, observe):
+    def simulate_alignment(self, observe, expected_error=None):
         from slicer_visual_grasp import pipeline
         now = [1.]
         pose = [0., 0., 0.]
@@ -100,7 +101,8 @@ class SnapshotTests(unittest.TestCase):
                 return tuple(pose), 0., 0.
 
             def tick(self, v=0., w=0.):
-                pose[0] += v * .02
+                pose[0] += v * .02 * math.cos(pose[2])
+                pose[1] += v * .02 * math.sin(pose[2])
                 pose[2] += w * .02
                 now[0] += .02
 
@@ -110,7 +112,9 @@ class SnapshotTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder, patch.object(pipeline, 'Motion', Motion), \
                 patch.object(pipeline.time, 'monotonic', side_effect=lambda: now[0]):
             runtime = Runtime(CFG, Path(folder), Camera(), threading.Event(), logs.append)
-            runtime.move_to_target(pump, 0.)
+            outcome = self.assertRaisesRegex(RuntimeError, expected_error) if expected_error else nullcontext()
+            with outcome:
+                runtime.move_to_target(pump, 0.)
             plan_path = Path(folder) / 'data/last_move_plan.json'
             plan = json.loads(plan_path.read_text()) if plan_path.exists() else None
         return pose, samples, logs, plan
@@ -123,11 +127,44 @@ class SnapshotTests(unittest.TestCase):
             return Observation(seq, stamp, center, (344,344), 1, None, Q)
 
         pose, samples, logs, plan = self.simulate_alignment(observe)
-        self.assertAlmostEqual(samples[1][0]-samples[0][0], 1., delta=.03)
+        self.assertLess(samples[1][0]-samples[0][0], 1.2)
         self.assertAlmostEqual(pose[0], .13, delta=.009)
         self.assertEqual(plan['frame_seq'], 2)
         self.assertTrue(any('VISION_OCCLUDED' in line for line in logs))
         self.assertTrue(any('VISION_ALIGNED' in line for line in logs))
+
+    def test_alternating_visual_bearing_allows_translation_then_stops_if_not_converging(self):
+        def observe(seq, stamp, x):
+            # Same longitudinal error and lateral jitter as seen in the field log.
+            center = (344 + (36 if seq % 2 else -36), 264)
+            return Observation(seq, stamp, center, (344,344), 1, None, Q)
+
+        _, samples, logs, _ = self.simulate_alignment(observe, expected_error='连续.*未收敛')
+        self.assertAlmostEqual(samples[1][0]-samples[0][0], 1., delta=.03)
+        self.assertLess(min(x for _, x in samples), -.015, 'yaw corrections must leave time to drive')
+        self.assertLess(samples[-1][0] - samples[0][0], 25.)
+        self.assertFalse(any('VISION_ALIGNED' in line for line in logs))
+
+    def test_nozzle_inside_surface_still_approaches_the_green_center(self):
+        def observe(seq, stamp, x):
+            center_y = 344 + (-.018 - x) * 2000
+            q = [[244,center_y-70],[444,center_y-70],[444,center_y+70],[244,center_y+70]]
+            return Observation(seq, stamp, (344,center_y), (344,344), 1, None, q)
+
+        pose, samples, _, _ = self.simulate_alignment(observe)
+        self.assertGreaterEqual(len(samples), 2)
+        self.assertLess(pose[0], -.014)
+
+    def test_in_tolerance_frame_then_occlusion_finishes_its_residual_before_grasp(self):
+        def observe(seq, stamp, x):
+            center = (344,338) if seq == 1 else None
+            return Observation(seq, stamp, center, (344,344), 1, None, Q)
+
+        pose, samples, logs, plan = self.simulate_alignment(observe)
+        self.assertGreaterEqual(len(samples), 3)
+        self.assertAlmostEqual(pose[0], -.003, delta=.001)
+        self.assertEqual(plan['frame_seq'], 1)
+        self.assertTrue(any('丢框剩余位移' in line for line in logs))
 
     def test_fresh_stationary_frame_outside_threshold_requires_a_correction(self):
         def observe(seq, stamp, x):

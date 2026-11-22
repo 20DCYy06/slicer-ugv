@@ -80,14 +80,17 @@ class LockedMove:
 
     恢复朝向可抵消未知的底盘中心→吸嘴水平杆臂，不需要猜测吸嘴安装距离。
     """
-    def __init__(self,xy,pose,cfg):
+    def __init__(self,xy,pose,cfg,*,end_yaw=None):
         self.cfg=cfg;self.start=np.array(pose[:2],dtype=float,copy=True);self.yaw0=float(pose[2])
+        self.end_yaw = self.yaw0 if end_yaw is None else end_yaw
         x,y=xy;self.distance=math.hypot(x,y);angle=math.atan2(y,x)
         if abs(angle)>math.pi/2:
             angle=wrap(angle+math.pi);self.distance=-self.distance
         self.heading=self.yaw0+angle
         self.axis=np.array([math.cos(self.heading),math.sin(self.heading)])
-        self.stage='DONE' if abs(self.distance)<=cfg['position_tolerance_m'] else 'TURN_OUT'
+        self.stage = 'TURN_OUT'
+        if abs(self.distance) <= cfg['position_tolerance_m']:
+            self.stage = 'DONE' if abs(wrap(self.end_yaw - self.yaw0)) <= cfg['yaw_tolerance_rad'] else 'TURN_BACK'
 
     def turn(self,error):
         value=max(-self.cfg['max_angular_rad_s'],min(self.cfg['max_angular_rad_s'],self.cfg['heading_gain']*error))
@@ -96,7 +99,7 @@ class LockedMove:
     def step(self,pose):
         if self.stage=='DONE':return 0.,0.
         if self.stage in ('TURN_OUT','TURN_BACK'):
-            target=self.heading if self.stage=='TURN_OUT' else self.yaw0
+            target=self.heading if self.stage=='TURN_OUT' else self.end_yaw
             error=wrap(target-pose[2])
             if abs(error)<=self.cfg['yaw_tolerance_rad']:
                 self.stage='DRIVE' if self.stage=='TURN_OUT' else 'DONE'

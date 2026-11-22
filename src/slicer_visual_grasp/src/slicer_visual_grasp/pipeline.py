@@ -15,6 +15,9 @@ POST_GRASP_LIFT_S = 2.0
 TARGET_WAIT_S = 5.0
 VISUAL_UPDATE_S = 1.0
 ALIGNMENT_TIMEOUT_S = 60.0
+CORRECTION_STEP_M = .02
+MIN_PROGRESS_PX = 2.0
+MAX_STALLED_STEPS = 3
 
 
 class StaleObservation(RuntimeError):
@@ -179,22 +182,36 @@ class Runtime:
             red, green = observation.nozzle_center, observation.center
             return math.hypot(green[0] - red[0], green[1] - red[1])
 
-        def plan_move(observation, pose):
+        def record_plan(observation, pose, error_px):
             nonlocal last_plan, last_frame
-            distance = distance_px(observation)
-            if distance <= tolerance:
-                return None
             last_plan = make_plan(observation, self.cfg['camera'], cfg)
             last_plan['start_feedback_pose'] = list(pose)
             last_plan['nozzle_origin_px'] = list(observation.nozzle_center)
-            last_plan['distance_px'] = distance
+            last_plan['distance_px'] = error_px
             last_frame = self.last_observation_frame
             x, y = last_plan['body_xy_m']
-            self.log(f'[VISION_UPDATE] frame={observation.seq} error={distance:.1f}px '
+            self.log(f'[VISION_UPDATE] frame={observation.seq} error={error_px:.1f}px '
                      f'body_xy=({x:.4f},{y:.4f})m')
-            # 很短的视觉修正可能小于常规里程计到位容差，仍需产生一次有效位移。
-            move_cfg = {**cfg, 'position_tolerance_m': min(cfg['position_tolerance_m'], math.hypot(x, y) / 4)}
-            return LockedMove((x, y), pose, move_cfg)
+
+        def next_move(pose, *, occluded=False):
+            x, y = last_plan['body_xy_m']
+            x0, y0, yaw0 = last_plan['start_feedback_pose']
+            # 将最后一帧的目标固定在反馈坐标系，扣除已经走过的部分。
+            dx = x0 + math.cos(yaw0) * x - math.sin(yaw0) * y - pose[0]
+            dy = y0 + math.sin(yaw0) * x + math.cos(yaw0) * y - pose[1]
+            yaw = pose[2]
+            forward = math.cos(yaw) * dx + math.sin(yaw) * dy
+            left = -math.sin(yaw) * dx + math.cos(yaw) * dy
+            distance = math.hypot(forward, left)
+            if not occluded and distance > CORRECTION_STEP_M:
+                step_scale = CORRECTION_STEP_M / distance
+                forward *= step_scale
+                left *= step_scale
+                distance = CORRECTION_STEP_M
+            move_cfg = {**cfg, 'position_tolerance_m': min(cfg['position_tolerance_m'], distance / 4)}
+            self.log(f'[VISION_STEP] {"丢框剩余位移" if occluded else "校正短段"} '
+                     f'body_xy=({forward:.4f},{left:.4f})m')
+            return LockedMove((forward, left), pose, move_cfg, end_yaw=yaw0)
 
         try:
             self.log('[STATE] WAIT_STATIONARY：等待底盘停稳并获取首帧')
@@ -203,15 +220,20 @@ class Runtime:
             observation = self.wait_for_motion_frame(motion, pump, max(since, time.monotonic()))
             if observation.center is None:
                 raise RuntimeError('起步未识别到绿框，请重新选框')
-            mover = plan_move(observation, pose)
+            best_error = distance_px(observation)
+            record_plan(observation, pose, best_error)
+            mover = next_move(pose) if best_error > tolerance else None
             next_visual = time.monotonic() + VISUAL_UPDATE_S
-            occluded = False
+            stalled = 0
+            occluded = finishing_fallback = False
+
             while True:
                 self.check_cancelled()
                 self.require_idle_pump(pump)
                 now = time.monotonic()
                 if now >= deadline:
                     raise TimeoutError('视觉对准超时，未下放吸嘴')
+
                 if mover is None or mover.stage == 'DONE':
                     self.log('[STATE] VERIFY_ALIGNMENT：底盘停稳后用新帧复核')
                     motion.wait_stationary(deadline)
@@ -220,13 +242,27 @@ class Runtime:
                     if abs(v_measured) > .01 or abs(w_measured) > .03:
                         continue
                     if observation.center is None:
-                        self.log('[VISION_ALIGNED] 停稳的新帧无绿框，按遮挡处理')
-                        return
-                    mover = plan_move(observation, pose)
-                    if mover is None:
-                        self.log(f'[VISION_ALIGNED] 红绿距离 {distance_px(observation):.1f}px ≤ {tolerance:g}px')
-                        return
-                    occluded = False
+                        if finishing_fallback:
+                            self.log('[VISION_ALIGNED] 停稳的新帧无绿框，按遮挡处理')
+                            return
+                        if not occluded:
+                            self.log('[VISION_OCCLUDED] 停稳后仍无绿框，继续最后视觉目标')
+                        mover = next_move(pose, occluded=True)
+                        finishing_fallback = occluded = True
+                    else:
+                        error_px = distance_px(observation)
+                        if error_px <= tolerance:
+                            self.log(f'[VISION_ALIGNED] 红绿距离 {error_px:.1f}px ≤ {tolerance:g}px')
+                            return
+                        if error_px <= best_error - MIN_PROGRESS_PX:
+                            best_error, stalled = error_px, 0
+                        else:
+                            stalled += 1
+                            if stalled >= MAX_STALLED_STEPS:
+                                raise RuntimeError(f'连续 {stalled} 个校正短段未收敛，已停车，未下放吸嘴')
+                        record_plan(observation, pose, error_px)
+                        mover = next_move(pose)
+                        finishing_fallback = occluded = False
                     next_visual = time.monotonic() + VISUAL_UPDATE_S
                     continue
 
@@ -237,13 +273,20 @@ class Runtime:
                     if now - observation.stamp > moving_max_age:
                         self.log('[VISION_UPDATE] 运动中画面延迟，保持上一次位移')
                     elif observation.center is not None:
-                        mover = plan_move(observation, pose)
                         occluded = False
-                        if mover is None:
+                        error_px = distance_px(observation)
+                        record_plan(observation, pose, error_px)
+                        if error_px <= tolerance:
+                            mover = None
+                            continue
+                        if finishing_fallback:
+                            finishing_fallback = False
+                            mover = None
                             continue
                     elif not occluded:
-                        self.log('[VISION_OCCLUDED] 绿框丢失，继续最后一次规划的剩余位移')
+                        self.log('[VISION_OCCLUDED] 绿框丢失，按最后视觉目标续行')
                         occluded = True
+                # 保持正在执行的转向和直行。新视觉向量用于下一短段或丢框续行。
                 v, w = mover.step(pose)
                 motion.tick(v, w)
         finally:
