@@ -3,7 +3,7 @@
 
 Latitude/longitude and origin files assert WGS84 ellipsoid coordinates. ENU
 means metres East/North/Up. No datum conversion or physical arrival claim.
-Initialization uses odom navigation; release/hold remain operator commands.
+WGS84 sends can request shared preparation. Plan and capture do not move.
 """
 import argparse
 from collections import deque
@@ -17,6 +17,7 @@ import uuid
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from navigation_preparation import PreparationClient
 from geographic_goal_core import (arrival_review, capture_sample, capture_target, finite, origin_record,
                                   quiet_odom_tail, registration_observation_problem,
                                   resolve_target, status_problem)
@@ -87,6 +88,7 @@ def arguments(argv=None):
 class GeographicClient:
     def __init__(self, args):
         import actionlib
+        from actionlib_msgs.msg import GoalStatusArray
         from geometry_msgs.msg import PoseStamped
         from move_base_msgs.msg import MoveBaseAction, MoveBaseGoal
         from nav_msgs.msg import Odometry
@@ -116,7 +118,13 @@ class GeographicClient:
         self.odom_sub = rospy.Subscriber('/odom', Odometry, self._odom, queue_size=100)
         self.goal_pub = rospy.Publisher('/geographic/goal', String, queue_size=1, latch=True)
         self.result_pub = rospy.Publisher('/geographic/goal_result', String, queue_size=1, latch=True)
+        self.preparation = PreparationClient(rospy, String, args.action)
         self.capture_subs = []
+        self.action_sample, self.mux_sample = None, None
+        if args.command in ('send', 'initialize'):
+            self.action_sub = rospy.Subscriber(args.action.rstrip('/') + '/status', GoalStatusArray,
+                                               self._action_status, queue_size=1)
+            self.mux_sub = rospy.Subscriber('/cup_nav/manual_state', String, self._mux_status, queue_size=1)
         if args.command == 'capture':
             from sensor_msgs.msg import NavSatFix
             from diagnostic_msgs.msg import DiagnosticArray
@@ -124,6 +132,37 @@ class GeographicClient:
                 rospy.Subscriber('/gnss/fix', NavSatFix, self._fix, queue_size=100),
                 rospy.Subscriber('/gnss/fix_quality', DiagnosticArray, self._quality, queue_size=100),
                 rospy.Subscriber('/global/odom', Odometry, self._global, queue_size=100)]
+
+    def _action_status(self, message):
+        expected = self.args.action.rstrip('/')
+        if message._connection_header.get('callerid') == expected:
+            active = any(status.status in (0, 1, 6, 7) for status in message.status_list)
+            self.action_sample = time.monotonic(), message.header.stamp.to_sec(), active
+
+    def _mux_status(self, message):
+        header = message._connection_header
+        if header.get('callerid') != '/slicer_velocity_mux' or header.get('latching', '0') != '0':
+            return
+        try:
+            state = json.loads(message.data)
+            flags = [state[name] for name in ('manual_hold', 'teleop_fresh', 'emergency_stop_latched')]
+            if all(type(flag) is bool for flag in flags):
+                self.mux_sample = time.monotonic(), any(flags) or state.get('selected_source') == 'mission'
+        except (KeyError, TypeError, ValueError):
+            pass
+
+    def check_action_idle(self):
+        if getattr(self.args, 'command', None) not in ('send', 'initialize'):
+            return
+        sample = self.action_sample
+        if (not sample or time.monotonic() - sample[0] > .6
+                or not -.1 <= self.ros.Time.now().to_sec() - sample[1] <= .6):
+            raise ValueError('Action status unavailable or stale; no goal sent')
+        if sample[2] or self.preparation_active():
+            raise ValueError('another task owns navigation; no goal sent')
+        mux = self.mux_sample
+        if not mux or time.monotonic() - mux[0] > .6 or mux[1]:
+            raise ValueError('Mux not available for navigation; no goal sent')
 
     def _status(self, message):
         try:
@@ -255,6 +294,7 @@ class GeographicClient:
             generation=generation, max_age=self.status_age)
         if problem:
             raise ValueError(problem)
+        self.check_action_idle()
         self.client.send_goal(self.MoveBaseGoal(target_pose=pose))
         self.owned = True
         deadline, reason = time.monotonic()+self.args.timeout, ''
@@ -299,12 +339,72 @@ class GeographicClient:
             time.sleep(.05)
         return result or {'confirmed': False, 'reason': 'ROS shutdown before quiet odometry'}
 
+    def prepare_available(self):
+        return bool(self.preparation.observation())
+
+    def preparation_active(self):
+        return self.preparation.observation().get('busy') is True
+
+    def prepare_start(self, task_id=None, target=None):
+        self.preparation.start(task_id, target)
+
+    def prepare_poll(self):
+        return self.preparation.poll()
+
+    def prepare_cancel(self):
+        self.preparation.cancel()
+
+    def prepare_wait(self, task_id, target):
+        self.prepare_start(task_id, target)
+        try:
+            while not self.ros.is_shutdown():
+                phase, reason = self.prepare_poll()
+                if phase == 'READY':
+                    # Status and Action results arrive on separate ROS topics.
+                    deadline = time.monotonic() + .5
+                    while self.preparation_active() and time.monotonic() < deadline:
+                        time.sleep(.02)
+                    return
+                if phase in ('FAILED', 'STOPPED'):
+                    raise ValueError(reason)
+                time.sleep(.05)
+            raise ValueError('ROS shut down before geographic preparation completed')
+        except KeyboardInterrupt:
+            self.prepare_cancel()
+            deadline = time.monotonic() + 10.
+            while time.monotonic() < deadline and not self.ros.is_shutdown():
+                phase, _ = self.prepare_poll()
+                if phase in ('READY', 'FAILED', 'STOPPED'):
+                    break
+                time.sleep(.05)
+            raise
+        finally:
+            self.prepare_cancel()
+
     def initialize(self):
+        if self.preparation_active():
+            raise ValueError('a WGS84 task is using shared navigation preparation')
         self.frame_check('odom')
         self.fresh_status(registered=False)
         began = self.trigger('begin_registration')
         if not began['success']:
             return dict(command='initialize', begin=began, reason='begin_registration rejected'), 1
+        try:
+            result, code = self._initialize(began)
+        except BaseException:
+            self._abort_manual_registration()
+            raise
+        if code:
+            self._abort_manual_registration()
+        return result, code
+
+    def _abort_manual_registration(self):
+        try:
+            self.trigger('abort_registration')
+        except (self.ros.ROSException, self.ros.ServiceException) as error:
+            self.ros.logwarn('manual registration cleanup failed: %s', error)
+
+    def _initialize(self, began):
         deadline = time.monotonic()+3.
         while time.monotonic() < deadline:
             status, _, _ = self.observation()
@@ -339,14 +439,46 @@ class GeographicClient:
                       reason=action['reason'] or ('' if finished and finished['success'] else 'registration not completed'))
         return result, 0 if action['state'] == 3 and not action['reason'] and finished and finished['success'] else 1
 
+    def _wgs84_intent(self):
+        if self.args.target_file is not None:
+            from geographic_goal_core import load_wgs84_target
+            return load_wgs84_target(self.args.target_file)
+        if self.args.latitude is not None:
+            return dict(latitude=self.args.latitude, longitude=self.args.longitude,
+                        altitude_ellipsoid_m=self.args.altitude_ellipsoid)
+        return None
+
     def target(self):
+        goal_id, intent = str(uuid.uuid4()), None
+        if self.args.command == 'send':
+            intent = self._wgs84_intent()
+            if intent:
+                self.goal_record = dict(id=goal_id, original=intent, datum='WGS84',
+                                        frame='wgs84', stamp=self.ros.Time.now().to_sec())
+                self.publish(self.goal_pub, self.goal_record)
+                # Wait briefly for the latched owner announcement in a fresh CLI process.
+                deadline = time.monotonic() + 1.
+                while not self.prepare_available() and time.monotonic() < deadline:
+                    time.sleep(.05)
+                if self.prepare_available():
+                    self.prepare_wait(goal_id, intent)
+                else:
+                    try:
+                        self.frame_check('map')
+                    except ValueError as error:
+                        raise ValueError('start slicer_navigation_runtime.launch for automatic WGS84 preparation') from error
+            elif self.preparation_active():
+                raise ValueError('navigation preparation is active')
+        elif self.preparation_active():
+            raise ValueError('preview unavailable while navigation preparation is active')
         self.frame_check('map')
         status = self.fresh_status()
-        target = resolve_target(self.args, status, self.current_pose('map'))
-        target.update(id=str(uuid.uuid4()), generation=status['generation'], stamp=self.ros.Time.now().to_sec())
+        target = resolve_target(self.args, status, self.current_pose('map'), file_intent=intent)
+        target.update(id=goal_id, generation=status['generation'], stamp=self.ros.Time.now().to_sec())
         self.goal_record = target
         pose = self.pose(target['map_xyz'], target['yaw'])
-        self.publish(self.goal_pub, target)
+        if self.args.command == 'send':
+            self.publish(self.goal_pub, target)
         if self.args.command == 'plan':
             start = self.current_pose('map')
             service = self.args.action.rstrip('/')+'/make_plan'

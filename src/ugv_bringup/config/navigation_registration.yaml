@@ -1,0 +1,7 @@
+# Several short goals can supply sufficient spatial extent around obstacles.
+candidate_distances_m: [2.5, 1.8, 1.25]
+max_distance_m: 7.0
+max_duration_s: 75.0
+rtk_wait_s: 15.0
+no_progress_s: 12.0
+switch_timeout_s: 40.0

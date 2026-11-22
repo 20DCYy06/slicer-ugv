@@ -7,9 +7,10 @@
        Mux remains startup held; this file never sends a goal or release. -->
   <arg name="mapping" default="false"/>
   <arg name="geographic" default="true"/>
+  <arg name="preparation" default="false"/>
   <arg name="enable_depth" default="false"/>
   <!-- RTK field defaults apply to odom bootstrap and geographic map navigation. -->
-  <arg name="cruise_config" default="$(eval '' if arg('mapping') else dirname() + '/../config/dwa_field.yaml')"/>
+  <arg name="cruise_config" default="$(eval '' if arg('mapping') else dirname() + '/../config/' + ('dwa_registration.yaml' if arg('preparation') and not arg('geographic') else 'dwa_field.yaml'))"/>
   <arg name="start_camera" default="true"/>
   <arg name="camera_serial" default=""/>
   <include unless="$(arg mapping)" file="$(find ugv_bringup)/launch/slicer_odom.launch">
@@ -58,4 +59,11 @@
   <!-- The Guard reads final planner limits at startup; restart navigation after edits. -->
   <rosparam if="$(eval arg('cruise_config') != '')" command="load"
             ns="ugv/move_base" file="$(arg cruise_config)"/>
+  <rosparam if="$(eval arg('preparation') and not arg('mapping') and not arg('geographic'))" ns="ugv/move_base">
+    GlobalPlanner:
+      allow_unknown: false
+    global_costmap:
+      track_unknown_space: true
+      always_send_full_costmap: true
+  </rosparam>
 </launch>

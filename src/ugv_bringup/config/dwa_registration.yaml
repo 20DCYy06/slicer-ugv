@@ -1,0 +1,8 @@
+# Managed odom startup uses this profile until the geographic map is ready.
+# The DWA and the arc Guard read the same startup velocity limits.
+DWAPlannerROS:
+  max_vel_x: 0.25
+  max_vel_trans: 0.25
+  max_vel_theta: 0.50
+  acc_lim_x: 0.30
+  acc_lim_trans: 0.30
