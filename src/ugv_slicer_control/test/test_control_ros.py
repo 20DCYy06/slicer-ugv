@@ -81,11 +81,33 @@ class ControlTransportTests(unittest.TestCase):
         self.assertEqual(state['takeover_generation'], 0)
 
         self.statuses = [GoalStatus(status=1)]
+        time.sleep(.1)
+        idle_args = ('--require-idle', '--expected-mux-instance', state['mux_instance_id'],
+                     '--expected-generation', '0')
+        busy_hold = self.invoke('hold', *idle_args)
+        self.assertNotEqual(busy_hold.returncode, 0)
+        self.assertIn('pending or active goal', busy_hold.stderr)
+        self.assertFalse(self.states[-1]['manual_hold'])
+        self.assertEqual(self.cancellations, [])
+
+        self.statuses = []
+        time.sleep(.1)
+        idle_hold = self.invoke('hold', *idle_args)
+        self.assertEqual(idle_hold.returncode, 0, idle_hold.stderr)
+        self.assertEqual(self.cancellations, [])
+        state = json.loads(idle_hold.stdout)
+        self.assertTrue(state['manual_hold'])
+        self.assertEqual(state['takeover_generation'], 1)
+        released = self.invoke('release', '--expected-mux-instance', state['mux_instance_id'],
+                               '--expected-generation', '1')
+        self.assertEqual(released.returncode, 0, released.stderr)
+
+        self.statuses = [GoalStatus(status=1)]
         held = self.invoke('hold')
         self.assertEqual(held.returncode, 0, held.stderr)
         state = json.loads(held.stdout)
         self.assertTrue(state['manual_hold'])
-        self.assertEqual(state['takeover_generation'], 1)
+        self.assertEqual(state['takeover_generation'], 2)
         self.until(lambda: bool(self.cancellations))
         self.assertEqual(self.cancellations[-1].id, '')
         self.assertEqual(self.cancellations[-1].stamp, rospy.Time())

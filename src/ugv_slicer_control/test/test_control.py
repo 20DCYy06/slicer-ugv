@@ -88,7 +88,7 @@ class ControlTests(unittest.TestCase):
 
     def run_boundary_client(self, command, delayed_state=False, stale_status=False,
                             cancel_connected=False, ownership_change=None,
-                            intent_subscribers=None, fresh_status=False):
+                            intent_subscribers=None, fresh_status=False, extra_args=()):
         """Replace only ROS transport/clock; exercise main and the real mux policy."""
         clock, callbacks, calls = [10.], {}, [0]
         self.mux.intent(self.policy.release_intent(self.before, 'initial'), '/ugv/control', False, 10.)
@@ -154,7 +154,7 @@ class ControlTests(unittest.TestCase):
             def __sub__(self, other):
                 return SimpleNamespace(to_sec=lambda: self.value - other.value)
 
-        rospy = SimpleNamespace(myargv=lambda: ['control.py', command, '--timeout', '.1'],
+        rospy = SimpleNamespace(myargv=lambda: ['control.py', command, '--timeout', '.1', *extra_args],
                                 init_node=lambda *a, **kw: None, get_name=lambda: '/ugv/control',
                                 get_param=lambda key, default: default, resolve_name=lambda name: name,
                                 Subscriber=subscribe, Publisher=Publisher, is_shutdown=lambda: False,
@@ -175,6 +175,12 @@ class ControlTests(unittest.TestCase):
         self.assertTrue(self.mux.held, 'cancel transport failure must not prevent manual hold')
         self.assertEqual(self.mux.generation, 1)
         self.assertIn('held confirmed; cancel unconfirmed', str(failure.exception))
+
+    def test_idle_only_hold_confirms_without_cancel_subscriber(self):
+        self.assertEqual(self.run_boundary_client(
+            'hold', fresh_status=True, extra_args=['--require-idle']), 0)
+        self.assertTrue(self.mux.held)
+        self.assertEqual(self.mux.generation, 1)
 
     def test_blocking_publisher_rpc_cannot_make_old_state_fresh(self):
         with self.assertRaisesRegex(RuntimeError, 'no fresh state'):

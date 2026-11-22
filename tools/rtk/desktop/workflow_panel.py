@@ -224,7 +224,7 @@ class WorkflowPanel(QtWidgets.QWidget):
                 button.style().polish(button)
             suffix = suffix or ('未完成' if key == 'calibrate' and color == 'red' else STATUS[color])
             tail = ' · ' + suffix
-            title = ('3. 释放' if key == 'vision' and suffix in ('抓取完成', '需释放', '释放中')
+            title = ('3. 释放' if key == 'vision' and (suffix in ('抓取完成', '需释放') or suffix.startswith('释放'))
                      else STEPS[key])
             text = title + tail
             metrics = button.fontMetrics()

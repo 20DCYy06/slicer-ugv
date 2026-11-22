@@ -1,4 +1,5 @@
 """Mock the desktop process runner and the global ROS graph."""
+import json
 from pathlib import Path
 import sys
 import unittest
@@ -73,6 +74,7 @@ class WorkflowTests(unittest.TestCase):
         self.graph.nodes.update(('/geographic', '/slicer_c30d_driver', '/ugv/move_base'))
         self.graph.frame = 'odom'
         self.graph.subscribers['/ugv/move_base/goal'] = {'/ugv/move_base'}
+        self.graph.publishers['/cup_nav/manual_state'] = {'/slicer_velocity_mux'}
         self.sample(lidar=True, odom=(0., 0.), driver=True, action=[],
                     odom_still=True, geographic={'state': 'invalid'},
                     mux={'manual_hold': held, 'teleop_fresh': False, 'emergency_stop_latched': False},
@@ -299,12 +301,12 @@ class WorkflowTests(unittest.TestCase):
         self.graph.publishers['/wheel/odom'] = {'/slicer_c30d_driver'}
         self.workflow.click('vision')
         self.assertEqual(self.starts, [])
-        self.assertEqual(self.workflow.states['vision'][:2], ('yellow', '请先停止导航和底盘'))
+        self.assertEqual(self.workflow.states['vision'][:2], ('yellow', '底盘由外部终端占用'))
         self.graph.publishers.clear()
         self.workflow.click('vision')
         self.assertEqual(self.starts[-1][0], 'vision')
 
-    def test_grasp_hands_off_owned_stopped_driver_and_restores_it_after_release(self):
+    def test_grasp_completion_restores_driver_and_allows_nav_while_held(self):
         self.workflow.click('driver')
         old_driver = self.starts[-1][3]
         self.graph.nodes.add('/slicer_c30d_driver')
@@ -325,20 +327,91 @@ class WorkflowTests(unittest.TestCase):
         self.refresh()
         self.assertEqual([key for key, *_ in self.starts], ['driver', 'vision'])
         grasp = self.starts[-1][3]
+        self.graph.processes['vision'] = {123}
         grasp.log_lines = ['GRASP_STATE held']
         self.refresh()
+        self.assertEqual(self.workflow.states['vision'], ('green', '抓取完成', True))
+        self.assertEqual([key for key, *_ in self.starts], ['driver', 'vision', 'driver'])
+        self.assertEqual(self.color('driver'), 'yellow')
+        self.graph.nodes.add('/geographic')
+        self.sample(driver=True, lidar=True, odom=(0., 0.))
         self.workflow.click('odom')
-        self.assertEqual(len(self.starts), 2)
+        self.assertEqual(self.starts[-1][0], 'odom')
+        self.assertFalse(grasp.stopped)
+        self.assertEqual(grasp.sent, [])
+
+    def test_release_with_idle_navigation_keeps_navigation_running(self):
+        self.workflow.click('driver')
+        self.sample(driver=True, wheel_still=True)
         self.workflow.click('vision')
+        self.starts[-1][3].status = 0
+        self.refresh()
+        grasp = self.starts[-1][3]
+        grasp.log_lines = ['GRASP_STATE held']
+        self.refresh()
+        self.assertEqual(self.starts[-1][0], 'driver')
+        restarted = self.starts[-1][3]
+        self.graph.nodes.add('/geographic')
+        self.sample(driver=True, lidar=True, odom=(0., 0.))
+        self.workflow.click('odom')
+        self.assertEqual(self.starts[-1][0], 'odom')
+        nav = self.starts[-1][3]
+        self.prerequisites(held=True)
+        mux = dict(manual_hold=True, teleop_fresh=False, emergency_stop_latched=False,
+                   mux_instance_id='existing-mux', takeover_generation=2)
+        self.sample(wheel_still=True, mux=mux)
+        self.workflow.click('vision')
+        self.assertTrue(restarted.stopped)
+        self.assertEqual(grasp.sent, [])
+        restarted.status = 0
+        self.graph.nodes.remove('/slicer_c30d_driver')
+        self.refresh()
         self.assertEqual(grasp.sent, ['release'])
         grasp.log_lines = ['GRASP_STATE idle']
         self.refresh()
         self.assertTrue(grasp.stopped)
-        self.assertEqual(len(self.starts), 2)
         grasp.status = 0
         self.refresh()
-        self.assertEqual([key for key, *_ in self.starts], ['driver', 'vision', 'driver'])
-        self.assertEqual(self.color('driver'), 'yellow')
+        self.assertEqual([key for key, *_ in self.starts], ['driver', 'vision', 'driver', 'odom', 'driver'])
+        self.assertFalse(nav.stopped)
+        self.assertEqual(self.workflow.states['vision'][:2], ('red', '已释放'))
+
+    def test_grasp_parks_released_mux_and_restores_only_its_own_hold(self):
+        self.workflow.click('driver')
+        driver = self.starts[-1][3]
+        self.prerequisites(held=False)
+        mux = dict(manual_hold=False, teleop_fresh=False, emergency_stop_latched=False,
+                   mux_instance_id='mux', takeover_generation=2)
+        self.sample(mux=mux, wheel_still=True, action=[('moving', 1)])
+        self.workflow.click('vision')
+        self.assertEqual([key for key, *_ in self.starts], ['driver'])
+        self.sample(action=[])
+        self.workflow.click('vision')
+        key, argv, _, hold = self.starts[-1]
+        self.assertEqual(key, 'grasp_hold')
+        self.assertIn('--require-idle', argv)
+        self.assertFalse(driver.stopped)
+        held = dict(mux, manual_hold=True, takeover_generation=3, last_intent_action='takeover',
+                    last_intent_accepted=True)
+        hold.log_lines = [json.dumps(held)]
+        hold.status = 0
+        self.refresh()
+        self.assertFalse(driver.stopped)
+        self.sample(mux=held)
+        self.refresh()
+        self.assertTrue(driver.stopped)
+        driver.status = 0
+        self.graph.nodes.remove('/slicer_c30d_driver')
+        self.refresh()
+        self.assertEqual(self.starts[-1][0], 'vision')
+        self.starts[-1][3].log_lines = ['GRASP_STATE held']
+        self.refresh()
+        self.assertEqual(self.starts[-1][0], 'driver')
+        self.sample(driver=True, wheel_still=True)
+        self.refresh()
+        self.assertEqual(self.starts[-1][0:2], ('grasp_unhold', (
+            'rosrun', 'ugv_slicer_control', 'control.py', 'release', '--timeout', '4',
+            '--expected-mux-instance', 'mux', '--expected-generation', '3')))
 
     def test_startup_failure_before_worker_reports_state_restores_driver(self):
         self.workflow.click('driver')
@@ -360,7 +433,7 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual([key for key, *_ in self.starts], ['driver', 'odom'])
         self.workflow.click('vision')
         self.assertFalse(driver.stopped)
-        self.assertIn('请先停止导航', self.workflow.messages[-1])
+        self.assertIn('等待导航空闲', self.workflow.messages[-1])
 
     def test_stop_all_cancels_driver_handoff_before_launching_grasp(self):
         self.workflow.click('driver')

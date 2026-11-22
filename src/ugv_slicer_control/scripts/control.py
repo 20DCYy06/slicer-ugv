@@ -59,9 +59,14 @@ def main():
     parser.add_argument('--freshness', type=float)
     parser.add_argument('--expected-mux-instance')
     parser.add_argument('--expected-generation', type=int)
+    parser.add_argument('--require-idle', action='store_true',
+                        help='acquire a hold only on idle navigation, without canceling goals')
     args = parser.parse_args(rosgraph.myargv()[1:])
-    if args.command != 'release' and (args.expected_mux_instance is not None or args.expected_generation is not None):
-        parser.error('expected hold applies only to release')
+    if args.require_idle and args.command != 'hold':
+        parser.error('--require-idle applies only to hold')
+    if args.command != 'release' and not args.require_idle and (
+            args.expected_mux_instance is not None or args.expected_generation is not None):
+        parser.error('expected Mux state requires release or hold --require-idle')
     namespace = args.namespace.rstrip('/')
     if not namespace.startswith('/') or '..' in namespace.split('/') or not namespace:
         raise ValueError('an absolute node namespace is required')
@@ -132,24 +137,29 @@ def main():
         print(json.dumps(before, sort_keys=True))
         return 0
     held = args.command == 'hold'
-    if not held:
+    action = 'hold' if held else 'release'
+    if not held or args.require_idle:
         wait_for(lambda: ready('status', status_topic, planner), 'no fresh owned move_base status')
         if not release_allowed(samples['status'][1]):
-            raise RuntimeError('release refused: move_base has a pending or active goal; use hold first')
+            raise RuntimeError(f'{action} refused: move_base has a pending or active goal')
         if before['teleop_fresh'] or before['emergency_stop_latched']:
-            raise RuntimeError('release refused: teleop activity or emergency stop remains')
+            raise RuntimeError(f'{action} refused: teleop activity or emergency stop remains')
     publisher = rospy.Publisher(intent_topic, String, queue_size=1, latch=False)
     wait_for(lambda: publisher.get_num_connections() > 0, 'manual intent subscriber unavailable')
     # Observers (rosbag/rostopic) may subscribe too. Only the mux can return the
     # fresh, owned, instance/generation-bound ACK checked below.
     if owner not in dict(master.getSystemState()[1]).get(intent_topic, []):
         raise RuntimeError('manual intent must have the expected mux subscriber')
-    if not held:
+    if not held or args.require_idle:
         if not ready('status', status_topic, planner) or not release_allowed(samples['status'][1]):
-            raise RuntimeError('release refused: move_base status changed or became stale')
+            raise RuntimeError(f'{action} refused: move_base status changed or became stale')
     if not ready('state', state_topic, owner):
         raise RuntimeError('manual state became stale or its publisher changed')
     current = samples['state'][1]
+    if args.require_idle:
+        if current['manual_hold'] or current['teleop_fresh'] or current['emergency_stop_latched']:
+            raise RuntimeError('Mux hold, teleop or emergency stop changed')
+        check_expected_hold(current, args.expected_mux_instance, args.expected_generation)
     if held:
         before = current
     elif any(current[key] != before[key] for key in ('mux_instance_id', 'takeover_generation')):
@@ -167,7 +177,7 @@ def main():
 
     wait_for(matched, 'manual handoff ACK or postcondition timed out; request was not retried')
     print(json.dumps(samples['state'][1], sort_keys=True))
-    if held:
+    if held and not args.require_idle:
         try:
             cancel = rospy.Publisher(cancel_topic, GoalID, queue_size=1, latch=False)
             wait_for(lambda: cancel.get_num_connections() > 0, 'move_base cancel subscriber unavailable')
