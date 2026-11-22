@@ -23,6 +23,9 @@ class TaskExecutor:
         self.runtime_phase, self.action, self.arrival = 'IDLE', None, None
         self.current_navigation_target, self.last_error = None, ''
         self.stop_result = None
+        self.preparing, self.preparation_cancel_requested = False, False
+        self.preparation_retry, self.preparation_ready, self.preparation_stopped = False, False, False
+        self.preparation_reason = ''
 
     def recover_orphan(self):
         """A new receiver found an old server goal, not a resumable task."""
@@ -34,12 +37,12 @@ class TaskExecutor:
     def command(self, command):
         def validate(final, vias):
             try:
-                self.backend.validate_route(final, vias)
+                route_validator(final, vias)
             except Exception as error:
-                # TF/ROS transport errors reject the whole update just as a
-                # conversion error does; the original task stays intact.
+                # A backend-specific route check must leave the original task intact.
                 raise ValueError('route unavailable: '+str(error)) from error
-        result = self.core.handle(command, validate_route=validate)
+        route_validator = getattr(self.backend, 'validate_route', None)
+        result = self.core.handle(command, validate_route=validate if route_validator else None)
         if result['accepted'] and not result.get('duplicate'):
             self.last_error = ''
             self.arrival = None
@@ -83,17 +86,88 @@ class TaskExecutor:
         self.active, self.cancel_since, self.verify_since = None, None, None
 
     def _stopping(self):
+        if self.preparation_retry:
+            busy = self.backend.active_server_goal()
+            if busy is not False:
+                # The runtime can confirm stop after its old navigation process
+                # has exited. There may be no Action/Mux to hold in that gap.
+                if self.preparation_stopped and busy is None:
+                    self._mark_stopped(dict(confirmed=True, source='geographic_preparation'))
+                elif self.clock()-self.stop_since > self.stop_timeout:
+                    self._block('stop not confirmed: fresh idle navigation unavailable')
+                return
         self._hold()
         if self.active is not None:
             return
         quiet = self.backend.stopped(self.stop_since)
         self.stop_result = quiet
         if quiet.get('confirmed'):
-            self.core.mark_stopped()
-            self.stop_since = None
-            self.runtime_phase = self.core.snapshot()['phase']
+            self._mark_stopped(quiet)
         elif self.clock()-self.stop_since > self.stop_timeout:
             self._block('stop not confirmed: '+quiet.get('reason', 'quiet window unavailable'))
+
+    def _mark_stopped(self, quiet):
+        self.stop_result = quiet
+        self.core.mark_stopped()
+        self.stop_since, self.preparation_stopped = None, False
+        self.preparation_reason = ''
+        self.runtime_phase = self.core.snapshot()['phase']
+
+    def _preparation_failed(self, reason):
+        self.preparing = False
+        self.preparation_reason = reason or 'geographic preparation failed'
+        # The runtime owns the temporary Action and its stopping path. A failed
+        # admission can also mean an unrelated navigator was already active.
+        self.core.block(self.preparation_reason)
+        self.last_error, self.runtime_phase = self.preparation_reason, 'BLOCKED'
+
+    def _begin_preparation(self, state):
+        self.preparation_retry, self.preparation_ready = True, False
+        self.current_navigation_target, self.action = None, None
+        self.preparation_cancel_requested, self.preparation_stopped = False, False
+        try:
+            if self.own_hold is not None:
+                mux = self.backend.mux_state()
+                if self.hold_key(mux) == self.own_hold and mux['manual_hold']:
+                    if mux['emergency_stop_latched'] or mux['teleop_fresh']:
+                        raise ValueError('existing emergency stop/teleop remains')
+                    self._release_own_hold()
+                self.own_hold, self.stop_held = None, False
+            final = state.get('final_goal') or state.get('target')
+            self.backend.prepare_start(state['task_id'], final)
+        except Exception as error:
+            self._preparation_failed(str(error))
+            return
+        self.preparing = True
+        self.runtime_phase, self.preparation_reason = 'WAITING_PREPARATION', ''
+
+    def _advance_preparation(self):
+        stopping = self.stop_since is not None
+        try:
+            if stopping and not self.preparation_cancel_requested:
+                self.backend.prepare_cancel()
+                self.preparation_cancel_requested = True
+            phase, reason = self.backend.prepare_poll()
+        except Exception as error:
+            self._preparation_failed(str(error))
+            self.backend.prepare_cancel()
+            return
+        self.runtime_phase = self.core.snapshot()['phase'] if stopping else phase
+        self.preparation_reason = reason
+        if phase not in ('READY', 'STOPPED', 'FAILED'):
+            return
+        self.preparing = False
+        if stopping:
+            self.preparation_stopped = phase == 'STOPPED'
+        elif phase == 'READY':
+            self.preparation_retry, self.preparation_ready = False, True
+            self.preparation_reason = ''
+        else:
+            self._preparation_failed(reason)
+
+    def _release_own_hold(self):
+        if self.backend.release(self.own_hold)['manual_hold']:
+            raise ValueError('Mux release not confirmed')
 
     def tick(self):
         try:
@@ -108,13 +182,17 @@ class TaskExecutor:
                 self.last_error += '; stop unconfirmed: '+str(stop_error)
         finally:
             # Mux hold is independent of Action transport and its terminal ACK.
-            if self.stop_since is not None or self.core.snapshot()['phase'] in ('PAUSING', 'CANCELING', 'BLOCKED'):
+            if not self.preparation_retry and (self.stop_since is not None or
+                    self.core.snapshot()['phase'] in ('PAUSING', 'CANCELING', 'BLOCKED')):
                 try:
                     self._hold()
                 except Exception as error:
                     self.last_error += '; Mux hold unconfirmed: '+str(error)
 
     def _tick(self):
+        if self.preparing:
+            self._advance_preparation()
+            return
         state = self.core.snapshot()
         now = self.clock()
         if self.active is not None:
@@ -188,7 +266,8 @@ class TaskExecutor:
                     self._block('parking/geographic review unconfirmed')
                 return
         state = self.core.snapshot()
-        if self.stop_since is not None or state['phase'] in ('PAUSING', 'CANCELING', 'BLOCKED'):
+        if (self.stop_since is not None or state['phase'] in ('PAUSING', 'CANCELING')
+                or (state['phase'] == 'BLOCKED' and not self.preparation_retry)):
             if self.stop_since is None:
                 self.stop_since = now
             self._stopping()
@@ -196,6 +275,14 @@ class TaskExecutor:
         if state['phase'] != 'READY' or state['paused']:
             self.runtime_phase = state['phase']
             return
+        if not self.preparation_ready and (self.preparation_retry or self.backend.needs_preparation()):
+            self._begin_preparation(state)
+            return
+        busy = self.backend.active_server_goal()
+        if busy is not False:
+            self.runtime_phase = 'WAITING_NAVIGATION' if busy is None else 'NAVIGATION_BUSY'
+            return
+        self.preparation_ready = False
         problem = self.backend.health()
         if problem:
             raise ValueError(problem)
@@ -205,9 +292,7 @@ class TaskExecutor:
         if mux['manual_hold']:
             if self.hold_key(mux) != self.own_hold:
                 raise ValueError('external/startup hold; existing readiness release required')
-            after = self.backend.release(self.own_hold)
-            if after['manual_hold']:
-                raise ValueError('Mux release not confirmed')
+            self._release_own_hold()
         self.own_hold, self.stop_held, self.stop_since = None, False, None
         segment = self.core.activate()
         if segment is not None:
@@ -224,10 +309,15 @@ class TaskExecutor:
                     current_navigation_target=self.current_navigation_target,
                     action=self.action, arrival=self.arrival, last_error=self.last_error,
                     stop=self.stop_result,
-                    cancellation_pending=self.cancel_since is not None)
+                    preparation_reason=self.preparation_reason,
+                    cancellation_pending=(self.cancel_since is not None or
+                                          self.preparing and self.preparation_cancel_requested))
 
     def shutdown(self):
-        if self.active is None and self.own_hold is None and self.core.snapshot()['task_id'] is None:
+        if self.preparing:
+            self.backend.prepare_cancel()
+            return
+        if self.active is None and self.own_hold is None and self.stop_since is None:
             return  # Starting/stopping an unused interface does not take control.
         try:
             if self.active is not None:

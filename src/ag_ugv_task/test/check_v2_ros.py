@@ -18,9 +18,25 @@ class FakeNavigation:
         self.state = 2
         self.xy = (0., 0.)
         self.held = False
+        self.prep_required = True
+        self.prep_phase = 'WAITING_RTK'
+        self.prep_starts, self.prep_cancels = [], 0
 
     def validate_route(self, final, vias):
         assert final and all(vias)
+
+    def needs_preparation(self):
+        return self.prep_required
+
+    def prepare_start(self, task_id, target):
+        assert not self.held
+        self.prep_starts.append((task_id, target))
+
+    def prepare_poll(self):
+        return self.prep_phase, 'test preparation pending'
+
+    def prepare_cancel(self):
+        self.prep_cancels += 1
 
     def target(self, point):
         return dict(map_xyz=[point['latitude'], point['longitude'], 0])
@@ -124,8 +140,30 @@ def run(executor_type):
                  'UAV GPS snapshot')
 
         send('INSERT_MVP', accepted=False, mvp_id='missing', lat=31, lon=118)
+        send('SET_TARGET', lat=31, lon=118)
+        pending = state(lambda s: s.get('runtime_phase') == 'WAITING_RTK', 'initial preparation')
+        assert pending['target'] == {'lat': 31, 'lon': 118} and pending['active_point'] is None
+        backend.prep_phase = 'PREPARING'
+        send('INSERT_MVP', mvp_id='prep-mvp', lat=31.5, lon=118.5)
         send('SET_TARGET', lat=32, lon=119)
-        state(lambda s: (s.get('active_point') or {}).get('kind') == 'TARGET', 'original target')
+        pending = state(lambda s: s.get('runtime_phase') == 'PREPARING', 'working preparation')
+        assert [p['mvp_id'] for p in pending['remaining_mvps']] == ['prep-mvp']
+        assert pending['target'] == {'lat': 32, 'lon': 119} and pending['active_point'] is None
+        assert len(backend.prep_starts) == 1 and not backend.goals
+        send('DEL_MVP', mvp_id='prep-mvp')
+        send('PAUSE')
+        wait_for(lambda: backend.prep_cancels == 1, 'preparation canceled')
+        state(lambda s: s.get('phase') == 'PAUSING', 'waiting for preparation stop')
+        backend.prep_phase = 'STOPPED'
+        state(lambda s: s.get('phase') == 'PAUSED', 'preparation paused')
+        backend.prep_phase = 'SWITCHING_NAVIGATION'
+        send('RESUME')
+        state(lambda s: s.get('runtime_phase') == 'SWITCHING_NAVIGATION', 'resumed preparation')
+        assert not backend.goals
+        backend.prep_required = False
+        backend.prep_phase = 'READY'
+        state(lambda s: (s.get('active_point') or {}).get('lat') == 32, 'latest real target')
+        assert len(backend.prep_starts) == 2 and len(backend.goals) == 1
         send('INSERT_MVP', mvp_id='p1', lat=33, lon=120)
         state(lambda s: s.get('phase') == 'SWITCHING', 'switching to p1')
         assert backend.cancels == 1 and len(backend.goals) == 1
@@ -170,7 +208,19 @@ def run(executor_type):
         stopped = state(lambda s: s.get('phase') == 'STOPPED', 'stopped')
         assert stopped['target'] is None and stopped['active_point'] is None
         send('RESUME', task='next', accepted=False)
-        print('PASS: UAV/Ground state, all 7 operations, original Action executor, arrival and confirmed stop')
+        assert len(backend.prep_starts) == 2
+        backend.prep_required = True  # Simulate another local-odom session.
+        backend.prep_phase = 'SWITCHING_NAVIGATION'
+        send('SET_TARGET', task='cancel-prep', lat=39, lon=126)
+        state(lambda s: s.get('runtime_phase') == 'SWITCHING_NAVIGATION', 'new session preparation')
+        goal_count = len(backend.goals)
+        send('STOP', task='cancel-prep')
+        wait_for(lambda: backend.prep_cancels == 2, 'stop canceled preparation')
+        backend.prep_required = False
+        backend.prep_phase = 'READY'  # A completion concurrent with STOP cannot dispatch.
+        state(lambda s: s.get('phase') == 'STOPPED', 'preparation stopped')
+        assert len(backend.goals) == goal_count
+        print('PASS: V2 transport, first-task preparation handoff, edits, pause/resume, and STOP')
     finally:
         rospy.signal_shutdown('test finished')
         worker.join(timeout=4)
