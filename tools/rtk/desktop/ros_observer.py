@@ -68,6 +68,7 @@ class Observer:
             ('/scan', LaserScan, lambda m: self.sensor('lidar', m)),
             ('/lio/odom', Odometry, lambda m: self.sensor('lio', m)),
             ('/odom', Odometry, self.local_odom),
+            ('/wheel/odom', Odometry, lambda m: self.sensor('wheel_odom', m)),
             ('/global/odom', Odometry, self.global_odom),
             ('/slicer_c30d_driver/ready', Bool, lambda m: self.board.record('driver', m.data)),
             ('/cup_nav/manual_state', String, self.mux),
@@ -113,6 +114,7 @@ class Observer:
         if message.header.frame_id != 'odom' or not finite(p.x, p.y, speed.linear.x, speed.angular.z):
             return
         self.board.record('odom', (p.x, p.y))
+        self.board.record('odom_still', abs(speed.linear.x) <= .02 and abs(speed.angular.z) <= .02)
         geo = self.board.recent('geographic', time.monotonic(), 1.5) or {}
         if geo.get('state') != 'collecting':
             self.registration = None

@@ -2,7 +2,7 @@
 set -eo pipefail
 
 if [[ ${1:-} == --help || ${1:-} == -h ]]; then
-  printf 'Usage: %s\nOpens the local X11 RTK desktop on the existing ROS master.\n' "$0"
+  printf 'Usage: %s\nOpens local X11 RViz and RTK workflow controls on ROS_MASTER_URI.\n' "$0"
   exit 0
 fi
 if [[ $# != 0 ]]; then
@@ -43,5 +43,6 @@ fi
 
 export QT_QPA_PLATFORM=xcb
 export ROS_NAMESPACE="/slicer_rtk_desktop_$$"
+export SLICER_NATIVE_WS="$workspace"
 export PYTHONPATH="$repo/src/ugv_navigation/scripts${PYTHONPATH:+:$PYTHONPATH}"
 exec python3 -s -B "$repo/tools/rtk/desktop/desktop.py" "$@"
