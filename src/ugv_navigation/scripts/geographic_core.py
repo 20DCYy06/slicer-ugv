@@ -6,6 +6,8 @@ GNSS ENU describes the antenna. The horizontal lever is expressed in base_link.
 Registration therefore rotates the lever in odom before fitting antenna points.
 """
 import math
+from statistics import median
+from sys import float_info
 
 from cup_gnss.enu import geodetic_to_ecef, WGS84_A, WGS84_E2
 
@@ -105,6 +107,19 @@ def interpolate_odom(odoms, stamp, max_gap=.5):
     raise ValueError('no odom interval covers requested stamp')
 
 
+def _alignment_pair(item):
+    if not isinstance(item, dict):
+        raise ValueError('alignment pair must contain stamp, odom and enu')
+    try:
+        stamp, record = _stamp(item['stamp']), _odom(item['odom'])
+        enu = _vector(item['enu'], 3, 'antenna ENU')
+    except KeyError as error:
+        raise ValueError('alignment pair requires stamp, odom and enu') from error
+    if abs(stamp - record['stamp']) > 1e-6:
+        raise ValueError('GNSS and odom stamps are not paired')
+    return stamp, record, enu
+
+
 def fit_alignment(pairs, antenna_xy, min_displacement=.75, max_residual=.5):
     """Fit odom antenna -> fixed ENU antenna using a 2-D rigid least squares fit.
 
@@ -126,15 +141,7 @@ def fit_alignment(pairs, antenna_xy, min_displacement=.75, max_residual=.5):
         raise ValueError('min_displacement and max_residual must be positive')
     samples = []
     for item in pairs:
-        if not isinstance(item, dict):
-            raise ValueError('alignment pair must contain stamp, odom and enu')
-        try:
-            stamp, record = _stamp(item['stamp']), _odom(item['odom'])
-            enu = _vector(item['enu'], 3, 'antenna ENU')
-        except KeyError as error:
-            raise ValueError('alignment pair requires stamp, odom and enu') from error
-        if abs(stamp - record['stamp']) > 1e-6:
-            raise ValueError('GNSS and odom stamps are not paired')
+        stamp, record, enu = _alignment_pair(item)
         if samples and stamp <= samples[-1][0]:
             raise ValueError('alignment stamps must strictly increase')
         samples.append((stamp, record, antenna_odom(record, lever), enu[:2]))
@@ -176,6 +183,117 @@ def fit_alignment(pairs, antenna_xy, min_displacement=.75, max_residual=.5):
     return dict(yaw=yaw, translation=translation, rmse_m=rmse,
                 displacement_m=displacement, span_s=samples[-1][0] - samples[0][0],
                 samples=count, heading_std_rad=max(math.radians(5.), math.atan2(rmse, displacement)))
+
+
+def _base_distance(left, right):
+    first, second = left['odom'], right['odom']
+    return math.hypot(first['x'] - second['x'], first['y'] - second['y'])
+
+
+def _antenna_distance(left, right):
+    return math.hypot(left['enu'][0] - right['enu'][0], left['enu'][1] - right['enu'][1])
+
+
+def _baseline(samples):
+    if not samples:
+        return 0.
+    first = samples[0]
+    return min(max(_base_distance(first, item) for item in samples),
+               max(_antenna_distance(first, item) for item in samples))
+
+
+def fit_trajectory_alignment(pairs, antenna_xy, min_baseline_m=1.2, spacing_m=.20,
+                             min_samples=6, max_gap_s=1.5, max_residual_m=.15,
+                             max_heading_std_rad=.11, max_heading_delta_rad=.10,
+                             resume_odom_m=.10, resume_enu_m=.20):
+    """Fit the latest continuous trajectory using spatially distinct pairs.
+
+    Report observed path length, an effective baseline and heading consistency
+    separately. An explicit resume can bridge a time gap only at a coincident
+    odom and GNSS anchor. A gap during collection starts a new trajectory.
+    """
+    config = (min_baseline_m, spacing_m, max_gap_s, max_residual_m, max_heading_std_rad,
+              max_heading_delta_rad, resume_odom_m, resume_enu_m)
+    if any(_number(value, 'automatic alignment threshold') <= 0. for value in config):
+        raise ValueError('automatic alignment thresholds must be positive')
+    if type(min_samples) is not int or min_samples < 5:
+        raise ValueError('automatic alignment needs at least five distinct positions')
+
+    selected, previous = [], None
+    path_length, discontinuity = 0., False
+    for item in pairs:
+        stamp, record, enu = _alignment_pair(item)
+        point = dict(stamp=stamp, odom=record, enu=enu)
+        if previous is not None:
+            elapsed = stamp - previous['stamp']
+            if elapsed <= 0.:
+                raise ValueError('alignment stamps must strictly increase')
+            base_step = _base_distance(previous, point)
+            if item.get('resumed'):
+                contiguous = base_step <= resume_odom_m and _antenna_distance(previous, point) <= resume_enu_m
+            else:
+                contiguous = elapsed <= max_gap_s
+            if contiguous:
+                path_length += base_step
+            else:
+                selected.clear()
+                path_length, discontinuity = 0., True
+        previous = point
+        # Returning to an already sampled area contributes no extra fit weight.
+        if all(_base_distance(point, candidate) >= spacing_m-1e-9 for candidate in selected):
+            selected.append(point)
+
+    progress = dict(ready=False, reason='', samples=len(selected), rejected_samples=0,
+                    baseline_m=_baseline(selected), path_length_m=path_length, residual_m=None,
+                    heading_std_rad=None, heading_delta_rad=None, discontinuity=discontinuity)
+
+    def pending(reason):
+        return None, dict(progress, reason=reason)
+
+    if len(selected) < min_samples or progress['baseline_m'] < min_baseline_m:
+        reason = 'need_more_distinct_positions' if len(selected) < min_samples else 'insufficient_spatial_baseline'
+        return pending('paired_data_gap; '+reason if discontinuity else reason)
+
+    try:
+        # An initial loose fit identifies isolated jumps before enforcing the
+        # residual gate; multiple large residuals are grounds to wait.
+        estimate = fit_alignment(selected, antenna_xy, min_baseline_m, float_info.max)
+        residuals = []
+        for sample in selected:
+            predicted = transform_xy(*antenna_odom(sample['odom'], antenna_xy),
+                                     estimate['yaw'], *estimate['translation'])
+            residuals.append(math.hypot(predicted[0]-sample['enu'][0], predicted[1]-sample['enu'][1]))
+        cutoff = max(2.*max_residual_m, 3.*median(residuals))
+        inliers = [sample for sample, residual in zip(selected, residuals) if residual <= cutoff]
+        rejected = len(selected) - len(inliers)
+        progress.update(samples=len(inliers), rejected_samples=rejected, baseline_m=_baseline(inliers))
+        if rejected > max(1, int(.15*len(selected))):
+            return pending('too_many_alignment_outliers')
+        if len(inliers) < min_samples or progress['baseline_m'] < min_baseline_m:
+            return pending('insufficient_inlier_positions_or_baseline')
+
+        # Overlap the early and late fits so a short straight track still has
+        # enough separation. This detects conflicting heading estimates while
+        # keeping the same least-squares problem and antenna reference.
+        estimate = fit_alignment(inliers, antenna_xy, min_baseline_m, float_info.max)
+        progress.update(residual_m=estimate['rmse_m'], heading_std_rad=estimate['heading_std_rad'])
+        if estimate['rmse_m'] > max_residual_m:
+            return pending('alignment_residual_too_large')
+        if estimate['heading_std_rad'] > max_heading_std_rad:
+            return pending('alignment_heading_uncertain')
+        group_size = (2*len(inliers)+2)//3
+        subfits = [fit_alignment(group, antenna_xy, .4*min_baseline_m, max_residual_m)
+                   for group in (inliers[:group_size], inliers[-group_size:])]
+        early, late = (fit['yaw'] for fit in subfits)
+        delta = max(abs(wrap(early - late)), abs(wrap(early - estimate['yaw'])),
+                    abs(wrap(late - estimate['yaw'])))
+        progress['heading_delta_rad'] = delta
+        if delta > max_heading_delta_rad:
+            return pending('alignment_heading_inconsistent')
+    except ValueError as error:
+        return pending(str(error))
+    progress['ready'] = True
+    return dict(estimate, rejected_samples=rejected, heading_delta_rad=delta), progress
 
 
 def _origin(origin):

@@ -8,3 +8,16 @@ max_gnss_innovation_m: 3.0 # 大恢复跳变暂停纠偏、保留原点，人工
 arrival_tolerance_m: 0.35  # 原始RTK估计残差复核；不替代尺测真值。
 status_max_age_s: 1.0
 stop_window_s: 1.0
+
+# Automatic fitting uses distinct positions and independent heading evidence.
+# The 1.2 m baseline is a geometry gate, separate from the motion budget.
+automatic_registration:
+  min_baseline_m: 1.2
+  spacing_m: 0.20
+  min_samples: 6
+  max_gap_s: 1.5               # Do not join across an ordinary loss of paired data.
+  max_residual_m: 0.15
+  max_heading_std_rad: 0.11    # Heuristic seed uncertainty, about 6.3 degrees.
+  max_heading_delta_rad: 0.10  # Agreement of overlapping trajectory fits.
+  resume_odom_m: 0.10          # Coincident stop/resume anchors, in both frames.
+  resume_enu_m: 0.20

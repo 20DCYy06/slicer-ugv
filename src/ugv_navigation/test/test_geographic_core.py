@@ -169,6 +169,77 @@ class GeographicCoreTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             core.fit_alignment(samples, [0., 0.])
 
+    def curved_track(self, delay=0.):
+        def flight(t):
+            x = .35*t
+            y = .9*math.sin(.45*t)**2
+            return x, y, math.atan2(.405*math.sin(.9*t), .35)
+
+        local = [odom(i*.10, *flight(i*.10)) for i in range(101)]
+        pairs = []
+        for i in range(50):
+            stamp = .07+i*.20
+            x, y, yaw = flight(stamp-delay)
+            # Independently construct a rotated antenna and a 90-degree map transform.
+            antenna_x = x+.37*math.cos(yaw)+.12*math.sin(yaw)
+            antenna_y = y+.37*math.sin(yaw)-.12*math.cos(yaw)
+            pairs.append(dict(stamp=stamp, odom=core.interpolate_odom(local, stamp),
+                              enu=[4.-antenna_y, -2.+antenna_x, 0.]))
+        return pairs
+
+    def test_auto_alignment_uses_async_curve_and_rejects_isolated_outlier(self):
+        pairs = self.curved_track()
+        pairs[0]['enu'][0] += .12
+        pairs[-1]['enu'][0] -= .12
+        for sample in pairs[15:18]:
+            sample['enu'][0] += 1.5
+        fitted, progress = core.fit_trajectory_alignment(pairs, [.37, -.12])
+        self.assertTrue(progress['ready'], progress)
+        self.assertGreater(fitted['samples'], 6)
+        self.assertGreater(fitted['rejected_samples'], 0)
+        self.assertAlmostEqual(fitted['yaw'], math.pi/2., delta=.035)
+        self.assertAlmostEqual(fitted['translation'][0], 4., delta=.07)
+        self.assertAlmostEqual(fitted['translation'][1], -2., delta=.07)
+
+    def test_auto_alignment_accepts_a_straight_trajectory(self):
+        samples = [pair(i*.5, .20*i, 0., 10., 20.+.20*i, 0.) for i in range(16)]
+        fitted, progress = core.fit_trajectory_alignment(samples, [0., 0.])
+        self.assertTrue(progress['ready'], progress)
+        self.assertAlmostEqual(fitted['yaw'], math.pi/2.)
+
+    def test_auto_alignment_rejects_dense_near_or_turning_in_place_samples(self):
+        samples = [pair(i*.02, .04*math.sin(i*.2), 0., math.cos(i*.1), math.sin(i*.1), i*.1)
+                   for i in range(150)]
+        fitted, progress = core.fit_trajectory_alignment(samples, [1., 0.])
+        self.assertIsNone(fitted)
+        self.assertFalse(progress['ready'])
+        self.assertLess(progress['samples'], 3)
+
+    def test_auto_alignment_does_not_bridge_missing_paired_data(self):
+        samples = [pair(t, x, 0., x, 0.) for t, x in
+                   ((0., 0.), (.4, .25), (.8, .5), (4., 2.), (4.4, 2.25), (4.8, 2.5))]
+        fitted, progress = core.fit_trajectory_alignment(samples, [0., 0.])
+        self.assertIsNone(fitted)
+        self.assertLess(progress['baseline_m'], 1.)
+
+    def test_auto_alignment_rejects_delayed_curve_without_clock_correction(self):
+        fitted, progress = core.fit_trajectory_alignment(self.curved_track(delay=.9), [.37, -.12])
+        self.assertIsNone(fitted, progress)
+        self.assertFalse(progress['ready'])
+
+    def test_auto_alignment_reuses_evidence_across_verified_stationary_resume(self):
+        samples = [pair(i*.5, .20*i, 0., .20*i, 0.) for i in range(6)]
+        anchor = pair(30., 1.02, 0., 1.02, 0.)
+        anchor['resumed'] = True
+        samples.append(anchor)
+        samples.extend(pair(30.+i*.5, 1.+.20*i, 0., 1.+.20*i, 0.) for i in range(1, 5))
+        fitted, progress = core.fit_trajectory_alignment(samples, [0., 0.])
+        self.assertTrue(progress['ready'], progress)
+        self.assertAlmostEqual(fitted['yaw'], 0.)
+        anchor['enu'][0] += .5
+        fitted, progress = core.fit_trajectory_alignment(samples, [0., 0.])
+        self.assertIsNone(fitted, progress)
+
     def test_enu_conversion_preserves_identical_origin_and_height_difference(self):
         self.assertXY(core.enu_between([10., 20., 30.], ORIGIN, ORIGIN), [10., 20., 30.])
         high = dict(ORIGIN, altitude_ellipsoid_m=100.)

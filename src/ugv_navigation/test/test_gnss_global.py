@@ -1,5 +1,6 @@
 """Real ROS message adapter boundaries; no master, transport or hardware."""
 from collections import deque
+import json
 import math
 from pathlib import Path
 import sys
@@ -27,12 +28,36 @@ class GlobalAdapterTest(unittest.TestCase):
         node.registered, node.collecting, node.generation = True, False, 1
         node.reason, node.latest, node.qualified_stamp = '', None, None
         node.pairs, node.pending, node.qualities = [], {}, {}
+        node.done = deque()
+        node.registration_mode, node.registration_started, node.registered_stamp = None, None, None
+        node.paired_rtk_reason = 'waiting_for_qualified_rtk_odom_pair'
+        node.trajectory, node.resume_anchor = None, False
         node.odoms = deque([dict(stamp=t, x=0., y=0., yaw=0., vx=0., wz=0.) for t in (10., 10.2)])
         node.globals = deque()
         node.observation_count = node.rejected_count = 0
         node.gnss_pub, node.cancel_pub = Mock(), Mock()
         node.save, node.hold = Mock(), Mock()
         return node
+
+    def auto_track(self, node):
+        node.registered = False
+        with patch('gnss_global.rospy.Time.now', return_value=rospy.Time.from_sec(10.)):
+            began = node.auto_begin(None)
+        self.assertTrue(began.success)
+        quality = dict(gga_quality='4', fresh_rtk_usable='true', fix_valid='true')
+        node.odoms.clear()
+        for i in range(58):
+            stamp = 10.+i*.1
+            x = min(2., (stamp-10.)*.5)
+            node.odoms.append(dict(stamp=stamp, x=x, y=0., yaw=0., vx=.5 if i < 40 else 0.,
+                                   vy=0., wz=0., received=stamp))
+        for i in range(28):
+            stamp = 10.05+i*.20
+            distance = min(2., (stamp-10.)*.5)
+            fix = self.fix(distance)
+            fix.header.stamp = rospy.Time.from_sec(stamp)
+            self.assertTrue(node.process_fix(fix, quality, stamp+.01))
+        return json.loads(began.message)['generation']
 
     def fix(self, distance):
         fix = NavSatFix()
@@ -102,6 +127,78 @@ class GlobalAdapterTest(unittest.TestCase):
             self.assertFalse(node.odoms)
             node.cancel_pub.publish.assert_not_called()
             thread.return_value.start.assert_not_called()
+
+    def test_automatic_finish_commits_once_and_requires_fresh_quiet_local_motion(self):
+        node = self.node()
+        generation = self.auto_track(node)
+        now = rospy.Time.from_sec(15.71)
+        with patch('gnss_global.time.monotonic', return_value=15.71), \
+                patch('gnss_global.rospy.Time.now', return_value=now), \
+                patch('gnss_global.rospy.wait_for_service'), patch('gnss_global.rospy.ServiceProxy') as service:
+            self.assertTrue(node.auto_check(None).success)
+            node.odoms[-1]['vx'] = .04
+            self.assertFalse(node.auto_finish(None).success)
+            self.assertFalse(node.registered)
+            node.odoms[-1]['vx'] = 0.
+            self.assertTrue(node.auto_finish(None).success)
+            self.assertTrue(node.auto_finish(None).success)
+            self.assertEqual(service.return_value.call_count, 1)
+            seed = service.return_value.call_args.args[0].pose
+            self.assertEqual(seed.header.stamp, now)
+            self.assertAlmostEqual(seed.pose.pose.position.x, 2.)
+            self.assertGreater(seed.pose.covariance[35], 0.)
+        self.assertTrue(node.registered)
+        self.assertEqual(node.generation, generation)
+        self.assertIsNone(node.latest)
+        self.assertEqual(node.registered_stamp, now.to_sec())
+
+    def test_pause_keeps_epoch_but_requires_new_pair_and_abort_drops_pending_evidence(self):
+        node = self.node()
+        generation = self.auto_track(node)
+        self.assertTrue(node.auto_suspend(None).success)
+        self.assertFalse(node.collecting)
+        self.assertTrue(node.pairs)
+        with patch('gnss_global.rospy.Time.now', return_value=rospy.Time.from_sec(16.)):
+            resumed = node.auto_begin(None)
+            self.assertEqual(json.loads(resumed.message)['generation'], generation)
+            self.assertFalse(node.auto_check(None).success)
+        self.assertTrue(node.auto_abort(None).success)
+        self.assertFalse(node.collecting)
+        self.assertFalse(node.pairs)
+        self.assertEqual(node.origin, dict(latitude=0., longitude=0., altitude_ellipsoid_m=0.))
+        with patch('gnss_global.rospy.Time.now', return_value=rospy.Time.from_sec(17.)):
+            self.assertGreater(json.loads(node.auto_begin(None).message)['generation'], generation)
+
+    def test_automatic_seed_is_refused_if_the_local_pose_ages_during_commit(self):
+        node = self.node()
+        self.auto_track(node)
+        now = (rospy.Time.from_sec(15.71), rospy.Time.from_sec(16.3))
+        with patch('gnss_global.time.monotonic', return_value=15.71), \
+                patch('gnss_global.rospy.Time.now', side_effect=now), \
+                patch('gnss_global.rospy.wait_for_service'), patch('gnss_global.rospy.ServiceProxy') as service:
+            self.assertFalse(node.auto_finish(None).success)
+            service.assert_not_called()
+        self.assertFalse(node.registered)
+
+    def test_bad_receiver_quality_invalidates_pair_freshness_without_losing_evidence(self):
+        node = self.node()
+        self.auto_track(node)
+        bad = self.fix(2.)
+        bad.header.stamp = rospy.Time.from_sec(15.5)
+        self.assertTrue(node.process_fix(bad, dict(gga_quality='5'), 15.71))
+        with patch('gnss_global.rospy.Time.now', return_value=rospy.Time.from_sec(15.71)):
+            self.assertFalse(node.auto_check(None).success)
+        self.assertTrue(node.collecting)
+        self.assertGreater(len(node.pairs), 20)
+
+    def test_odom_reset_invalidates_suspended_alignment_evidence(self):
+        node = self.node()
+        generation = self.auto_track(node)
+        node.auto_suspend(None)
+        node.invalidate('odom_position_reset')
+        self.assertFalse(node.pairs)
+        self.assertFalse(node.registered)
+        self.assertGreater(node.generation, generation)
 
 
 if __name__ == '__main__':
