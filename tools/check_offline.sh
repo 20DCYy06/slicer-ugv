@@ -30,3 +30,5 @@ run_tests src/ugv_slicer_control/test test_navigation_guard.py test_control.py \
 run_tests src/cup_gnss/tests test_enu.py
 run_tests tools/rtk/desktop/tests test_dashboard.py test_workflow.py \
     test_workflow_discovery.py test_workflow_panel.py
+
+run_tests tools/tests "test_*release.py"
