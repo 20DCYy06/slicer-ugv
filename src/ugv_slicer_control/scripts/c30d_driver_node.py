@@ -25,6 +25,7 @@ if not (C30D_TOOLS / 'Host').is_dir():
     from hardware_path import hardware_root
 
     C30D_TOOLS = hardware_root(repository)
+    sys.path.insert(1, str(C30D_TOOLS / 'Host/rtk'))
 sys.path.insert(1, str(C30D_TOOLS / 'Host'))
 
 import rospy
