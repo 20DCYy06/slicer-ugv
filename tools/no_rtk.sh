@@ -6,7 +6,9 @@ mode=${1:-help}
 if [[ $# -gt 0 ]]; then shift; fi
 workspace=$(realpath -m -- "${SLICER_NATIVE_WS:-${repo%/src/slicer-ugv}}")
 runtime="${SLICER_NO_RTK_RUNTIME:-$workspace/runtime/no_rtk}"
-logs="$workspace/logs/no_rtk"
+state="$runtime"
+if [[ -n ${SLICER_STATE_DIR:-} ]]; then state="$SLICER_STATE_DIR/no_rtk"; fi
+logs="${SLICER_LOGS_DIR:-$workspace/logs}/no_rtk"
 
 case "$mode" in
     -h|--help|help)
@@ -35,10 +37,10 @@ case "$mode" in
         export SLICER_NO_RTK_RUNTIME="$runtime"
         export SLICER_RUNTIME_DIR="${SLICER_RUNTIME_DIR:-$workspace/runtime}"
         export ROS_HOME="${ROS_HOME:-$workspace/logs/ros}"
-        waypoints="$runtime/waypoints.yaml"
+        waypoints="$state/waypoints.yaml"
         case "$mode" in
             nav|rviz|patrol|record)
-                mkdir -p "$runtime"
+                mkdir -p "$state"
                 cp -n -- "$navigation/config/waypoints.yaml" "$waypoints"
                 ;;
         esac
@@ -192,7 +194,7 @@ PY
         ;;
 esac
 
-exec python3 - "$mode" "$runtime" "$logs" "$@" <<'PY'
+exec python3 - "$mode" "$state" "$logs" "$@" <<'PY'
 import fcntl
 import os
 from pathlib import Path
