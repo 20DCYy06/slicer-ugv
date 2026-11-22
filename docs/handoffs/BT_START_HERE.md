@@ -2,7 +2,7 @@
 
 2026-11-22，从已 fetch 的 `origin/main` `7b0158e` 建立 `docs/bt-start-here`。检出位于
 `~/workspace/slicer/dev/bt-start-here/src/slicer-ugv`。现场选中的 `current` 为
-`20261122-workspace-rc1`，整车 SHA 为 `adb4313b0f`。
+`20261122-workspace-rc1`，整车 SHA 为 `adb4313b0f`。 文档评审见 [PR #7](https://github.com/20DCYy06/slicer-ugv/pull/7)。
 
 ## 交付
 
