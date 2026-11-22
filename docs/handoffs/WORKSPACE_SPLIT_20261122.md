@@ -20,11 +20,18 @@ FAST-LIO 和 Livox ROS Driver2 已在团队 fork 保留原上游历史、车端�
 
 独立 AG_Client 工作区保持飞机团队维护。其当前 typed V2 与整车集成 V2 JSON 的同名话题类型不同。整车工作区只获取车载集成的 `ag_uav_client`、`ag_ugv_task`、`slicer_air_ground_msgs`。已核对来源、消息 MD5、WGS84 协议与队列时序。[V2 联调边界](../../src/ag_uav_client/docs/protocol_v2.md)
 
-组合源码及生成配置的静态验证和现有离线测试已执行。干净候选构建、远端 CI、隔离 ROS 与现场验收分别记录。
+候选 `releases/20261122-workspace-rc1` 已用公开依赖在最终路径完成 Focal ARM64 干净构建与安装。真实解析的 Catkin 包、SDK 头文件及静态库、RTK/NoRTK 生成配置均匹配该工作区。隔离 CLI 的 `plan` 保持无运动，`send` 完成首次接续。车端集成 V2 隔离测试覆盖最新目标、再次任务复用和唯一 TF/Action/速度链。发布入口隔离和拒绝跨工作区参数通过设备隔离测试。现场和飞机仍待验收。
 
 
 ## 固定依赖与本地证据
 
 - FAST-LIO `88c50b57dd931566c547ad1f3a932b792c6d6aea`，Livox ROS Driver2 `470b3988996cd060bf5e4b67b3e834967a56e403`，Livox SDK2 `c0796f04c143143899c87a773d9f6b7136453c0b`。硬件与四个完整 Git URL、相对路径统一在 [dependencies.repos](../../dependencies.repos)。
-- Focal ARM64 上已从新布局编译 SDK 和整车。原始记录位于迁移工作区 `logs/`，V2 交接证据位于 `dev/offline-ci/logs/`。独立 AG_Client 不加入整车 Catkin 源空间。
+- Focal ARM64 上已从新布局编译 SDK 和整车。候选的 `release.json` 和 `apt-packages.tsv` 保存选定版本及构建记录，证据在 `logs/20261122-workspace-rc1/`。旧现场 `current` 继续由原增量入口管理，新发布链接等待现场切换。V2 交接证据位于 `dev/offline-ci/logs/`。独立 AG_Client 不加入整车 Catkin 源空间。
 - 现场硬件 YAML 可通过 `SLICER_HARDWARE_CONFIG` 选择。发布生成配置和安装资源使用构建时的快照。旧 v1.7 记录来自此前的板端验证，本次发行目录整理不改变固件。
+
+
+## 公开验收与回退
+
+- 整车布局按 [PR #3](https://github.com/20DCYy06/slicer-ugv/pull/3) 的保护规则集成。软件源以该 PR 和候选恢复分支为准，当前主线 SHA 可用 `git rev-parse origin/main` 核对。
+- 干净 Catkin 构建与两项隔离 ROS 场景使用候选应用源码，随后只补发布入口的参数保护与文档，并重新安装和验证入口。远端 `prepare` 用公开固定依赖执行静态与设备隔离单测。
+- 现场前先按原版停稳并退出，用发布选择入口核对候选和旧选择。回退同时核对对应源检出与安装。固件与标定单独恢复。

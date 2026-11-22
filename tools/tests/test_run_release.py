@@ -161,6 +161,16 @@ printf '%s\n' "$0" "$@" "$TEST_SELECTED_OVERLAY" "$SLICER_NO_RTK_RUNTIME" \
         self.assertIn('did not activate', result.stderr)
         self.assertEqual(result.stdout, '')
 
+    def test_nortk_cannot_point_release_navigation_at_another_workspace(self):
+        release, _, _ = self.release('release-a')
+        self.select(release)
+        for key in ('runtime_root', 'host_config', 'workspace2_root', 'waypoint_file'):
+            with self.subTest(key=key):
+                result = self.dispatch('no-rtk', 'nav', key + ':=/other-workspace/config')
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn('the release selects ' + key, result.stderr)
+                self.assertFalse((self.root / 'site').exists())
+
     def test_build_does_not_run_in_the_selected_release(self):
         release, _, _ = self.release('release-a')
         self.select(release)

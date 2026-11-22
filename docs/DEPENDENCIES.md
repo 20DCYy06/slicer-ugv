@@ -11,7 +11,7 @@
 | 底盘与固件 | 主机设备枚举用 pyserial、fuser（psmisc）。旧盘 v1.4 ELF 的 GCC 标记为 10.3.1。旧包记录 gcc-arm-none-eabi 15:10.3-2021.07-4、binutils-arm-none-eabi 2.38-3ubuntu1+15build1 和 libnewlib-arm-none-eabi 3.3.0-1.3。重建固件要对照工具链和原镜像哈希。 |
 | 视觉和本地交互 | 视觉包通过 rosdep 声明 NumPy、OpenCV、Pillow、ImageTk、Tk、pyserial、PyYAML 和 psmisc。Focal 的 ImageTk 软件包名为 `python3-pil.imagetk`。运行图形界面使用车机已登录的桌面。独立硬件工具用系统 Python，手柄读 Linux 输入设备。 |
 
-本轮用 Ubuntu Base 20.04.5 amd64、Focal `main universe` 与 Noetic 已签名的 `noetic/final/ubuntu` 快照完成构建。实装 Catkin 0.8.12，move_base/GlobalPlanner/DWA 1.17.3，TEB 0.9.1，Gmapping 1.4.2，robot_localization 2.7.7，pointcloud_to_laserscan 1.4.1，FKIE 1.3.2-2。CMake 为 3.16.3；SDK2 按下方提交构建。APT 完整版本及日志留存在本地迁移记录。
+早期原生迁移曾用 Ubuntu Base 20.04.5 amd64、Focal `main universe` 与 Noetic 已签名的 `noetic/final/ubuntu` 快照完成构建。实装 Catkin 0.8.12，move_base/GlobalPlanner/DWA 1.17.3，TEB 0.9.1，Gmapping 1.4.2，robot_localization 2.7.7，pointcloud_to_laserscan 1.4.1，FKIE 1.3.2-2。CMake 为 3.16.3；SDK2 按下方提交构建。APT 完整版本及日志留存在本地迁移记录。
 
 ## 固定源码依赖
 

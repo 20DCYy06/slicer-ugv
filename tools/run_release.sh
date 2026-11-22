@@ -17,7 +17,15 @@ case "$mode" in
     help|-h|--help) usage; exit 0 ;;
     status) (( $# == 0 )) || fail 'status takes no arguments' ;;
     rtk|shell) ;;
-    no-rtk) [[ ${1:-} != build ]] || fail 'build from a development workspace' ;;
+    no-rtk)
+        [[ ${1:-} != build ]] || fail 'build from a development workspace'
+        for argument in "$@"; do
+            case "$argument" in
+                runtime_root:=*|host_config:=*|workspace2_root:=*|waypoint_file:=*)
+                    fail "the release selects ${argument%%:=*}" ;;
+            esac
+        done
+        ;;
     *) usage >&2; fail "unknown command $mode" ;;
 esac
 
