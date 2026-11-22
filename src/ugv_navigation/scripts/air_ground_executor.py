@@ -133,8 +133,7 @@ class TaskExecutor:
                         raise ValueError('existing emergency stop/teleop remains')
                     self._release_own_hold()
                 self.own_hold, self.stop_held = None, False
-            final = state.get('final_goal') or state.get('target')
-            self.backend.prepare_start(state['task_id'], final)
+            self.backend.prepare_start(state['task_id'], state['final_goal'])
         except Exception as error:
             self._preparation_failed(str(error))
             return

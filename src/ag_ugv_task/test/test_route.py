@@ -18,6 +18,12 @@ class RouteTest(unittest.TestCase):
                                         task_id=task, op=op, **fields))
         return result['accepted']
 
+    def test_snapshot_exposes_latest_wgs84_final_for_preparation(self):
+        self.assertTrue(self.command('SET_TARGET', target=A))
+        self.assertTrue(self.command('SET_TARGET', target=B))
+        self.assertEqual(self.route.snapshot().get('final_goal'),
+                         dict(latitude=B['lat'], longitude=B['lon'], altitude_ellipsoid_m=None, yaw=None))
+
     def test_update_target_leaves_active_mvp_and_pending_order(self):
         self.assertFalse(self.command('INSERT_MVP', mvp_id='p1', point=B))
         self.assertTrue(self.command('SET_TARGET', target=A))

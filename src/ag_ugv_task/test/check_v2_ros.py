@@ -143,6 +143,7 @@ def run(executor_type):
         send('SET_TARGET', lat=31, lon=118)
         pending = state(lambda s: s.get('runtime_phase') == 'WAITING_RTK', 'initial preparation')
         assert pending['target'] == {'lat': 31, 'lon': 118} and pending['active_point'] is None
+        assert backend.prep_starts[0][1]['latitude'] == 31 and backend.prep_starts[0][1]['longitude'] == 118
         backend.prep_phase = 'PREPARING'
         send('INSERT_MVP', mvp_id='prep-mvp', lat=31.5, lon=118.5)
         send('SET_TARGET', lat=32, lon=119)
