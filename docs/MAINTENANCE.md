@@ -31,13 +31,23 @@ git clone https://github.com/20DCYy06/slicer-ugv.git "$W/src/slicer-ugv"
 git -C "$W/src/slicer-ugv" checkout --detach <vehicle-sha>
 (cd "$W" && vcs import . < src/slicer-ugv/dependencies.repos)
 cd "$W/src/slicer-ugv"
+export SLICER_HARDWARE_CONFIG="$BASE/site/hardware.yaml" # 已核验的现场输入
 bash tools/check_native.sh --static "$W"
 bash tools/check_offline.sh
 bash tools/build_native.sh "$W" -j2
 bash tools/check_native.sh "$W"
 ```
 
-在设备隔离的环境中运行适用的 Noetic ROS 验证。首 WGS84 CLI 接续用已 source 的发布安装运行 `python3 src/ugv_navigation/test/check_auto_registration_ros.py cli`，测试进程自建 loopback master。正式启动和新现场验收由现场负责人协调。
+在设备隔离的环境中运行适用的 Noetic ROS 验证。首 WGS84 CLI 接续用已 source 的发布安装运行 `python3 src/ugv_navigation/test/check_auto_registration_ros.py cli`，测试进程自建 loopback master。完成实际验证后生成发布清单。例如已有可信固件历史台账时，执行下列命令并填写实际验证状态。
+
+```bash
+python3 tools/record_release.py "$W" \
+  --build-command 'bash tools/build_native.sh "$W" -j2' \
+  --firmware-record "$TRUSTED_FIRMWARE_LEDGER" \
+  --verification build=passed --verification install=passed --verification field=not-run
+```
+
+正式启动和新现场验收由现场负责人协调。
 
 首次部署选择器，使用该发布对应源码的 `tools/run_release.sh` 安装为 `$BASE/run`。切换前先核对候选验收记录，停止旧入口，验证旧导航和底盘退出，保存原链接。使用同一文件系统的临时链接替换 `current`，然后确认解析的安装目录、LiDAR、GNSS/odom、控制链和任务状态。
 

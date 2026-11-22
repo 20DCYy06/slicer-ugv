@@ -30,6 +30,8 @@
 
 ## 设备和现场配置
 
+现场底盘输入可单独保存为 `~/workspace/slicer/site/hardware.yaml`。构建及预检时显式设置 `SLICER_HARDWARE_CONFIG`，默认使用固定硬件仓的 `config.yaml`。完整安装将所选配置写到对应的 RTK/NoRTK 资源及构建记录。修改硬件输入后重新生成候选并验收。GNSS 凭据及视觉标定仍按既有外部覆盖规则管理。
+
 - 首次配置 rosdep 的 Focal 目标环境，安装 `build-essential cmake python3-rosdep python3-vcstool ros-noetic-ros-base`，执行一次 `sudo rosdep init`，随后按 README 更新及解析依赖。
 - 若访问 GitHub Raw 时连接被重置，可按镜像站说明同时配置 rosdep 源列表和 `ROSDISTRO_INDEX_URL`，继续以普通用户运行 `rosdep update --include-eol-distros --rosdistro noetic`。[中科大 rosdep 镜像说明](https://mirrors.ustc.edu.cn/help/rosdistro.html)
 - 按设备枚举确认 `deploy/udev/99-c30d.rules` 与 `80-cup-gnss.rules` 的实际匹配项。安装匹配的规则后核对 C30D 和 GNSS 的设备别名及 dialout 权限。
