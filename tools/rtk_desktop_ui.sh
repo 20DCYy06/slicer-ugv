@@ -10,15 +10,21 @@ if [[ $# != 0 ]]; then
   exit 2
 fi
 
-repo=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
-workspace=${SLICER_NATIVE_WS:-$HOME/slicer_noetic_current}
+repo=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
+workspace=$(realpath -m -- "${SLICER_NATIVE_WS:-${repo%/src/slicer-ugv}}")
 setup="$workspace/install/setup.bash"
-if [[ ! -r "$setup" ]]; then setup="$workspace/devel/setup.bash"; fi
 if [[ ! -r "$setup" ]]; then
-  printf 'No ROS overlay at %s. Select the existing RTK installation with SLICER_NATIVE_WS.\n' "$workspace" >&2
+  printf 'No installed ROS overlay at %s. Run tools/build_native.sh for this workspace.\n' "$workspace" >&2
   exit 2
 fi
+source /opt/ros/noetic/setup.bash
 source "$setup"
+if [[ $(rospack find ugv_navigation) != "$workspace/install/share/ugv_navigation" ]]; then
+  printf 'Wrong ROS overlay for ugv_navigation. Expected the installation in %s.\n' "$workspace" >&2
+  exit 2
+fi
+export SLICER_RUNTIME_DIR="${SLICER_RUNTIME_DIR:-$workspace/runtime}"
+export ROS_HOME="${ROS_HOME:-$workspace/logs/ros}"
 
 if ! [[ ${DISPLAY:-} =~ ^:[0-9]+(\.[0-9]+)?$ ]] || ! xset q >/dev/null 2>&1; then
   desktop_runtime="/run/user/$UID"
@@ -44,5 +50,5 @@ fi
 export QT_QPA_PLATFORM=xcb
 export ROS_NAMESPACE="/slicer_rtk_desktop_$$"
 export SLICER_NATIVE_WS="$workspace"
-export PYTHONPATH="$repo/src/ugv_navigation/scripts${PYTHONPATH:+:$PYTHONPATH}"
+export PYTHONPATH="$workspace/install/lib/ugv_navigation${PYTHONPATH:+:$PYTHONPATH}"
 exec python3 -s -B "$repo/tools/rtk/desktop/desktop.py" "$@"
