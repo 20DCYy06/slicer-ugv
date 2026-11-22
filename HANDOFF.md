@@ -6,8 +6,8 @@
 `current` 选中 `releases/20261122-workspace-rc1`。候选整车提交为
 `adb4313b0fb7c825e040fd25b7f1cc61624a26df`。2026-11-22 新工作区接管，实车验证了
 传感器、局部定位、NoRTK 短程、Guard/Mux 停车和手柄接管。验收后运行链已停止。
-GNSS 串口有数据，Fixed 相关验收待补。旧 v1.7 增量安装与旧源码保留用于回退，旧安装
-统一构建 SHA 未知。[现场结果和回退](docs/handoffs/RC1_FIELD_ACCEPTANCE_20261122.md) ·
+GNSS 串口有数据，Fixed 相关验收待补。日常开发从主线为新任务建立独立检出，已有任务
+继续用对应工作区。现场问题按主线分支、PR 和发布流程修复。[现场结果和回退](docs/handoffs/RC1_FIELD_ACCEPTANCE_20261122.md) ·
 [操作手册](docs/OPERATIONS.md) · [维护说明](docs/MAINTENANCE.md)
 
 - 恢复 RTK Fixed 后验收自动配准、全局纠偏、WGS84 到点与地理复核，再做飞机联合验证。
