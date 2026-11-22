@@ -3,7 +3,12 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[3] / 'Hardware/LockDown'))
+TOOLS = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(TOOLS))
+from hardware_path import hardware_root
+
+HARDWARE = hardware_root(TOOLS.parent)
+sys.path.insert(0, str(HARDWARE / 'LockDown'))
 import lock
 
 

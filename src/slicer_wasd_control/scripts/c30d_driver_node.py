@@ -3,11 +3,17 @@
 import copy,math,os,sys,time
 from pathlib import Path
 sys.dont_write_bytecode=True
-sys.path.insert(0,str(Path(__file__).resolve().parent))
-prefix=Path(__file__).resolve().parents[2]
-workspace=Path(os.environ.get('WORKSPACE2_ROOT') or (prefix if (prefix/'Hardware/Host').is_dir()
-                                                    else Path(__file__).resolve().parents[3]))
-sys.path.insert(0,str(workspace/'Hardware/Host'))
+SCRIPT = Path(__file__).resolve()
+sys.path.insert(0, str(SCRIPT.parent))
+C30D_TOOLS = SCRIPT.parent / 'c30d_tools'
+if not (C30D_TOOLS / 'Host').is_dir():
+    repository = Path(os.environ.get('WORKSPACE2_ROOT') or SCRIPT.parents[3])
+    sys.path.insert(1, str(repository / 'tools'))
+    from hardware_path import hardware_root
+
+    C30D_TOOLS = hardware_root(repository)
+sys.path.insert(1, str(C30D_TOOLS / 'Host'))
+
 from chassis import Chassis,load_config as load_host
 from chassis_commands import CommandServer
 from control_core import load_config
@@ -20,7 +26,7 @@ from std_msgs.msg import Bool
 def main():
     rospy.init_node('slicer_c30d_driver')
     c=load_config(rospy.get_param('~config_file'))
-    host=copy.deepcopy(load_host(rospy.get_param('~host_config_file',str(workspace/'Hardware/config.yaml'))))
+    host=copy.deepcopy(load_host(rospy.get_param('~host_config_file',str(C30D_TOOLS / 'config.yaml'))))
     # 导航覆盖本会话的速度和输出上限，独立工具继续使用硬件配置。
     host['speed']['linear_max']=c['max_linear'];host['speed']['angular_max']=c['max_angular']
     if 'motor_output_limit_percent' in c:
@@ -42,7 +48,7 @@ def main():
             session=Session(car,c,rospy.get_param('~wait_for_fault_clear',True))
             if session.wait_fault:
                 commands=CommandServer(host['serial']['serial_number'],session.link_recovery)
-                commands.start(workspace/'Hardware/Unlock/unlock.py')
+                commands.start(C30D_TOOLS / 'Unlock/unlock.py')
             if session.wait_fault and os.environ.get('SLICER_C30D_ENABLE_LOCK_TEST')=='1':
                 test_service=session.link_recovery.start_test_service(rospy)
             rospy.loginfo('C30D USB=%s signs=%s/%s; 0x16 vx/wz; lidar-only navigation',

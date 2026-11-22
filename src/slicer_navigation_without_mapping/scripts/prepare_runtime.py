@@ -4,16 +4,22 @@ import argparse
 import json
 import os
 from pathlib import Path
+import sys
+
 import yaml
 
-REPO = Path(__file__).resolve().parents[3]
+SCRIPT = Path(__file__).resolve()
+REPO = SCRIPT.parents[3]
+TOOLS = SCRIPT.parent if (SCRIPT.parent / 'hardware_path.py').is_file() else REPO / 'tools'
+sys.path.insert(0, str(TOOLS))
+from hardware_path import hardware_root
 BRINGUP_CONFIG = REPO / 'src/ugv_bringup/config'
 if not BRINGUP_CONFIG.is_dir():
     BRINGUP_CONFIG = Path(__file__).resolve().parents[2] / 'share/ugv_bringup/config'
 CONFIG_ROOT = BRINGUP_CONFIG / 'no_rtk'
 
 
-def generate(root,output,workspace2=None):
+def generate(root, output, workspace2=None, hardware=None):
     root=Path(root);output=Path(output);g=output/'.generated';g.mkdir(parents=True,exist_ok=True)
     (output/'config').mkdir(exist_ok=True)
     c=yaml.safe_load((root/'slicer_config.yaml').read_text());s=c['sensors'];n=c['navigation'];v=c['chassis']
@@ -47,9 +53,11 @@ def generate(root,output,workspace2=None):
     slam=yaml.safe_load((root/'templates/gmapping.yaml').read_text())
     slam.update(map_frame=c['frames']['map'],odom_frame=c['frames']['odom'],base_frame=c['frames']['base'])
     save('slam.yaml',slam)
-    # 车端设备身份和极性来自 Hardware/config.yaml。
-    workspace2=Path(workspace2 or os.environ.get('WORKSPACE2_ROOT') or REPO)
-    host=yaml.safe_load((workspace2/'Hardware/config.yaml').read_text())
+    # Snapshot the selected host configuration alongside this runtime's ROS parameters.
+    repository = workspace2 or os.environ.get('WORKSPACE2_ROOT') or REPO
+    host_yaml = (hardware_root(repository, hardware) / 'config.yaml').read_bytes()
+    host = yaml.safe_load(host_yaml)
+    (output / 'config/c30d_host.yaml').write_bytes(host_yaml)
     drive=yaml.safe_load((BRINGUP_CONFIG/'slicer_driver_body_speed.yaml').read_text())
     serial=host['serial']
     control=dict(control_mode='body_speed',base_frame=c['frames']['base'],odom_frame=c['frames']['odom'],
@@ -70,6 +78,7 @@ if __name__=='__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--root', type=Path, default=CONFIG_ROOT, help='Source NoRTK configuration directory')
     parser.add_argument('--output', type=Path, required=True, help='Generated runtime directory')
-    parser.add_argument('--workspace2', type=Path, help='Checkout containing Hardware/config.yaml')
+    parser.add_argument('--workspace2', type=Path, help='Vehicle checkout, or workspace with deps/')
+    parser.add_argument('--hardware-root', type=Path, help='Hardware checkout containing config.yaml and Host/')
     args = parser.parse_args()
-    generate(args.root, args.output, args.workspace2)
+    generate(args.root, args.output, args.workspace2, args.hardware_root)

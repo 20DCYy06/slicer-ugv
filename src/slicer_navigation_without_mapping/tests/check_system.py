@@ -6,7 +6,7 @@ import xml.etree.ElementTree as ET
 import yaml
 PACKAGE=Path(__file__).resolve().parents[1];ROOT=PACKAGE.parents[1]
 sys.path.insert(0,str(PACKAGE/'scripts'))
-from prepare_runtime import CONFIG_ROOT, generate
+from prepare_runtime import CONFIG_ROOT, generate, hardware_root
 class MigrationChecks(unittest.TestCase):
     def test_manifests(self):
         from catkin_pkg.package import parse_package
@@ -37,7 +37,8 @@ class MigrationChecks(unittest.TestCase):
             self.assertAlmostEqual(ch['wheel_diameter'],.065);self.assertAlmostEqual(ch['wheelbase'],.13);self.assertAlmostEqual(ch['track_width'],.179);self.assertAlmostEqual(ch['body_width'],.206)
             self.assertEqual(c['sensors']['base_to_laser']['xyz'],[.065,0.,.095])
             scan=yaml.safe_load((Path(d)/'.generated/scan.yaml').read_text());self.assertEqual(scan['min_height'],.05)
-            control=yaml.safe_load((Path(d)/'config/control.yaml').read_text());host=yaml.safe_load((ROOT/'Hardware/config.yaml').read_text())
+            control=yaml.safe_load((Path(d)/'config/control.yaml').read_text());host=yaml.safe_load((hardware_root(ROOT) / 'config.yaml').read_text())
+            self.assertEqual(yaml.safe_load((Path(d)/'config/c30d_host.yaml').read_text()), host)
             self.assertEqual(control['serial_number'],host['serial']['serial_number']);self.assertEqual(control['encoder_signs'],host['serial']['encoder_signs']);self.assertEqual(control['control_mode'],'body_speed')
             self.assertEqual(nav['TebLocalPlannerROS']['min_turning_radius'],0.)
             self.assertEqual(nav['TebLocalPlannerROS']['max_vel_x'],c['navigation']['max_forward'])

@@ -1,5 +1,6 @@
 """Configuration paths shared by source and Catkin install layouts."""
 from pathlib import Path
+import sys
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[2]
 if not (PACKAGE_ROOT / 'config/config.json').is_file():
@@ -8,10 +9,14 @@ if not (PACKAGE_ROOT / 'config/config.json').is_file():
 
 DEFAULT_CONFIG = PACKAGE_ROOT / 'config/config.json'
 SUPPORT_ROOT = PACKAGE_ROOT / 'support'
-if not SUPPORT_ROOT.is_dir():
+if SUPPORT_ROOT.is_dir():
+    HARDWARE = SUPPORT_ROOT / 'Hardware'
+else:
     SUPPORT_ROOT = PACKAGE_ROOT.parents[1]
+    sys.path.insert(0, str(SUPPORT_ROOT / 'tools'))
+    from hardware_path import hardware_root
 
-HARDWARE = SUPPORT_ROOT / 'Hardware'
+    HARDWARE = hardware_root(SUPPORT_ROOT)
 MANUAL = SUPPORT_ROOT / 'tools/manual'
 DEVICE_CONFIGS = {
     'hardware_config': HARDWARE / 'config.yaml',

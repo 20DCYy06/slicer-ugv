@@ -1,7 +1,11 @@
 """键盘/手柄共享逻辑，支持无硬件离线验证。"""
 import sys,math,struct,os,copy
 from pathlib import Path
-sys.path.insert(0,str(Path(__file__).resolve().parents[2]/'Hardware/Host'))
+TOOLS = Path(__file__).resolve().parents[1]
+sys.path.append(str(TOOLS))
+from hardware_path import hardware_root
+
+sys.path.insert(0, str(hardware_root(TOOLS.parent) / 'Host'))
 from chassis import Gear,Slew,load_config,Chassis,CONFIG
 EVENT=struct.Struct('<IhBB')
 def keyboard_target(keys,gear):

@@ -16,8 +16,17 @@ import threading
 import time
 import uuid
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-sys.path.append(str(Path(__file__).resolve().parents[3] / 'Hardware' / 'Host'))
+SCRIPT = Path(__file__).resolve()
+sys.path.insert(0, str(SCRIPT.parent))
+C30D_TOOLS = SCRIPT.parent / 'c30d_tools'
+if not (C30D_TOOLS / 'Host').is_dir():
+    repository = SCRIPT.parents[3]
+    sys.path.insert(1, str(repository / 'tools'))
+    from hardware_path import hardware_root
+
+    C30D_TOOLS = hardware_root(repository)
+sys.path.insert(1, str(C30D_TOOLS / 'Host'))
+
 import rospy
 import tf2_ros
 from diagnostic_msgs.msg import DiagnosticArray, DiagnosticStatus, KeyValue
@@ -182,10 +191,7 @@ def main():
         if body_mode:
             rospy.logwarn('SLC2 body_speed: SI Twist via 0x16, encoder vx + MCU IMU wz; fresh 0x93 feedback required. No host PWM limit or fallback to wheel/PWM mode.')
             if car:
-                module = Path(__file__).resolve()
-                unlock_script = module.parent / 'c30d_tools/Unlock/unlock.py'
-                if not unlock_script.is_file():
-                    unlock_script = module.parents[3] / 'Hardware/Unlock/unlock.py'
+                unlock_script = C30D_TOOLS / 'Unlock/unlock.py'
                 commands = CommandServer(c['serial_number'], recovery)
                 commands.start(unlock_script)
             if car and os.environ.get('SLICER_C30D_ENABLE_LOCK_TEST') == '1':
