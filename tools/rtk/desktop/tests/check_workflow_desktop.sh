@@ -39,20 +39,23 @@ export PYTHONPATH="$PWD/src/ugv_navigation/scripts${PYTHONPATH:+:$PYTHONPATH}"
 ./tools/rtk_desktop_ui.sh >"$root/desktop.log" 2>&1 &
 desktop=$!
 for _ in {1..40}; do
-    if xwininfo -root -tree | rg 'RTK 实时状态'; then break; fi
+    if xwininfo -root -tree | rg 'RTK 导航 RViz'; then break; fi
     if ! kill -0 "$desktop" 2>/dev/null; then cat "$root/desktop.log"; exit 1; fi
     sleep .25
 done
-xwininfo -root -tree | rg '1440x1080.*\+0\+0'
-xwininfo -root -tree | rg '480x1080.*\+1440\+0'
+xwininfo -root -tree | rg 'RTK 导航 RViz.*1920x1080.*\+0\+0'
+if xwininfo -root -tree | rg 'RTK 实时状态'; then
+    echo 'RTK controls opened a separate window'
+    exit 1
+fi
 rosnode list | rg '^/slicer_rtk_desktop_.*/slicer_rtk_desktop_'
 python3 -c 'import tkinter as tk; root=tk.Tk(); root.title("Visual Grasp Fake Tk"); root.geometry("600x420+1320+230"); root.mainloop()' >"$root/fake.log" 2>&1 &
 fake=$!
 for _ in {1..20}; do
-    if xwininfo -root -tree | rg 'Visual Grasp Fake Tk.*600x420\+12\+52'; then break; fi
+    if xwininfo -root -tree | rg 'Visual Grasp Fake Tk.*600x420\+1320\+230'; then break; fi
     sleep .25
 done
-xwininfo -root -tree | rg 'Visual Grasp Fake Tk.*600x420\+12\+52'
+xwininfo -root -tree | rg 'Visual Grasp Fake Tk.*600x420\+1320\+230'
 kill -INT "$desktop"
 wait "$desktop"
 desktop=

@@ -6,7 +6,7 @@ import threading
 import tempfile
 import time
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 import cv2
 import numpy as np
 from slicer_visual_grasp.paths import DEFAULT_CONFIG
@@ -207,6 +207,23 @@ class DetectionTests(unittest.TestCase):
 
 
 class IOTests(unittest.TestCase):
+    def test_pressure_start_recovers_from_first_ping_timeout(self):
+        device = Mock()
+        device.request.side_effect = [TimeoutError('PING'), {'pong': '1'},
+                                      {'pump': '0', 'attach': '0'}]
+        device.receive.return_value = []
+        link = PressureLink({'open_settle_s': 0., 'status_poll_s': .1,
+                             'link_refresh_s': .25}, lambda _: None)
+        with patch('slicer_visual_grasp.devices.AirGrip', return_value=device):
+            try:
+                link.start()
+                self.assertGreater(link.snapshot().stamp, 0.)
+            finally:
+                link.close()
+        self.assertEqual([entry.args[0] for entry in device.request.call_args_list],
+                         ['PING', 'PING', 'GET_STATUS'])
+        device.set_pump.assert_not_called()
+
     def test_partial_status_cannot_refresh_old_pressure(self):
         p=PressureLink({},lambda s:None)
         p.update(dict(pump='1',attach='0',system_state='SUCTION_FREE'))

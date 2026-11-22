@@ -140,27 +140,6 @@ def process_snapshot(root=Path('/proc'), uid=None):
     return groups
 
 
-def vision_has_camera(groups, root=Path('/proc')):
-    """Check the standalone visual application's V4L2 handle without opening it."""
-    if not groups:
-        return False
-    for process in root.iterdir():
-        if not process.name.isdecimal():
-            continue
-        try:
-            if process.stat().st_uid != os.geteuid() or os.getpgid(int(process.name)) not in groups:
-                continue
-            for descriptor in (process / 'fd').iterdir():
-                try:
-                    if os.readlink(descriptor).startswith('/dev/video'):
-                        return True
-                except OSError:
-                    continue
-        except OSError:
-            continue
-    return False
-
-
 class _TimedTransport(Transport):
     def make_connection(self, host):
         connection = super().make_connection(host)

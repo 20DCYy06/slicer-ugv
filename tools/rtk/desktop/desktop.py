@@ -4,9 +4,7 @@ from concurrent.futures import ThreadPoolExecutor
 import fcntl
 import os
 from pathlib import Path
-import re
 import signal
-import subprocess
 import sys
 import time
 from urllib.parse import urlparse
@@ -19,10 +17,11 @@ except ImportError:
 import rospy
 from rviz import bindings as rviz
 
-from dashboard_model import Dashboard, StableStatus, split_screen
+from dashboard_model import Dashboard, StableStatus
+from map_display import MapDisplay
 from ros_observer import Observer
 from workflow import OwnedProcess, Workflow
-from workflow_discovery import Graph, discover, get_master_uri, master_local, process_snapshot, vision_has_camera
+from workflow_discovery import Graph, discover, get_master_uri, master_local, process_snapshot
 from workflow_panel import WorkflowPanel
 
 
@@ -83,10 +82,8 @@ class ReadoutLine(QtWidgets.QLabel):
 
 
 class Readouts(QtWidgets.QWidget):
-    closing = QtCore.pyqtSignal()
-
     def __init__(self, workflow=None, cancel_pending_goal=None, submit_process_scan=None):
-        super().__init__(flags=WINDOW_FLAGS | QtCore.Qt.WindowStaysOnTopHint)
+        super().__init__()
         self.setObjectName('Dashboard')
         self.setWindowTitle('RTK 实时状态')
         self.setStyleSheet(STYLES)
@@ -157,10 +154,6 @@ class Readouts(QtWidgets.QWidget):
             readout.setFixedHeight(readout.fontMetrics().height() + 2)
             readout.update_text()
 
-    def closeEvent(self, event):
-        super().closeEvent(event)
-        self.closing.emit()
-
     def refresh(self, view, now=None):
         now = time.monotonic() if now is None else now
         stable = self.stable
@@ -193,6 +186,27 @@ class Readouts(QtWidgets.QWidget):
 
 class DesktopRviz(rviz.VisualizationFrame):
     closing = QtCore.pyqtSignal()
+    readouts_dock = None
+
+    def attach_readouts(self, readouts):
+        dock = QtWidgets.QDockWidget('RTK 实时状态', self, objectName='RTKReadouts')
+        dock.setAllowedAreas(QtCore.Qt.RightDockWidgetArea)
+        dock.setFeatures(QtWidgets.QDockWidget.NoDockWidgetFeatures)
+        title = QtWidgets.QWidget(dock)
+        title.setFixedHeight(0)
+        dock.setTitleBarWidget(title)
+        dock.setWidget(readouts)
+        self.readouts_dock = dock
+        self.addDockWidget(QtCore.Qt.RightDockWidgetArea, dock)
+        self.size_readouts()
+
+    def size_readouts(self):
+        if self.readouts_dock is not None:
+            self.readouts_dock.setFixedWidth(min(max(215, self.width() // 4), self.width() // 3))
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.size_readouts()
 
     def closeEvent(self, event):
         # Geometry and Fixed Frame are session state. Keep the preset reusable.
@@ -213,6 +227,8 @@ def make_rviz(config_path, app):
     window.setWindowTitle('RTK 导航 RViz[*]')
     window.setWindowFlags(WINDOW_FLAGS)
     window.setHideButtonVisibility(False)
+    for dock in window.findChildren(QtWidgets.QDockWidget, options=QtCore.Qt.FindDirectChildrenOnly):
+        dock.hide()
     for old_toolbar in window.findChildren(QtWidgets.QToolBar):
         old_toolbar.hide()
     # RViz keeps internal pointers to menus until its docks are destroyed.
@@ -261,36 +277,6 @@ def make_rviz(config_path, app):
     return window, manager
 
 
-def place_windows(screen, frame, dashboard):
-    area = screen.geometry()
-    left, right = split_screen(area.x(), area.y(), area.width(), area.height())
-    frame.setGeometry(*left)
-    dashboard.setGeometry(*right)
-
-
-def vision_window():
-    """The standalone Tk program has an X11 window instead of a ROS image topic."""
-    try:
-        options = dict(capture_output=True, text=True, errors='replace', timeout=1., check=True,
-                       env=dict(os.environ, LC_ALL='C'))
-        listing = subprocess.run(('xwininfo', '-root', '-tree'), **options).stdout
-        found = re.search(r'^\s*(0x[0-9a-f]+) "Visual Grasp[^\n]*', listing, re.MULTILINE)
-        if found is not None:
-            attributes = subprocess.run(('xwininfo', '-id', found[1], '-stats'), **options).stdout
-            if 'Map State: IsViewable' in attributes:
-                size = dict(re.findall(r'^\s*(Width|Height):\s+(\d+)\s*$', attributes, re.MULTILINE))
-                return int(found[1], 16), int(size.get('Width', 640)), int(size.get('Height', 480))
-    except (OSError, subprocess.SubprocessError):
-        pass
-    return None
-
-
-def desktop_probe():
-    graph = discover()
-    visual = vision_window()
-    return graph, visual, visual is not None and vision_has_camera(graph.processes.get('vision'))
-
-
 def ensure_master():
     if discover().online:
         return None
@@ -332,38 +318,33 @@ def run_desktop():
     rospy.init_node('slicer_rtk_desktop', anonymous=True, disable_signals=True)
     app = QtWidgets.QApplication(sys.argv[:1])
     board = Dashboard()
+    map_display = MapDisplay()
     observer = Observer(board)
     workflow = Workflow(board)
     executor = ThreadPoolExecutor(max_workers=2)
     dashboard = Readouts(workflow, observer.cancel_pending_goal, lambda: executor.submit(process_snapshot))
     frame, manager = make_rviz(Path(__file__).with_name('rtk_desktop.rviz'), app)
     frame.closing.connect(app.quit)
-    dashboard.closing.connect(app.quit)
+    frame.attach_readouts(dashboard)
     dashboard.workflow.calibration_active.connect(observer.set_calibration_active)
-    probe = executor.submit(desktop_probe)
+    probe = executor.submit(discover)
     next_probe = time.monotonic() + PROBE_INTERVAL_S
     next_logs = 0.
-    placed_vision = None
+    screen = app.primaryScreen()
 
-    def tile():
-        nonlocal placed_vision
-        place_windows(app.primaryScreen(), frame, dashboard)
-        placed_vision = None
+    def place_window():
+        frame.setGeometry(screen.availableGeometry())
 
-    app.primaryScreen().geometryChanged.connect(lambda _geometry: tile())
+    screen.availableGeometryChanged.connect(lambda _geometry: place_window())
+    place_window()
     frame.show()
-    dashboard.show()
-    tile()
-    QtCore.QTimer.singleShot(0, tile)
-    shortcuts = [QtWidgets.QShortcut(QtGui.QKeySequence('Escape'), parent)
-                 for parent in (frame, dashboard)]
-    for shortcut in shortcuts:
-        shortcut.activated.connect(app.quit)
+    shortcut = QtWidgets.QShortcut(QtGui.QKeySequence('Escape'), frame)
+    shortcut.activated.connect(app.quit)
     for sig in (signal.SIGINT, signal.SIGTERM):
         signal.signal(sig, lambda *_: app.quit())
 
     def service_workflow():
-        nonlocal probe, next_probe, next_logs, placed_vision
+        nonlocal probe, next_probe, next_logs
         if rospy.is_shutdown():
             app.quit()
             return
@@ -373,27 +354,16 @@ def run_desktop():
             next_logs = now + LOG_INTERVAL_S
         if probe is not None and probe.done():
             try:
-                graph, visual, camera_open = probe.result()
+                graph = probe.result()
             except Exception as error:
                 workflow.report(f'桌面状态读取失败，将重试。{error}')
-                graph, visual, camera_open = Graph(), None, False
-            workflow.update(graph, vision=camera_open, read_logs=read_logs)
-            visual_id = visual[0] if visual is not None else None
-            if visual is not None and visual_id != placed_vision:
-                _, natural_width, natural_height = visual
-                preview = QtGui.QWindow.fromWinId(visual_id)
-                if preview is not None:
-                    area = frame.geometry()
-                    width = min(natural_width, max(300, area.width() - 36))
-                    height = min(natural_height, max(220, area.height() - 84))
-                    preview.setGeometry(area.x() + 12, area.y() + 52, width, height)
-                    frame.lower()
-                    dashboard.raise_()
-            placed_vision, probe = visual_id, None
+                graph = Graph()
+            workflow.update(graph, read_logs=read_logs)
+            probe = None
         else:
             workflow.update(read_logs=read_logs)
         if probe is None and now >= next_probe:
-            probe = executor.submit(desktop_probe)
+            probe = executor.submit(discover)
             next_probe = now + PROBE_INTERVAL_S
 
     def refresh_display():
@@ -419,7 +389,6 @@ def run_desktop():
         dashboard.workflow.cancel_pending()
         manager.stopUpdate()
         frame.hide()
-        dashboard.hide()
         observer.cancel_pending_goal()
         workflow.stop_all()
         while not workflow.idle:
@@ -427,7 +396,6 @@ def run_desktop():
             time.sleep(.1)
         executor.shutdown()
         sip.delete(frame)
-        dashboard.close()
         rospy.signal_shutdown('RTK desktop closed')
 
 

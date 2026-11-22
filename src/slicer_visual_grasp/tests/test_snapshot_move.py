@@ -12,6 +12,24 @@ Q=[[200,150],[400,150],[400,290],[200,290]]
 
 
 class SnapshotTests(unittest.TestCase):
+    def test_headless_pick_times_out_on_an_observation_before_the_request(self):
+        clock = [10.]
+        camera = Mock()
+        camera.snapshot.return_value = (
+            None, Observation(1, 9.9, (300, 220), (344, 344), 1, None, Q), None, None)
+        cancel = Mock()
+        cancel.is_set.return_value = False
+        cancel.wait.side_effect = lambda duration: clock.__setitem__(0, clock[0] + duration)
+        runtime = Runtime(CFG, ROOT, camera, cancel, lambda _: None)
+        with patch('slicer_visual_grasp.pipeline.time.monotonic', side_effect=lambda: clock[0]), \
+                patch('slicer_visual_grasp.pipeline.PressureLink') as pressure, \
+                patch('slicer_visual_grasp.pipeline.Motion') as motion:
+            with self.assertRaisesRegex(TimeoutError, '等待新相机目标超时'):
+                runtime.pick(wait_for_target=True)
+        self.assertAlmostEqual(clock[0], 15.)
+        pressure.assert_not_called()
+        motion.assert_not_called()
+
     def test_visual_servo_rejects_pb15_without_sending_a_pulse(self):
         servo = Servo.__new__(Servo)
         servo.moved = False
@@ -78,6 +96,8 @@ class SnapshotTests(unittest.TestCase):
         from slicer_visual_grasp import pipeline
         clock=[0.];commands=[];camera_calls=[];pump_commands=[];poses=[];servo_pulses=[];pump_closes=[]
         attach_after = [3.19]
+        attach_until = [float('inf')]
+        pump_start_error = [None]
         interrupt_lift = [False]
         release_device = Mock()
         class Camera:
@@ -109,12 +129,14 @@ class SnapshotTests(unittest.TestCase):
             def close(self):servo_pulses.append((clock[0], 1500))
         class Pump:
             def __init__(self,*a):self.on=False;self.since=0
-            def start(self):pass
+            def start(self):
+                if pump_start_error[0] is not None:
+                    raise pump_start_error[0]
             def command(self,on):
                 self.on=on;self.since=clock[0]
                 pump_commands.append((on,tuple(poses[-1]),commands[-1]))
             def snapshot(self):
-                attached=self.on and clock[0]-self.since>=attach_after[0]
+                attached=self.on and attach_after[0] <= clock[0]-self.since < attach_until[0]
                 return Pressure(clock[0],self.on,attached,'SUCTION_ATTACHED' if attached else 'SUCTION_FREE',self.on)
             def close(self, release=False):pump_closes.append(release)
         def assert_lift(pulses, duration):
@@ -133,6 +155,16 @@ class SnapshotTests(unittest.TestCase):
             cfg = copy.deepcopy(CFG)
             cfg['airgrip_config'] = 'pump.json'
             cfg['grasp']['max_lower_s'] = 20.
+            pump_start_error[0] = TimeoutError('startup PING')
+            runtime = Runtime(cfg, root, Camera(), ClockEvent(), lambda s: None)
+            with self.assertRaisesRegex(TimeoutError, 'startup PING'):
+                runtime.pick()
+            self.assertFalse(commands, 'AirGrip startup failure must prevent chassis commands')
+            self.assertEqual(pump_commands, [])
+            self.assertEqual(servo_pulses, [])
+            self.assertEqual(pump_closes, [False])
+            pump_start_error[0] = None
+            pump_closes.clear()
             runtime = Runtime(cfg, root, Camera(), ClockEvent(), lambda s: None)
             runtime.pick()
             first_neutral = next(i for i, (_, value) in enumerate(servo_pulses) if value == 1500)
@@ -199,5 +231,13 @@ class SnapshotTests(unittest.TestCase):
             self.assertEqual(servo_pulses[-1][1], 1500)
             self.assertFalse(any(value == 2100 for _, value in servo_pulses))
             self.assertEqual(pump_closes,[False, False, False, True])
+
+            cfg['grasp']['max_lower_s'] = 20.
+            attach_until[0] = 4.
+            camera_calls.clear()
+            runtime = Runtime(cfg, root, Camera(), ClockEvent(), lambda s: None)
+            with self.assertRaisesRegex(RuntimeError, '抬升结束时未确认仍然吸附'):
+                runtime.pick()
+            self.assertTrue(runtime.needs_release)
 
 if __name__=='__main__':unittest.main()

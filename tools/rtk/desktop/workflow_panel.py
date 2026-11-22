@@ -11,7 +11,7 @@ STEPS = {
     'odom': '3. 启动起步导航 (odom)',
     'calibrate': '4. 地理配准 (直行 2.5 m)',
     'map': '5. 切换正式导航 (map)',
-    'vision': '6. 视觉伺服抓取 (摄像头)',
+    'vision': '6. 移动并抓取',
     'air': '7. 飞机通信节点',
 }
 STATUS = {'red': '未启动', 'yellow': '进行中', 'green': '已就绪'}
@@ -93,10 +93,6 @@ class WorkflowPanel(QtWidgets.QWidget):
 
         actions = QtWidgets.QHBoxLayout()
         actions.setSpacing(4)
-        self.parking = QtWidgets.QPushButton('解除停车')
-        self.parking.setFixedHeight(23)
-        self.parking.clicked.connect(self.parking_clicked)
-        actions.addWidget(self.parking)
         self.stop_button = QtWidgets.QPushButton('一键全部停止', objectName='stop_all')
         self.stop_button.setFixedHeight(23)
         self.stop_button.setToolTip('依次关闭本面板启动的进程')
@@ -206,13 +202,6 @@ class WorkflowPanel(QtWidgets.QWidget):
         self.controller.stop_all()
         self.refresh()
 
-    def parking_clicked(self):
-        self.cancel_pending()
-        if self.cancel_pending_goal is not None:
-            self.cancel_pending_goal()
-        self.controller.control(self.parking_action)
-        self.refresh()
-
     def refresh(self, now=None):
         immediate = now is None
         now = time.monotonic() if now is None else now
@@ -226,7 +215,7 @@ class WorkflowPanel(QtWidgets.QWidget):
         for key, button in self.buttons.items():
             raw_color, raw_suffix, clickable = states[key]
             color, suffix = self.stable.update(key, (raw_color, raw_suffix), now,
-                                               immediate=immediate or not clickable)
+                                               immediate=immediate or not clickable or key == 'vision')
             if key == pending_key:
                 color, suffix = 'yellow', '检查中'
             if button.property('stage') != color:
@@ -235,10 +224,12 @@ class WorkflowPanel(QtWidgets.QWidget):
                 button.style().polish(button)
             suffix = suffix or ('未完成' if key == 'calibrate' and color == 'red' else STATUS[color])
             tail = ' · ' + suffix
-            text = STEPS[key] + tail
+            title = ('6. 释放' if key == 'vision' and suffix in ('抓取完成', '需释放', '释放中')
+                     else STEPS[key])
+            text = title + tail
             metrics = button.fontMetrics()
             room = button.width() - metrics.horizontalAdvance(tail) - 15
-            rendered = metrics.elidedText(STEPS[key], QtCore.Qt.ElideRight, max(0, room)) + tail
+            rendered = metrics.elidedText(title, QtCore.Qt.ElideRight, max(0, room)) + tail
             if button.text() != rendered:
                 button.setText(rendered)
             if button.toolTip() != text:
@@ -247,9 +238,6 @@ class WorkflowPanel(QtWidgets.QWidget):
             if button.isEnabled() != clickable:
                 button.setEnabled(clickable)
         self.air_mode.setEnabled(pending_key != 'air' and states['air'][0] == 'red' and states['air'][2])
-        parked = self.controller.mux.get('manual_hold')
-        self.parking_action = 'hold' if parked is False else 'release'
-        self.parking.setText('保持停车' if self.parking_action == 'hold' else '解除停车')
         messages = list(self.controller.messages)[-3:]
         text = '\n'.join(str(line).strip().replace('\n', ' ') for line in messages)
         if self.log.toPlainText() != text:

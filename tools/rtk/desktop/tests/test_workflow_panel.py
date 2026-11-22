@@ -91,7 +91,7 @@ class WorkflowPanelTests(unittest.TestCase):
         self.assertIsNone(self.panel.confirmation)
         self.assertEqual(confirmation_states, [True, False, True, False, True, False])
 
-    def test_slow_process_scan_leaves_stop_and_parking_responsive(self):
+    def test_slow_process_scan_leaves_stop_responsive(self):
         future = Future()
         future.set_running_or_notify_cancel()
         self.panel.submit_process_scan = Mock(return_value=future)
@@ -101,8 +101,6 @@ class WorkflowPanelTests(unittest.TestCase):
         self.assertIn('检查中', self.panel.buttons['driver'].toolTip())
         self.click(self.panel.stop_button)
         self.controller.stop_all.assert_called_once_with()
-        self.click(self.panel.parking)
-        self.controller.control.assert_called_once_with('release')
         future.set_result({})
         self.app.processEvents()
         self.controller.click.assert_not_called()
@@ -161,18 +159,12 @@ class WorkflowPanelTests(unittest.TestCase):
         self.assertLessEqual(self.panel.minimumSizeHint().width(), 260)
         self.assertLessEqual(self.panel.sizeHint().height(), 310)
 
-    def test_parking_control_tracks_mux_and_passes_explicit_action(self):
-        self.assertTrue(self.panel.parking.isEnabled())
-        self.click(self.panel.parking)
-        self.controller.control.assert_called_with('release')
-        self.controller.mux = {'manual_hold': True}
+    def test_held_grasp_button_switches_to_release_and_parking_control_is_absent(self):
+        self.controller.states['vision'] = ('green', '抓取完成', True)
         self.panel.refresh()
-        self.click(self.panel.parking)
-        self.controller.control.assert_called_with('release')
-        self.controller.mux = {'manual_hold': False}
-        self.panel.refresh()
-        self.click(self.panel.parking)
-        self.controller.control.assert_called_with('hold')
+        self.assertTrue(self.panel.buttons['vision'].text().startswith('6. 释放'))
+        self.assertNotIn('解除停车', [button.text() for button in
+                                       self.panel.findChildren(QtWidgets.QPushButton)])
 
 
 if __name__ == '__main__':

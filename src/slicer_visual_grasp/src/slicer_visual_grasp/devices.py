@@ -9,7 +9,7 @@ import time
 from .paths import HARDWARE, MANUAL, device_config
 
 sys.path[:0] = [str(HARDWARE / 'Host'), str(MANUAL)]
-from airgrip.keyboard import AirGrip
+from airgrip.keyboard import AirGrip, ping_on_open
 from airgrip.protocol import parse_kv
 from .logic import Pressure
 from chassis import Chassis,Slew,load_config,status,body_status
@@ -47,6 +47,7 @@ class PressureLink:
         self.ready = threading.Event()
         self.quit = threading.Event()
         self.release_on_close = False
+        self.release_confirmed = False
         self.thread = threading.Thread(target=self.run, daemon=True, name='pressure-link')
         self.on_ack = False
 
@@ -87,8 +88,11 @@ class PressureLink:
             # USB CDC刚打开时首条命令可能丢失；只在连接时等待DTR生效。
             if self.quit.wait(self.cfg.get('open_settle_s', .5)):
                 return
-            self.log('[AIRGRIP] '+str(dev.request('PING')))
-            self.update(dev.request('GET_STATUS'))
+            self.log('[AIRGRIP] '+str(ping_on_open(dev)))
+            status = dev.request('GET_STATUS')
+            if not all(key in status for key in ('pump', 'attach')):
+                raise RuntimeError('气泵初始状态缺少抽气或吸附反馈')
+            self.update(status)
             self.ready.set()
             last_link = last_poll = 0.0
             while not self.quit.is_set():
@@ -103,7 +107,7 @@ class PressureLink:
                     self.update(dev.request('GET_STATUS'))
                     self.log('[AIRGRIP] 泵'+('启动' if command else '释放')+'已确认')
                 now = time.monotonic()
-                if now-last_link >= self.cfg['link_refresh_s']:
+                if pump_requested and now-last_link >= self.cfg['link_refresh_s']:
                     dev.send('SET_LINK', 'connected=1')
                     last_link = now
                 if now-last_poll >= self.cfg['status_poll_s']:
@@ -125,6 +129,7 @@ class PressureLink:
                     if self.release_on_close or (pump_requested and self.error):
                         try:
                             dev.set_pump(False)
+                            self.release_confirmed = True
                             self.log('[STOP] 本次气泵已关闭')
                         except Exception as exc:
                             self.log('[STOP_ERROR] 气泵关停未确认：'+str(exc))
@@ -136,6 +141,7 @@ class PressureLink:
         self.quit.set()
         # 在任务工作线程中等待串口真正释放，关泵按钮随后才能建立新连接。
         self.thread.join()
+        return self.release_confirmed
 
 
 class Motion:

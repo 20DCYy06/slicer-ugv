@@ -14,6 +14,8 @@ class Process:
     def __init__(self):
         self.status = None
         self.stopped = False
+        self.log_lines = []
+        self.sent = []
 
     def poll(self):
         return self.status
@@ -22,7 +24,11 @@ class Process:
         self.stopped = True
 
     def lines(self):
-        return []
+        result, self.log_lines = self.log_lines, []
+        return result
+
+    def send(self, command):
+        self.sent.append(command)
 
 
 class OwnedProcessTests(unittest.TestCase):
@@ -56,8 +62,8 @@ class WorkflowTests(unittest.TestCase):
         self.starts.append((key, argv, env, proc))
         return proc
 
-    def refresh(self, vision=False):
-        self.workflow.update(self.graph, vision=vision)
+    def refresh(self):
+        self.workflow.update(self.graph)
 
     def sample(self, **samples):
         for key, value in samples.items():
@@ -252,29 +258,51 @@ class WorkflowTests(unittest.TestCase):
         self.assertFalse(driver.stopped)
         self.assertIn('请先停止导航', self.workflow.messages[-1])
 
-    def test_visual_environment_and_owned_stop(self):
+    def test_first_grasp_click_runs_headless_and_second_click_releases(self):
         self.workflow.click('vision')
         key, argv, env, proc = self.starts[-1]
         self.assertEqual(key, 'vision')
-        self.assertEqual(list(argv), ['rosrun', 'slicer_visual_grasp', 'run.sh', '--run'])
-        for name in ('DISPLAY', 'XAUTHORITY', 'ROS_MASTER_URI', 'ROS_IP'):
-            self.assertEqual(env[name], self.env[name])
-        self.assertEqual(env['VISUAL_GRASP_DISPLAY'], self.env['DISPLAY'])
+        self.assertEqual(Path(argv[0]).name, 'run.sh')
+        self.assertEqual(argv[1:], ('--headless', '--pick-on-start'))
         self.assertNotIn('ROS_NAMESPACE', env)
-        self.refresh(vision=True)
+        self.assertEqual(self.color('vision'), 'yellow')
+        self.workflow.click('vision')
+        self.assertEqual(proc.sent, [])
+        proc.log_lines = ['GRASP_STATE held']
+        self.refresh()
         self.assertEqual(self.color('vision'), 'green')
         self.workflow.click('vision')
+        self.assertEqual(proc.sent, ['release'])
+        proc.log_lines = ['GRASP_STATE idle']
+        self.refresh()
         self.assertTrue(proc.stopped)
+        proc.status = 0
+        self.refresh()
+        self.assertEqual(self.workflow.states['vision'][:2], ('red', '已释放'))
 
-    def test_vision_camera_ready_reports_serial_owner_until_driver_exits(self):
+    def test_failed_worker_with_possible_attachment_offers_release_first(self):
+        self.workflow.click('vision')
+        proc = self.starts[-1][3]
+        proc.log_lines = ['GRASP_STATE held']
+        self.refresh()
+        proc.status = 1
+        self.refresh()
+        self.assertEqual(self.workflow.states['vision'][:2], ('yellow', '需释放'))
+        self.workflow.click('vision')
+        another = self.starts[-1][3]
+        self.assertEqual(self.starts[-1][1][1:], ('--headless',))
+        another.log_lines = ['GRASP_STATE recovery']
+        self.refresh()
+        self.assertEqual(another.sent, ['release'])
+
+    def test_grasp_does_not_start_under_existing_serial_owner(self):
         self.graph.publishers['/wheel/odom'] = {'/slicer_c30d_driver'}
         self.workflow.click('vision')
-        self.assertIn('底盘串口', self.workflow.messages[-1])
-        self.refresh(vision=True)
-        self.assertEqual(self.workflow.states['vision'][:2], ('yellow', '底盘串口占用'))
+        self.assertEqual(self.starts, [])
+        self.assertEqual(self.workflow.states['vision'][:2], ('yellow', '请先停止导航和底盘'))
         self.graph.publishers.clear()
-        self.refresh(vision=True)
-        self.assertEqual(self.workflow.states['vision'][:2], ('green', '相机就绪'))
+        self.workflow.click('vision')
+        self.assertEqual(self.starts[-1][0], 'vision')
 
     def test_air_selection_optional_and_external_executor_exclusion(self):
         self.assertEqual(self.color('air'), 'red')
@@ -284,7 +312,15 @@ class WorkflowTests(unittest.TestCase):
         self.graph.air_mode = 'v2'
         self.sample(v2={'phase': 'IDLE'})
         self.refresh()
+        self.assertEqual(self.color('air'), 'yellow')
+        self.graph.publishers['/air_ground/v2/uav_state'] = {'/ag_uav_gateway'}
+        self.sample(aircraft_v2='/ag_uav_gateway')
+        self.refresh()
         self.assertEqual(self.color('air'), 'green')
+        self.clock += 3.
+        self.sample(v2={'phase': 'IDLE'})
+        self.refresh()
+        self.assertEqual(self.color('air'), 'yellow')
         self.workflow.stop('air')
         self.assertTrue(self.starts[-1][3].stopped)
         self.starts[-1][3].status = 0
@@ -294,23 +330,53 @@ class WorkflowTests(unittest.TestCase):
         self.workflow.click('air', mode='v2')
         self.assertEqual(len(self.starts), 1)
 
-    def test_parking_and_stop_all_provide_feedback_without_starting_nodes(self):
-        self.workflow.control('release')
-        self.assertIn('等待 Mux', self.workflow.messages[-1])
+    def test_v1_green_requires_live_test_topic_evidence_from_a_current_publisher(self):
+        self.graph.air_mode = 'v1'
+        self.sample(v1={'phase': 'IDLE'}, aircraft_v1='/gone')
+        self.graph.publishers['/uav/test'] = {'/uav_link'}
+        self.refresh()
+        self.assertEqual(self.workflow.states['air'][:2], ('yellow', '车端已启动 · 等飞机'))
+        self.sample(aircraft_v1='/uav_link')
+        self.refresh()
+        self.assertEqual(self.workflow.states['air'][:2], ('green', '收到对端消息'))
+        self.clock += 3.
+        self.sample(v1={'phase': 'IDLE'}, aircraft_v1_command=True)
+        self.refresh()
+        self.assertEqual(self.workflow.states['air'][:2], ('green', '收到对端消息'))
+
+    def test_owned_idle_navigation_releases_only_generation_bound_startup_hold(self):
+        self.workflow.click('odom')
+        self.prerequisites()
+        mux = dict(manual_hold=True, teleop_fresh=False, emergency_stop_latched=False,
+                   hold_reason='manual_takeover', mux_instance_id='mux-a', takeover_generation=3)
+        self.sample(mux=mux)
+        self.refresh()
+        self.assertEqual(len(self.starts), 1)
+        self.sample(mux=dict(mux, hold_reason='startup', emergency_stop_latched=True))
+        self.refresh()
+        self.assertEqual(len(self.starts), 1)
+        self.sample(mux=dict(mux, hold_reason='startup'))
+        self.refresh()
+        key, argv, _, proc = self.starts[-1]
+        self.assertEqual(key, 'startup_release')
+        self.assertEqual(argv[-4:], ('--expected-mux-instance', 'mux-a', '--expected-generation', '3'))
         self.workflow.stop_all()
-        self.assertIn('本面板没有', self.workflow.messages[-1])
-        self.assertEqual(self.starts, [])
+        self.assertTrue(proc.stopped)
+        proc.status = -2
+        self.refresh()
+        # The cached Mux state may still be startup-held while release is in flight.
+        self.assertEqual(self.starts[-1][0], 'stop_nav_hold')
+        self.assertFalse(self.starts[0][3].stopped)
 
     def test_stop_all_signals_only_owned_groups_in_order(self):
         self.workflow.click('sensors')
         self.workflow.click('driver')
-        self.workflow.click('vision')
         self.graph.air_mode = 'v1'
         self.refresh()
         self.workflow.stop_all()
-        for key in ('vision', 'driver', 'sensors'):
+        for key in ('driver', 'sensors'):
             active = next(proc for step, _, _, proc in self.starts if step == key)
             self.assertTrue(active.stopped)
             active.status = 0
             self.refresh()
-        self.assertEqual(len(self.starts), 3)
+        self.assertEqual(len(self.starts), 2)

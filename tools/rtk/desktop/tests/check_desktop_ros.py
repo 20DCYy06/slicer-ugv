@@ -22,7 +22,7 @@ from std_msgs.msg import Bool, String
 
 DIRECTORY = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(DIRECTORY))
-from desktop import Dashboard, Observer, Readouts, make_rviz, place_windows, sip
+from desktop import Dashboard, Observer, Readouts, make_rviz, sip
 from ros_observer import WAYPOINT_CLICK
 
 
@@ -35,9 +35,10 @@ def main():
     dashboard = Readouts()
     window, manager = make_rviz(DIRECTORY/'rtk_desktop.rviz', app)
     screen = app.primaryScreen()
+    window.attach_readouts(dashboard)
+    window.setGeometry(screen.availableGeometry())
     window.show()
-    dashboard.show()
-    place_windows(screen, window, dashboard)
+    app.processEvents()
     goals = []
     clicks = []
     subscriptions = [
@@ -105,10 +106,12 @@ def main():
     server = None
     try:
         rospy.set_param('/ugv/move_base/global_costmap/global_frame', 'odom')
-        visible = screen.geometry()
-        assert window.geometry().width() + dashboard.geometry().width() == visible.width()
-        assert window.geometry().right() + 1 == dashboard.geometry().left()
-        assert window.geometry().height() == dashboard.geometry().height() == visible.height()
+        visible = screen.availableGeometry()
+        assert window.geometry() == visible
+        assert dashboard.window() is window
+        assert window.dockWidgetArea(window.readouts_dock) == QtCore.Qt.RightDockWidgetArea
+        assert window.readouts_dock.geometry().left() >= window.width() * .72
+        assert dashboard.isVisible()
         spoof = rospy.Publisher('/ugv/move_base/status', GoalStatusArray, queue_size=1)
         for _ in range(5):
             spoof.publish(GoalStatusArray(header=dict_header(rospy.Time.now())))
@@ -207,7 +210,6 @@ def main():
         manager.stopUpdate()
         window.hide()
         sip.delete(window)
-        dashboard.close()
         for subscription in subscriptions:
             subscription.unregister()
         rospy.signal_shutdown('isolated GUI test complete')

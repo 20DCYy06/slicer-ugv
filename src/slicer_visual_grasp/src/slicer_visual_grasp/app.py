@@ -218,10 +218,15 @@ class App:
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--run', action='store_true', help='启用动作按钮；程序启动时仍不动作')
-    parser.add_argument('--check', action='store_true', help='仅检查依赖和配置，不打开相机/串口')
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument('--run', action='store_true', help='启用动作按钮；程序启动时仍不动作')
+    mode.add_argument('--check', action='store_true', help='仅检查依赖和配置，不打开相机/串口')
+    mode.add_argument('--headless', action='store_true', help='通过标准输入执行 pick / release')
+    parser.add_argument('--pick-on-start', action='store_true', help='仅在无窗口模式启动时抓取一次')
     parser.add_argument('--config', type=Path)
     args = parser.parse_args()
+    if args.pick_on_start and not args.headless:
+        parser.error('--pick-on-start 需要 --headless')
     config_home = Path(os.environ.get('XDG_CONFIG_HOME') or Path.home() / '.config')
     path = args.config.resolve() if args.config else config_home / 'slicer_visual_grasp/config.json'
     read_path = DEFAULT_CONFIG if args.config is None and not path.is_file() else path
@@ -239,7 +244,7 @@ def main():
     try:
         fcntl.flock(instance_lock.fileno(),fcntl.LOCK_EX|fcntl.LOCK_NB)
     except BlockingIOError:
-        raise RuntimeError('已有Visual Grasp窗口运行，请使用原窗口或先关闭它，避免重复占用相机')
+        raise RuntimeError('已有 Visual Grasp 实例运行，请先关闭它，避免重复占用相机')
     instance_lock.seek(0)
     instance_lock.truncate()
     instance_lock.write(str(os.getpid())+'\n')
@@ -252,6 +257,16 @@ def main():
     fault_file=open(folder/'thread_stacks.log','a')
     faulthandler.enable(file=fault_file,all_threads=True)
     faulthandler.register(signal.SIGUSR1,file=fault_file,all_threads=True)
+    if args.headless:
+        from .headless import run
+
+        def log(text):
+            logger.info(text)
+            print(text, flush=True)
+
+        camera = Camera(cfg['camera'], cfg['target'], path.parent)
+        run(Runtime(cfg, path.parent, camera, threading.Event(), log), args.pick_on_start)
+        return
     win = tk.Tk()
     app = App(win, cfg, path.parent, args.run, config_path=path)
     def exit_signal(signum, frame):
@@ -269,4 +284,6 @@ if __name__ == '__main__':
         main()
     except Exception as exc:
         print('[ERROR]', exc, file=sys.stderr)
+        if '--headless' in sys.argv[1:]:
+            print('GRASP_STATE error', flush=True)
         sys.exit(1)

@@ -22,11 +22,6 @@ REGISTRATION_REASONS = {
 NAV_STATUS_AGE = 1.5
 
 
-def split_screen(x, y, width, height):
-    left = width * 3 // 4
-    return (x, y, left, height), (x + left, y, width - left, height)
-
-
 def as_count(value):
     try:
         count = int(value)
@@ -171,7 +166,7 @@ def manual_goal_block(frame, driver, mux, statuses, geographic, tasks, local_pen
     if driver is not True:
         return '底盘未就绪'
     if not mux or mux.get('manual_hold') is not False or mux.get('emergency_stop_latched') is not False:
-        return 'Mux 保持停车或急停锁存，请使用原有操作流程'
+        return 'Mux 保持停车或急停锁存，请查看右栏 Mux 状态'
     if geographic and geographic.get('state') == 'collecting':
         return '正在地理配准，等待配准动作结束'
     if frame == 'map' and (not geographic or geographic.get('state') != 'ready'

@@ -16,6 +16,7 @@ from move_base_msgs.msg import MoveBaseActionGoal
 from nav_msgs.msg import OccupancyGrid, Odometry
 from sensor_msgs.msg import LaserScan
 from std_msgs.msg import Bool, String
+from slicer_air_ground_msgs.msg import Command
 
 from geographic_core import enu_to_geodetic
 from dashboard_model import ACTIVE_ACTION_STATES, NAV_STATUS_AGE, coordinates, manual_goal_block
@@ -79,6 +80,9 @@ class Observer:
             (ACTION + '/goal', MoveBaseActionGoal, self.action_goal),
             ('/air_ground/state', String, lambda m: self.task('v1', m, 'updated_stamp')),
             ('/air_ground/v2/state', String, lambda m: self.task('v2', m, 'updated_at')),
+            ('/air_ground/v2/uav_state', String, self.aircraft_v2),
+            ('/uav/test', String, self.aircraft_v1),
+            ('/air_ground/command', Command, self.aircraft_v1_command),
             (GOAL_CLICK, PoseStamped, self.manual_goal),
             (WAYPOINT_CLICK, PoseStamped, self.waypoint),
         ):
@@ -202,6 +206,25 @@ class Observer:
         value = json_sample(message, timestamp)
         if value is not None:
             self.board.record(key, value)
+
+    def aircraft_v1(self, message):
+        header = getattr(message, '_connection_header', None) or {}
+        if header.get('latching') == '0' and message.data.strip():
+            self.board.record('aircraft_v1', header.get('callerid'))
+
+    def aircraft_v1_command(self, message):
+        header = getattr(message, '_connection_header', None) or {}
+        local = self.board.recent('v1', time.monotonic())
+        if (header.get('latching') == '0' and message.protocol_version == 1 and message.request_id
+                and local and message.server_id == local.get('server_id')):
+            self.board.record('aircraft_v1_command', True)
+
+    def aircraft_v2(self, message):
+        value = json_sample(message, 'updated_at')
+        header = getattr(message, '_connection_header', None) or {}
+        if value and value.get('version') == 2 and value.get('vehicle_id') == 'uav':
+            age = max(0., rospy.Time.now().to_sec() - value['updated_at'])
+            self.board.record('aircraft_v2', header.get('callerid'), time.monotonic() - age)
 
     def origin(self, now):
         geo = self.board.recent('geographic', now, NAV_STATUS_AGE) or {}

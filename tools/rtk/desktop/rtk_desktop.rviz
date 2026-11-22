@@ -13,12 +13,19 @@ Visualization Manager:
       Plane Cell Count: 80
       Reference Frame: <Fixed Frame>
     - Class: rviz/Map
+      Name: 黑白占据地图
+      Enabled: true
+      Topic: rtk_display_map
+      Alpha: 1
+      Color Scheme: map
+      Draw Behind: true
+    - Class: rviz/Map
       Name: 全局代价地图
       Enabled: true
       Topic: /ugv/move_base/global_costmap/costmap
       Alpha: 0.52
       Color Scheme: costmap
-      Draw Behind: true
+      Draw Behind: false
     - Class: rviz/Map
       Name: 局部代价地图
       Enabled: true
@@ -29,8 +36,8 @@ Visualization Manager:
       Name: MID360 扫描
       Enabled: true
       Topic: /scan
-      Alpha: 0.85
-      Color: 224; 238; 249
+      Alpha: 0.95
+      Color: 28; 122; 211
       Color Transformer: FlatColor
       Position Transformer: XYZ
       Style: Flat Squares

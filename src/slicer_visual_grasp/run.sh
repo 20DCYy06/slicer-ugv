@@ -13,7 +13,7 @@ export PYTHONDONTWRITEBYTECODE=1
 case "${1:-}" in
     --test)
         cd "$HERE/tests"
-        exec /usr/bin/python3 -s -m unittest -v test_visual_grasp test_two_point test_fixed_origin test_snapshot_move
+        exec /usr/bin/python3 -s -m unittest -v test_visual_grasp test_two_point test_fixed_origin test_snapshot_move test_headless
         ;;
     --ui-test)
         cd "$HERE/tests"
@@ -27,6 +27,13 @@ for argument in "$@"; do
     esac
 done
 
+source "$serial_tools/serial_group.sh"
+for argument in "$@"; do
+    if [[ "$argument" == --headless ]]; then
+        run_serial_tool /usr/bin/python3 -s -m slicer_visual_grasp.app "$@"
+    fi
+done
+
 # 使用Jetson本地桌面；不继承SSH的localhost:10.0，也不使用sudo/xhost放开权限。
 export DISPLAY="${VISUAL_GRASP_DISPLAY:-:0}"
 auth="/run/user/$(id -u)/gdm/Xauthority"
@@ -37,5 +44,4 @@ if [[ ! -r "$auth" ]]; then
 fi
 export XAUTHORITY="$auth"
 
-source "$serial_tools/serial_group.sh"
 run_serial_tool /usr/bin/python3 -s -m slicer_visual_grasp.app "$@"

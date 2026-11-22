@@ -76,9 +76,27 @@ class FieldLaunchTests(unittest.TestCase):
         self.assertAlmostEqual(planner['max_vel_theta'], math.pi / 4 if field else .25)
         if field:
             source = Path(params['/slicer_nav_arc_guard/config_file'].value)
-            effective = planner_limits(yaml.safe_load(source.read_text())['navigation'], plugin, planner)
+            source_config = yaml.safe_load(source.read_text())
+            effective = planner_limits(source_config['navigation'], plugin, planner)
             self.assertEqual(effective['max_forward'], .8)
             self.assertAlmostEqual(effective['max_angular'], math.pi / 4)
+            timeout = params['/slicer_nav_arc_guard/command_timeout'].value
+            speed = effective['max_forward']
+            travel = speed * (speed / effective['accel_linear'] + timeout)
+            local = '/ugv/move_base/local_costmap/'
+            radius = max(math.hypot(*vertex) for vertex in params[local + 'footprint'].value)
+            grid_period = (1 / params[local + 'update_frequency'].value
+                           + 1 / params[local + 'publish_frequency'].value)
+            # Allow one cell for rounding and nominal update/publication lag.
+            required_radius = travel + radius + params[local + 'resolution'].value + speed * grid_period
+            for axis in ('width', 'height'):
+                self.assertGreater(params[local + axis].value / 2, required_radius)
+            laser_x, laser_y, _ = source_config['sensors']['base_to_laser']['xyz']
+            scan = local + 'obstacle_layer/scan/'
+            self.assertGreaterEqual(params[scan + 'raytrace_range'].value,
+                                    required_radius + math.hypot(laser_x, laser_y))
+            self.assertGreaterEqual(params[scan + 'obstacle_range'].value,
+                                    params[scan + 'raytrace_range'].value)
         self.assertEqual(params['/ugv/move_base/DWAPlannerROS/min_vel_x'].value, 0.0)
         self.assertFalse(params['/ugv/move_base/recovery_behavior_enabled'].value)
         self.assertEqual(params['/ugv/move_base/recovery_behaviors'].value, [])
@@ -121,8 +139,6 @@ class FieldLaunchTests(unittest.TestCase):
         self.assertTrue(p[prefix + 'GlobalPlanner/allow_unknown'].value)
         self.assertEqual(p[prefix + 'local_costmap/global_frame'].value, 'odom')
         self.assertTrue(p[prefix + 'local_costmap/rolling_window'].value)
-        self.assertEqual(p[prefix + 'local_costmap/width'].value, 4.0)
-        self.assertEqual(p[prefix + 'local_costmap/height'].value, 4.0)
         self.assertTrue(p[prefix + 'local_costmap/track_unknown_space'].value)
 
     def test_bootstrap_odom_profile_remains_explicit(self):
@@ -143,6 +159,8 @@ class FieldLaunchTests(unittest.TestCase):
         self.assertEqual(config.params['/ugv/move_base/global_costmap/global_frame'].value, 'map')
         self.assertFalse(config.params['/ugv/move_base/global_costmap/rolling_window'].value)
         self.assertTrue(config.params['/ugv/move_base/global_costmap/static_layer/subscribe_to_updates'].value)
+        self.assertEqual(config.params['/ugv/move_base/local_costmap/width'].value, 4.0)
+        self.assertEqual(config.params['/ugv/move_base/local_costmap/height'].value, 4.0)
 
     def test_explicit_depth_starts_processor_and_camera_without_static_map_dependency(self):
         config = load('slicer_field_navigation.launch', ['enable_depth:=true'])

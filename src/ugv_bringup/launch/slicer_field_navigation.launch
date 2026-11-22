@@ -44,6 +44,17 @@
       - {name: inflation_layer, type: 'costmap_2d::InflationLayer'}
     </rosparam>
   </group>
+  <!-- At 0.8 m/s the Guard checks 3.6 m of travel plus the footprint.
+       Allow room for rolling grid updates and publication between checks.
+       Mark lidar obstacles throughout the area lidar is allowed to clear. -->
+  <rosparam unless="$(arg mapping)" ns="ugv/move_base/local_costmap">
+    width: 9.0
+    height: 9.0
+    obstacle_layer:
+      scan:
+        obstacle_range: 4.5
+        raytrace_range: 4.5
+  </rosparam>
   <!-- The Guard reads final planner limits at startup; restart navigation after edits. -->
   <rosparam if="$(eval arg('cruise_config') != '')" command="load"
             ns="ugv/move_base" file="$(arg cruise_config)"/>

@@ -3,14 +3,10 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from dashboard_model import Dashboard, StableStatus, coordinates, manual_goal_block, split_screen
+from dashboard_model import Dashboard, StableStatus, coordinates, manual_goal_block
 
 
 class DashboardTests(unittest.TestCase):
-    def test_split_covers_odd_width_with_monitor_offset(self):
-        self.assertEqual(split_screen(-1919, 25, 1919, 1000),
-                         ((-1919, 25, 1439, 1000), (-480, 25, 480, 1000)))
-
     def test_fix_quality_and_expired_sample(self):
         board = Dashboard()
         for number, name in ((4, 'FIXED'), (5, 'FLOAT'), (1, 'SINGLE'), (2, 'DGPS'), (0, 'NO FIX')):
