@@ -17,6 +17,28 @@ if [[ "$repo" != "$workspace/src/slicer-ugv" ]]; then
     exit 2
 fi
 
+python3 - "$repo/dependencies.repos" "$workspace" <<'PY_DEPS'
+from pathlib import Path
+import re
+import subprocess
+import sys
+
+import yaml
+
+manifest, workspace = map(Path, sys.argv[1:])
+for relative, entry in yaml.safe_load(manifest.read_text())['repositories'].items():
+    expected = entry['version']
+    if entry['type'] != 'git' or not re.fullmatch(r'[0-9a-f]{40}', expected):
+        sys.exit(f'Expected a full Git commit in dependencies.repos for {relative}.')
+    try:
+        actual = subprocess.check_output(
+            ['git', '-C', str(workspace / relative), 'rev-parse', 'HEAD'], text=True).strip()
+    except subprocess.CalledProcessError:
+        sys.exit(f'Missing dependency checkout: {relative}')
+    if actual != expected:
+        sys.exit(f'{relative} is at {actual}, expected {expected}.')
+PY_DEPS
+
 packages=$(python3 - "$workspace/src" <<'PY'
 from pathlib import Path
 import sys
