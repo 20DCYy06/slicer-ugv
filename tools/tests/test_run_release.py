@@ -143,6 +143,15 @@ printf '%s\n' "$0" "$@" "$TEST_SELECTED_OVERLAY" "$SLICER_NO_RTK_RUNTIME" \
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(result.stdout, '')
 
+    def test_modified_source_is_not_a_valid_release(self):
+        release, checkout, _ = self.release('release-a')
+        self.select(release)
+        subprocess.run(['git', '-C', str(checkout), 'add', 'tools/rtk_desktop_ui.sh'], check=True)
+        result = self.dispatch('rtk')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('modified tracked files', result.stderr)
+        self.assertFalse((self.root / 'site').exists())
+
     def test_stale_installed_setup_cannot_activate_a_different_overlay(self):
         release, _, _ = self.release('release-a')
         self.select(release)
