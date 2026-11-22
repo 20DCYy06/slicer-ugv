@@ -1,4 +1,4 @@
-"""静止单帧规划：已知7×10cm平面→底盘XY→编码器/IMU闭环执行。"""
+"""视觉位移规划：通过已知 7×10 cm 平面换算底盘 XY，并由编码器与 IMU 跟踪。"""
 import math
 import cv2
 import numpy as np
@@ -24,7 +24,7 @@ def surface_quad(contour):
 
 def make_plan(obs,camera,cfg):
     if obs.center is None or obs.nozzle_center is None or obs.surface_quad is None:
-        raise ValueError('需要同一静止画面中的物体中心、固定吸嘴原点及物体四角')
+        raise ValueError('需要同一画面中的物体中心、固定吸嘴原点及物体四角')
     q=np.asarray(obs.surface_quad,np.float32)
     if q.shape!=(4,2) or not np.isfinite(q).all():raise ValueError('物体四角无效')
     edge0=(np.linalg.norm(q[1]-q[0])+np.linalg.norm(q[3]-q[2]))/2
@@ -48,18 +48,11 @@ def make_plan(obs,camera,cfg):
     if np.dot(l,mapped[3]-mapped[0])<0:l=-l
     xy=[float(np.dot(delta,f)),float(np.dot(delta,l))]
     if not np.isfinite(xy).all():raise ValueError('平面位移换算无效')
-    # 遮挡前锁定的方向只计算一次。补偿实测的接近距离偏差，运动中不再找框。
-    vision_xy=xy[:]
-    extra=float(cfg.get('approach_extra_m',0.0))
-    if not math.isfinite(extra) or extra<0:raise ValueError('靠近补偿必须是非负米数')
-    distance=math.hypot(*xy)
-    if distance>1e-9:xy=[value*(distance+extra)/distance for value in xy]
-    return dict(mode='stationary_single_snapshot',frame_seq=obs.seq,
+    return dict(mode='periodic_visual_feedback',frame_seq=obs.seq,
                 red_px=list(obs.nozzle_center),green_px=list(obs.center),
                 pixel_vector=(np.asarray(obs.center)-origin).tolist(),
                 surface_quad_px=q.tolist(),surface_size_m=[long,short],
                 forward_image_direction=cfg['forward_image_direction'],body_xy_m=xy,
-                vision_body_xy_m=vision_xy,approach_extra_m=extra if distance>1e-9 else 0.0,
                 camera_device=camera['device'])
 
 

@@ -13,6 +13,12 @@ from .paths import device_config
 
 POST_GRASP_LIFT_S = 2.0
 TARGET_WAIT_S = 5.0
+VISUAL_UPDATE_S = 1.0
+ALIGNMENT_TIMEOUT_S = 60.0
+
+
+class StaleObservation(RuntimeError):
+    """The camera has not published a usable new frame yet."""
 
 
 def save_json(path, value, *, durable=False):
@@ -74,16 +80,18 @@ class Runtime:
                 'travel_unknown': self.travel_unknown if travel_unknown is None else travel_unknown,
             }, durable=True)
 
-    def observation(self, since=0.):
+    def observation(self, since=0., *, after_seq=0, allow_missing=False):
         frame, obs, _, error = self.camera.snapshot()
-        self.last_observation_frame=frame
         if error:
             raise RuntimeError(error)
-        if (obs.center is None or obs.stamp < since
+        if (obs.seq <= after_seq or not math.isfinite(obs.stamp) or obs.stamp < since
                 or time.monotonic()-obs.stamp > self.cfg['alignment']['observation_max_age_s']):
-            raise RuntimeError('目标丢失或相机画面过期；停止本次操作，请重新选框')
-        if self.cfg['alignment'].get('two_point',False) and obs.nozzle_center is None:
-            raise RuntimeError('吸嘴模板未匹配；检查红色吸嘴框或模板区域配置')
+            raise StaleObservation('相机画面过期或尚无新帧')
+        if obs.center is None and not allow_missing:
+            raise RuntimeError('未识别到绿框，请重新选框')
+        if obs.nozzle_center is None and (obs.center is not None or self.cfg['alignment'].get('two_point', False)):
+            raise RuntimeError('未识别到吸嘴红点，请检查原点配置')
+        self.last_observation_frame = frame
         return obs
 
     def wait_for_observation(self, since):
@@ -142,43 +150,111 @@ class Runtime:
         if time.monotonic() - pressure.stamp > self.cfg['grasp']['status_max_age_s']:
             raise RuntimeError('气泵状态反馈过期')
 
+    def wait_for_motion_frame(self, motion, pump, since, after_seq=0):
+        deadline = since + self.cfg['alignment']['observation_max_age_s']
+        while True:
+            self.check_cancelled()
+            self.require_idle_pump(pump)
+            try:
+                return self.observation(since, after_seq=after_seq, allow_missing=True)
+            except StaleObservation as exc:
+                if time.monotonic() >= deadline:
+                    raise TimeoutError('到位复核或起步等待新相机画面超时') from exc
+                motion.tick()  # 等待新画面时，继续发送零速。
+
     def move_to_target(self, pump, since):
         from .snapshot_move import make_plan, LockedMove
+
         cfg = self.cfg['snapshot_move']
+        tolerance = float(self.cfg['alignment']['tolerance_px'])
+        if not math.isfinite(tolerance) or tolerance <= 0:
+            raise ValueError('红绿中心距离阈值必须是正数')
         self.check_cancelled()
-        motion = Motion(self.cfg,self.root,self.cancel,self.log)
+        deadline = time.monotonic() + ALIGNMENT_TIMEOUT_S
+        moving_max_age = min(self.cfg['alignment']['observation_max_age_s'], 2 / self.cfg['camera']['fps'])
+        motion = Motion(self.cfg, self.root, self.cancel, self.log)
+        last_plan = last_frame = None
+
+        def distance_px(observation):
+            red, green = observation.nozzle_center, observation.center
+            return math.hypot(green[0] - red[0], green[1] - red[1])
+
+        def plan_move(observation, pose):
+            nonlocal last_plan, last_frame
+            distance = distance_px(observation)
+            if distance <= tolerance:
+                return None
+            last_plan = make_plan(observation, self.cfg['camera'], cfg)
+            last_plan['start_feedback_pose'] = list(pose)
+            last_plan['nozzle_origin_px'] = list(observation.nozzle_center)
+            last_plan['distance_px'] = distance
+            last_frame = self.last_observation_frame
+            x, y = last_plan['body_xy_m']
+            self.log(f'[VISION_UPDATE] frame={observation.seq} error={distance:.1f}px '
+                     f'body_xy=({x:.4f},{y:.4f})m')
+            # 很短的视觉修正可能小于常规里程计到位容差，仍需产生一次有效位移。
+            move_cfg = {**cfg, 'position_tolerance_m': min(cfg['position_tolerance_m'], math.hypot(x, y) / 4)}
+            return LockedMove((x, y), pose, move_cfg)
+
         try:
-            self.log('[STATE] WAIT_STATIONARY：下发零速并等待实际反馈停稳')
-            pose0=motion.wait_stationary()
+            self.log('[STATE] WAIT_STATIONARY：等待底盘停稳并获取首帧')
+            pose = motion.wait_stationary(deadline)
             self.camera.set_active(True)
-            observation=self.observation(since)  # 唯一用于规划的图像观测
-            plan=make_plan(observation,self.cfg['camera'],cfg)
-            plan['start_feedback_pose']=list(pose0)
-            plan['nozzle_origin_px']=list(observation.nozzle_center)
-            save_json(self.root/'data/last_move_plan.json',plan)
-            if self.last_observation_frame is not None:
-                cv2.imwrite(str(self.root/'data/last_move_snapshot.jpg'),self.last_observation_frame)
-            self.log('[SNAPSHOT_LOCKED] pixel=%s vision_xy=%s extra=%.3fm body_xy=(%.4f,%.4f)m；运动中不重算视觉目标'%
-                     (plan['pixel_vector'],plan['vision_body_xy_m'],plan['approach_extra_m'],*plan['body_xy_m']))
-            mover=LockedMove(plan['body_xy_m'],pose0,cfg)
-            previous=None;last_log=0.
-            while mover.stage!='DONE':
+            observation = self.wait_for_motion_frame(motion, pump, max(since, time.monotonic()))
+            if observation.center is None:
+                raise RuntimeError('起步未识别到绿框，请重新选框')
+            mover = plan_move(observation, pose)
+            next_visual = time.monotonic() + VISUAL_UPDATE_S
+            occluded = False
+            while True:
+                self.check_cancelled()
                 self.require_idle_pump(pump)
-                pose,v_measured,w_measured=motion.feedback()
-                v,w=mover.step(pose)
-                if previous!=mover.stage:
-                    self.log('[STATE] '+mover.stage);previous=mover.stage
-                motion.tick(v,w)
-                if time.monotonic()-last_log>.5:
-                    self.log('[MOVE_FEEDBACK] xy=(%.4f,%.4f)m yaw=%.3f command=(%.3f,%.3f) measured=(%.3f,%.3f)'%
-                             (*pose,v,w,v_measured,w_measured));last_log=time.monotonic()
-            self.log('[STATE] STOP_BEFORE_GRASP')
-            motion.wait_stationary()
+                now = time.monotonic()
+                if now >= deadline:
+                    raise TimeoutError('视觉对准超时，未下放吸嘴')
+                if mover is None or mover.stage == 'DONE':
+                    self.log('[STATE] VERIFY_ALIGNMENT：底盘停稳后用新帧复核')
+                    motion.wait_stationary(deadline)
+                    observation = self.wait_for_motion_frame(motion, pump, time.monotonic(), observation.seq)
+                    pose, v_measured, w_measured = motion.feedback()
+                    if abs(v_measured) > .01 or abs(w_measured) > .03:
+                        continue
+                    if observation.center is None:
+                        self.log('[VISION_ALIGNED] 停稳的新帧无绿框，按遮挡处理')
+                        return
+                    mover = plan_move(observation, pose)
+                    if mover is None:
+                        self.log(f'[VISION_ALIGNED] 红绿距离 {distance_px(observation):.1f}px ≤ {tolerance:g}px')
+                        return
+                    occluded = False
+                    next_visual = time.monotonic() + VISUAL_UPDATE_S
+                    continue
+
+                pose, _, _ = motion.feedback()
+                if now >= next_visual:
+                    observation = self.observation(after_seq=observation.seq, allow_missing=True)
+                    next_visual = now + VISUAL_UPDATE_S
+                    if now - observation.stamp > moving_max_age:
+                        self.log('[VISION_UPDATE] 运动中画面延迟，保持上一次位移')
+                    elif observation.center is not None:
+                        mover = plan_move(observation, pose)
+                        occluded = False
+                        if mover is None:
+                            continue
+                    elif not occluded:
+                        self.log('[VISION_OCCLUDED] 绿框丢失，继续最后一次规划的剩余位移')
+                        occluded = True
+                v, w = mover.step(pose)
+                motion.tick(v, w)
         finally:
             try:
                 motion.close()
             finally:
                 self.camera.set_active(False)
+            if last_plan is not None:
+                save_json(self.root/'data/last_move_plan.json', last_plan)
+                if last_frame is not None:
+                    cv2.imwrite(str(self.root/'data/last_move_snapshot.jpg'), last_frame)
 
     def lower_and_grasp(self, pump, ack_timeout, servo, max_lower_s):
         grasp = self.cfg['grasp']

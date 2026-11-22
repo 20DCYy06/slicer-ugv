@@ -74,7 +74,6 @@
     "max_linear_m_s": 0.05,
     "min_linear_m_s": 0.02,
     "max_angular_rad_s": 0.2,
-    "min_turn_rad_s": 0.1,
-    "approach_extra_m": 0.03
+    "min_turn_rad_s": 0.1
   }
 }

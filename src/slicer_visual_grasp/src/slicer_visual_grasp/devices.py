@@ -197,15 +197,24 @@ class Motion:
             raise RuntimeError('编码器/IMU反馈过期，停止移动')
         return self.car.pose.tuple(),self.car.body['vx'],self.car.body['wz']
 
-    def wait_stationary(self):
-        quiet=None
+    def wait_stationary(self, deadline=None):
+        quiet = None
+        last_sample = self.car.last_body_rx
         while True:
+            if deadline is not None and time.monotonic() >= deadline:
+                raise TimeoutError('等待底盘停稳超时')
             self.tick()
-            pose,v,w=self.feedback()
-            if abs(v)<=.01 and abs(w)<=.03:
-                quiet=time.monotonic() if quiet is None else quiet
-                if time.monotonic()-quiet>=.3:return pose
-            else:quiet=None
+            pose, v, w = self.feedback()
+            sample = self.car.last_body_rx
+            if sample <= last_sample:
+                continue
+            last_sample = sample
+            if self.stopped and abs(v) <= .01 and abs(w) <= .03:
+                quiet = sample if quiet is None else quiet
+                if sample - quiet >= .3:
+                    return pose
+            else:
+                quiet = None
 
     def close(self):
         self.car.close()

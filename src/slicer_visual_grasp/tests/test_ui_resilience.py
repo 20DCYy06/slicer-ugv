@@ -186,7 +186,7 @@ class ResilienceTests(unittest.TestCase):
         result=subprocess.run(p.args,env=dict(os.environ,VG_PROBE_MODE='signal',VG_PROBE_READY='/unused'),
                               capture_output=True,text=True,timeout=3)
         self.assertNotEqual(result.returncode,0)
-        self.assertIn('已有Visual Grasp窗口运行',result.stderr)
+        self.assertIn('已有 Visual Grasp 实例运行',result.stderr)
         p.send_signal(signal.SIGINT);self.assertEqual(p.wait(timeout=2),0)
 
     def test_second_ctrl_c_forces_exit_when_cleanup_is_stuck(self):

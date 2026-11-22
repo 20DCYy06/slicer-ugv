@@ -62,15 +62,89 @@ class SnapshotTests(unittest.TestCase):
         p=make_plan(obs,CFG['camera'],cfg)
         np.testing.assert_allclose(p['body_xy_m'],[-.062,-.022],atol=1e-6)
 
-    def test_three_cm_is_added_along_last_visual_direction(self):
-        for center in ((300,220),(380,380),(300,380),(380,220)):
-            obs=Observation(1,0,center,(344,344),1,None,Q)
-            p=make_plan(obs,CFG['camera'],{**CFG['snapshot_move'],'approach_extra_m':.03})
-            before=np.array(p['vision_body_xy_m']);after=np.array(p['body_xy_m'])
-            self.assertAlmostEqual(np.linalg.norm(after)-np.linalg.norm(before),.03,places=6)
-            np.testing.assert_allclose(after/np.linalg.norm(after),before/np.linalg.norm(before),atol=1e-6)
-        p=make_plan(Observation(1,0,(344,344),(344,344),1,None,Q),CFG['camera'],CFG['snapshot_move'])
-        np.testing.assert_allclose(p['body_xy_m'],[0,0])
+    def test_legacy_three_cm_setting_never_adds_motion(self):
+        for center in ((300,220),(380,380),(300,380),(380,220),(344,344)):
+            obs = Observation(1, 0, center, (344,344), 1, None, Q)
+            plan = make_plan(obs, CFG['camera'], {**CFG['snapshot_move'], 'approach_extra_m': .03})
+            np.testing.assert_allclose(plan['body_xy_m'],
+                                       [(center[1]-344)*.0005, (center[0]-344)*.0005],
+                                       atol=1e-6)
+
+    def simulate_alignment(self, observe):
+        from slicer_visual_grasp import pipeline
+        now = [1.]
+        pose = [0., 0., 0.]
+        logs = []
+        samples = []
+        pump = Mock()
+        pump.snapshot.side_effect = lambda: Pressure(now[0])
+
+        class Camera:
+            def snapshot(self):
+                seq = len(samples) + 1
+                samples.append((now[0], pose[0]))
+                return None, observe(seq, now[0], pose[0]), None, None
+
+            def set_active(self, active):
+                pass
+
+        class Motion:
+            def __init__(self, *args):
+                pass
+
+            def wait_stationary(self, deadline=None):
+                now[0] += .3
+                return tuple(pose)
+
+            def feedback(self):
+                return tuple(pose), 0., 0.
+
+            def tick(self, v=0., w=0.):
+                pose[0] += v * .02
+                pose[2] += w * .02
+                now[0] += .02
+
+            def close(self):
+                pass
+
+        with tempfile.TemporaryDirectory() as folder, patch.object(pipeline, 'Motion', Motion), \
+                patch.object(pipeline.time, 'monotonic', side_effect=lambda: now[0]):
+            runtime = Runtime(CFG, Path(folder), Camera(), threading.Event(), logs.append)
+            runtime.move_to_target(pump, 0.)
+            plan_path = Path(folder) / 'data/last_move_plan.json'
+            plan = json.loads(plan_path.read_text()) if plan_path.exists() else None
+        return pose, samples, logs, plan
+
+    def test_occlusion_finishes_only_the_latest_remaining_vector(self):
+        def observe(seq, stamp, x):
+            targets = {1: .09, 2: .13}
+            target = targets.get(seq)
+            center = None if target is None else (344, 344+(target-x)*2000)
+            return Observation(seq, stamp, center, (344,344), 1, None, Q)
+
+        pose, samples, logs, plan = self.simulate_alignment(observe)
+        self.assertAlmostEqual(samples[1][0]-samples[0][0], 1., delta=.03)
+        self.assertAlmostEqual(pose[0], .13, delta=.009)
+        self.assertEqual(plan['frame_seq'], 2)
+        self.assertTrue(any('VISION_OCCLUDED' in line for line in logs))
+        self.assertTrue(any('VISION_ALIGNED' in line for line in logs))
+
+    def test_fresh_stationary_frame_outside_threshold_requires_a_correction(self):
+        def observe(seq, stamp, x):
+            target = 0. if seq == 1 else .014
+            return Observation(seq, stamp, (344, 344+(target-x)*2000), (344,344), 1, None, Q)
+
+        pose, samples, _, plan = self.simulate_alignment(observe)
+        self.assertGreaterEqual(len(samples), 3)
+        self.assertGreater(pose[0], .010)
+        self.assertEqual(plan['frame_seq'], 2)
+
+    def test_stale_frame_is_not_a_confirmed_occlusion(self):
+        def observe(seq, stamp, x):
+            return Observation(1, 1.3, (344,344) if seq == 1 else None, (344,344), 1, None, Q)
+
+        with self.assertRaisesRegex(TimeoutError, '到位复核|新相机'):
+            self.simulate_alignment(observe)
 
     def test_encoder_imu_feedback_integration_and_timer_wrap(self):
         pose=FeedbackPose();pose.update(0,.1,0)
@@ -102,13 +176,17 @@ class SnapshotTests(unittest.TestCase):
         release_device = Mock()
         class Camera:
             def snapshot(self):
-                camera_calls.append(1)
-                if len(camera_calls)>1:raise AssertionError('movement must not reread vision')
-                return None,Observation(1,clock[0],(300,220),(344,344),1,None,Q),None,None
+                camera_calls.append(clock[0])
+                x,y,yaw = poses[-1]
+                dx,dy = -.062-x, -.022-y
+                forward = math.cos(yaw)*dx+math.sin(yaw)*dy
+                left = -math.sin(yaw)*dx+math.cos(yaw)*dy
+                center = (344+2000*left,344+2000*forward)
+                return None,Observation(len(camera_calls),clock[0],center,(344,344),1,None,Q),None,None
             def set_active(self,active):pass
         class Motion:
             def __init__(self,*a):self.pose=np.zeros(3);poses.append(self.pose)
-            def wait_stationary(self):clock[0]+=.4;return tuple(self.pose)
+            def wait_stationary(self, deadline=None):clock[0]+=.4;return tuple(self.pose)
             def feedback(self):return tuple(self.pose),0.,0.
             def tick(self,v=0,w=0,servo='neutral',immediate=False):
                 dt=.02;self.pose[:2]+=v*dt*np.array([math.cos(self.pose[2]+w*dt/2),math.sin(self.pose[2]+w*dt/2)]);self.pose[2]+=w*dt
@@ -181,16 +259,15 @@ class SnapshotTests(unittest.TestCase):
             assert_lift(servo_pulses, t - 2.)
             self.assertAlmostEqual(runtime.lowered_s, 0.)
             self.assertEqual(pump_closes,[False])
-            self.assertEqual(len(camera_calls),1)
-            plan=json.loads((root/'data/last_move_plan.json').read_text())
-            np.testing.assert_allclose(plan['vision_body_xy_m'],[-.062,-.022],atol=1e-6)
-            self.assertAlmostEqual(np.linalg.norm(plan['body_xy_m']),math.hypot(.062,.022)+.03,places=6)
+            self.assertGreaterEqual(len(camera_calls), 3)
+            plan = json.loads((root/'data/last_move_plan.json').read_text())
+            self.assertNotIn('approach_extra_m', plan)
             self.assertTrue(any(v or w for v,w,s in commands))
             self.assertTrue(all(s=='neutral' for v,w,s in commands))
             self.assertEqual(len(pump_commands),1)
             self.assertTrue(pump_commands[0][0])
             self.assertEqual(pump_commands[0][2][:2],(0,0))
-            self.assertLess(np.linalg.norm(np.array(pump_commands[0][1][:2])-plan['body_xy_m']),.012)
+            self.assertLess(np.linalg.norm(np.array(pump_commands[0][1][:2])-[-.062,-.022]),.012)
             attach_after[0] = .09
             camera_calls.clear()
             servo_pulses.clear()
@@ -201,7 +278,7 @@ class SnapshotTests(unittest.TestCase):
             self.assertEqual(runtime.lowered_s, 0.)
             with self.assertRaisesRegex(RuntimeError, '先点击释放'):
                 runtime.pick()
-            self.assertEqual(len(camera_calls), 1)
+            self.assertGreaterEqual(len(camera_calls), 3)
             servo_pulses.clear()
             release_device.set_pump.reset_mock()
             runtime.release()

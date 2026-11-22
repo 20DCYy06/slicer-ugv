@@ -32,7 +32,7 @@ class App:
         self.last_camera_error=None;self.drag=self.selection=None
         self.camera=Camera(cfg['camera'],cfg['target'],root);self.camera.start()
         self.runtime=Runtime(cfg,root,self.camera,self.cancel,self.log)
-        win.title('Visual Grasp — 单次位移抓取'+(' / 可执行' if enabled else ' / 只预览'))
+        win.title('Visual Grasp — 视觉对准抓取'+(' / 可执行' if enabled else ' / 只预览'))
         win.option_add('*Font','Sans 14')
         bar=tk.Frame(win);bar.pack(fill='x');self.buttons=[]
         for label,action in [('移动并抓取',self.pick),('释放',self.release),('立即停止',self.emergency_stop)]:

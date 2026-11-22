@@ -235,6 +235,29 @@ class IOTests(unittest.TestCase):
         self.assertTrue(p.snapshot().on_ack)
         self.assertTrue(p.snapshot().attached)
 
+    def test_stationary_dwell_requires_new_body_feedback(self):
+        for fresh in (False, True):
+            with self.subTest(fresh=fresh):
+                now = [1.]
+                motion = Motion.__new__(Motion)
+                motion.car = Mock(last_body_rx=1.)
+                motion.slew = Mock(v=0., w=0.)
+                motion.feedback = Mock(return_value=((0., 0., 0.), 0., 0.))
+
+                def tick():
+                    now[0] += .05
+                    if fresh:
+                        motion.car.last_body_rx = now[0]
+
+                motion.tick = tick
+                with patch('slicer_visual_grasp.devices.time.monotonic', side_effect=lambda: now[0]):
+                    if fresh:
+                        self.assertEqual(motion.wait_stationary(1.5), (0., 0., 0.))
+                        self.assertGreaterEqual(now[0], 1.35)
+                    else:
+                        with self.assertRaisesRegex(TimeoutError, '等待底盘停稳超时'):
+                            motion.wait_stationary(1.5)
+
     def test_motion_never_queries_or_controls_servo(self):
         class FakeCar:
             def __init__(self):self.pulses=[];self.speeds=[]
