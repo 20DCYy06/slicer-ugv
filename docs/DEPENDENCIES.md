@@ -13,23 +13,28 @@
 
 本轮用 Ubuntu Base 20.04.5 amd64、Focal `main universe` 与 Noetic 已签名的 `noetic/final/ubuntu` 快照完成构建。实装 Catkin 0.8.12，move_base/GlobalPlanner/DWA 1.17.3，TEB 0.9.1，Gmapping 1.4.2，robot_localization 2.7.7，pointcloud_to_laserscan 1.4.1，FKIE 1.3.2-2。CMake 为 3.16.3；SDK2 按下方提交构建。APT 完整版本及日志留存在本地迁移记录。
 
-在目标 Focal 环境构建 Livox SDK2。Catkin 在 /usr/local/lib 查找 liblivox_lidar_sdk_static.a。
+## 固定源码依赖
 
-```bash
-git clone https://github.com/Livox-SDK/Livox-SDK2.git
-git -C Livox-SDK2 checkout c0796f04c143143899c87a773d9f6b7136453c0b
-cmake -S Livox-SDK2 -B Livox-SDK2-build -DCMAKE_BUILD_TYPE=Release
-cmake --build Livox-SDK2-build -j2
-sudo cmake --install Livox-SDK2-build
-```
+[dependencies.repos](../dependencies.repos) 是工作区源码版本清单。用 Focal 的 `python3-vcstool` 执行 `vcs import . < src/slicer-ugv/dependencies.repos`。工作区独立获取 FAST-LIO、Livox ROS Driver2、硬件仓和 Livox SDK2。
+
+- FAST-LIO 的团队分支保留上游历史和已用整车实现。对应上游提交为 `7cc4175de6f8ba2edf34bab02a42195b141027e9`，内嵌 ikd-Tree 与其原 gitlink 对应的 `e2e3f4e9d3b95a9e66b1ba83dc98d4a05ed8a3c4` 一致。运行输出由 `~runtime_dir`、`SLICER_RUNTIME_DIR/fast_lio` 或 ROS_HOME 下的 `fast_lio` 目录决定。[团队 fork](https://github.com/20DCYy06/FAST_LIO)
+- Livox ROS Driver2 的上游版本为 1.2.8，基准 `21445540f0d100dc86a7e6df312dd70bbdb4afdf`。构建脚本把固定 SDK2 编译到 `W/sdk/install`，将头文件和静态库通过 `LIVOX_SDK2_ROOT` 交给驱动。安装检查核对具体编译与链接路径。[团队 fork](https://github.com/20DCYy06/livox_ros_driver2)
+- 既有 Noetic APT/rosdep 包继续由系统提供。发布保存实装软件包版本。Livox SDK2 直接由构建脚本在工作区编译。
+
+## 授权及维护待确认项
+
+- FAST-LIO 根许可证为 GPL-2.0，包清单声明 BSD，部分文件带 BSD 式声明。fork 保留原文及作者。由维护者确认各文件的授权适用范围。
+- 整车集成的 `ag_uav_client` 和 `ag_ugv_task` 声明 `Proprietary`，`slicer_air_ground_msgs` 声明 BSD-3-Clause。与空地团队确认分发许可和消息定义归属。
+- `ugv_slicer_control` 同时声明 BSD-3-Clause 和 MIT，文件来源见其 `SOURCES.json`。维护者可补充逐文件授权和有效联系人。现有占位维护者邮箱保留。
+- 硬件仓保留 ARM CMSIS、ST 固件库及已有项目归属声明。重新发布第三方固件源码前核对各自文件中的授权。
 
 ## 设备和现场配置
 
-- 首次配置 rosdep 的 Focal 目标环境，安装 `build-essential cmake python3-rosdep ros-noetic-ros-base`，执行一次 `sudo rosdep init`，随后按 README 更新及解析依赖。
-- 若访问 GitHub Raw 时连接被重置，可按镜像站说明同时配置 rosdep 源列表和 `ROSDISTRO_INDEX_URL`，继续以普通用户运行 `rosdep update --include-eol-distros --rosdistro noetic`。Livox SDK2 仍需在目标机单独构建和安装。[中科大 rosdep 镜像说明](https://mirrors.ustc.edu.cn/help/rosdistro.html)
-- `deploy/udev/99-c30d.rules` 将 C30D 替换板 `1a86:55d4 / 5CF0016377` 绑定到 `/dev/c30d`。恢复的 `80-cup-gnss.rules` 匹配接收机 1a86:55d3、序列号 5185028488，别名为 `/dev/serial/by-id/usb-1a86_USB_Single_Serial_5185028488-if00`。安装匹配的规则后核对别名和 dialout 权限。
+- 首次配置 rosdep 的 Focal 目标环境，安装 `build-essential cmake python3-rosdep python3-vcstool ros-noetic-ros-base`，执行一次 `sudo rosdep init`，随后按 README 更新及解析依赖。
+- 若访问 GitHub Raw 时连接被重置，可按镜像站说明同时配置 rosdep 源列表和 `ROSDISTRO_INDEX_URL`，继续以普通用户运行 `rosdep update --include-eol-distros --rosdistro noetic`。[中科大 rosdep 镜像说明](https://mirrors.ustc.edu.cn/help/rosdistro.html)
+- 按设备枚举确认 `deploy/udev/99-c30d.rules` 与 `80-cup-gnss.rules` 的实际匹配项。安装匹配的规则后核对 C30D 和 GNSS 的设备别名及 dialout 权限。
 - 复制安装后的 `slicer_gnss.yaml` 到 `~/.config/slicer/gnss.yaml`，设置实际 serial_port、ntrip_host、ntrip_port、ntrip_mountpoint、ntrip_credentials_file。凭据由操作员提供，0600 JSON 包含 username 和 password，仅留车端。把外部 YAML 的绝对路径传给 `slicer_field_sensors.launch config_file:=...`。默认 YAML 里的 /dev/gnss 和 /run/secrets/ 对应旧容器。
-- 旧 MID360 雷达/主机地址是 192.168.1.192 / 192.168.1.5，旧接口 enP8p1s0。电台车端/飞机端为 192.168.10.33 / 192.168.10.32。在新系统按实际接口确认。旧盘两种 CORS 配置都关联临时服务，当前服务和站点基准由现场确认。
+- 启动前按现场网段核对 MID360、主机、空地电台和 CORS 配置。设备及站点记录保存在现场资料。
 
 确认目标机使用对应设备后，从仓库根安装规则：
 
