@@ -10,7 +10,7 @@
 
 现场联调直接用[空地联调操作单](field/AIR_GROUND_FIELD_RUNBOOK.md)，按室内协议检查、室外飞机静止发令的顺序执行。
 
-由现场用户按[空地联调操作单](field/AIR_GROUND_FIELD_RUNBOOK.md)启动传感器、底盘和 odom 导航，完成 RTK 初始化后切到 map 导航。启动任务前确认 `/geographic/status` 的配准有效。所有车端终端使用同一原生 Catkin 安装和 ROS master。
+由现场用户按[空地联调操作单](field/AIR_GROUND_FIELD_RUNBOOK.md)启动传感器、底盘和共享导航。首条 WGS84 任务需要时会先自动配准，再在 map 中接续。所有车端终端使用同一所选发布的 Catkin 安装和 ROS master。通过 `/geographic/navigation_runtime` 观察准备阶段。
 
 从已 source 安装环境的车端任务终端启动：
 
@@ -29,7 +29,7 @@ rosrun ugv_navigation air_ground.py status
 现场测试前，在独立检出根目录的车端终端开启只读采集器：
 
 ```bash
-EVIDENCE_DIR="evidence/air-ground-$(date +%Y%m%d-%H%M%S)"
+EVIDENCE_DIR="$HOME/workspace/slicer/data/air-ground-$(date +%Y%m%d-%H%M%S)"
 python3 tools/rtk/collect_odom_test.py --navigation --duration 900 --output "$EVIDENCE_DIR"
 ```
 
@@ -42,12 +42,7 @@ TARGET_FILE=/absolute/path/to/captured_target.json
 REQUEST_FILE=/absolute/path/to/new_request.json
 ```
 
-**先 readiness release，再提交首条 SET。** 现场用户先按既有流程核查定位、障碍、底盘、接管状态，并在车端显式执行一次 readiness release：
-
-```bash
-rosrun ugv_slicer_control control.py state
-rosrun ugv_slicer_control control.py release
-```
+**车端就绪后发送首条 SET。** 现场用户先按既有流程核查定位、障碍、底盘、停车和人工接管状态。共享导航只处理自己创建的启动停车，人工停车由现场操作员处置。
 
 然后电脑端发送真实目标：
 
