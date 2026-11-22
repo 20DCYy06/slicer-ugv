@@ -5,3 +5,5 @@
 - 丢框时把最后有效视觉目标固定到反馈坐标系，扣除已走位移后续行，完成并停稳后再取新帧。短段上限只约束正常反馈修正，未添加固定的 2 cm 行程。参数与日志见 [视觉抓取说明](../../src/slicer_visual_grasp/README.md)。
 - 隔离 Catkin 安装和现场 v1.7 的 `--check` 通过，两处均执行 57 项测试，56 项通过，1 项缺少录制帧。模拟覆盖左右交替偏差下仍能直行、连续无改善后停止、框内偏心继续靠近，以及丢框后完成最新剩余位移。本次打开 Jetson 本地可执行窗口，未触发实车抓取。
 - 现场回退备份在 `/home/ugv/slicer_noetic_c30d_v17/visual-grasp-backups/oscillation.2xsOR1WR`。关闭操作窗口后，将备份 `lib/`、`share/` 恢复到 v1.7 对应安装位置。外部配置可用 `vehicle-config.json` 恢复。
+
+- 现场对准通过后，将 `~/.config/slicer_visual_grasp/config.json` 的 `alignment.tolerance_px` 从 8 调为 20。v1.7 的无硬件启动检查通过。新窗口读入后，停稳的新帧红绿中心距离 ≤20 px 即进入开泵和下放流程。此记录只调整现场容差，恢复时将该字段改回 8。
