@@ -57,6 +57,7 @@ bash tools/build_native.sh "$D" -j2
 
 ## 功能入口
 
+- **BT 开发接入**见 [BT 行为树开发接入指南](docs/BT_START_HERE.md)。
 - **无 RTK**使用 Gmapping、B 样条和 TEB，Action 为 `/move_base`。后台启停及打点见[操作手册](docs/OPERATIONS.md#无-rtk-导航)。
 - **RTK 与自动配准**使用 DWA 和 `/ugv/move_base`。共享导航在首个 WGS84 任务需要时自动配准并接续原任务。可用桌面、CLI 或选一个空地执行器。[使用与诊断](docs/OPERATIONS.md#rtk-导航与空地接口)
 - **空地任务**保留已验证的 V1 和整车集成的 V2 JSON。V2 启动时显式指定 `monitor_only`。飞机团队独立 `AG_Client` 的较新 typed V2 有自己的工作区和消息版本。[V1 接口](docs/rtk/air_ground_interface_v1.md) · [V2 协议](src/ag_uav_client/docs/protocol_v2.md)

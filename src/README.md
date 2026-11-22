@@ -2,6 +2,8 @@
 
 先按车辆运行模式选入口，再找对应的包。
 
+开发行为树从 [BT 行为树开发接入指南](../docs/BT_START_HERE.md) 开始。
+
 | 运行模式 | 日常入口 | Action |
 | --- | --- | --- |
 | 有 RTK，含首任务自动配准 | [RTK 桌面或共享导航 launch](../docs/OPERATIONS.md#rtk-导航与空地接口) | `/ugv/move_base` |
