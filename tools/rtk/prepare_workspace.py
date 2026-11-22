@@ -24,6 +24,7 @@ def generate(config_dir):
     guard_path = config_dir / 'online_runtime/config/slicer_config.yaml'
     guard = yaml.safe_load(guard_path.read_text())
     guard['navigation']['max_forward'] = field['max_vel_x']
+    guard['navigation']['accel_linear'] = field['acc_lim_x']
     guard_path.write_text(yaml.safe_dump(guard, sort_keys=False))
     footprint = navigation['local_costmap']['footprint']
     params = {
@@ -46,7 +47,6 @@ def generate(config_dir):
         wheel_diameter=0.065,
         track_width=0.179,
         wheelbase=0.13,
-        motor_output_limit_percent=vehicle['control']['motor_output_limit_percent'],
         mcu_pwm_accept_max_permille=vehicle['control'].get('mcu_pwm_accept_max_permille', 800),
     )
     (config_dir / driver_name).write_text(yaml.safe_dump(driver, sort_keys=False))

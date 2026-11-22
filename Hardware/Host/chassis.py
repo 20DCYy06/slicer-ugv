@@ -95,7 +95,7 @@ class Chassis:
             )
 
         self.wait(telemetry_ready,10.)
-        print('[CONNECTED]',self.path,'0x16 vx/wz, PWM cap=%.1f%%, watchdog=500ms'%(maximum/10),flush=True)
+        print('[CONNECTED]',self.path,'0x16 vx/wz, PWM cap=%.3f%%, watchdog=500ms'%(100*ticks/period),flush=True)
     def speed(self,v,w):
         if not math.isfinite(v) or not math.isfinite(w):raise ValueError('速度不是有限值')
         s=self.config['speed']

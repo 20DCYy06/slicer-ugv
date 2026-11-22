@@ -7,10 +7,13 @@ global_costmap:
 local_costmap:
   global_frame: odom
   rolling_window: true
+  width: 7.0
+  height: 7.0
   publish_frequency: 1.0
   # 原速度出口订阅完整局部地图，保留其接口；仅降低可视化发布频率。
   always_send_full_costmap: true
-# 只微调在线导航转向：保留现场线速度、加速度和零转弯半径。
+# 直线用更长的局部轨迹，保留在线导航的转向约束。
 TebLocalPlannerROS:
+  max_global_plan_lookahead_dist: 3.0
   max_vel_theta: 1.2              # 原2.47 rad/s，避免高角速度请求反复大幅换向。
   weight_acc_lim_theta: 3.0      # 原1.0，提高已有角加速度约束的优化权重。

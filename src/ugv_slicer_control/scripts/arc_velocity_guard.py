@@ -47,6 +47,10 @@ def main():
     # Source physics and the selected planner both constrain this outlet. A
     # commissioning planner may deliberately request lower limits than daily nav.
     limits = planner_limits(limits, plugin, planner, external_reverse=external_reverse)
+    brake_linear = float(limits.get('brake_linear', limits['accel_linear']))
+    if not math.isfinite(brake_linear) or brake_linear <= 0:
+        raise ValueError('brake_linear must be finite and positive')
+    brake_linear = min(brake_linear, limits['accel_linear'])
     rospy.set_param('~effective_max_reverse', limits['max_reverse'])
     rospy.loginfo('Guard planner %s limits: forward=%.3f reverse=%.3f angular=%.3f',
                   plugin, limits['max_forward'], limits['max_reverse'], limits['max_angular'])
@@ -123,7 +127,7 @@ def main():
             if footprint[0] is None:
                 footprint[0] = parse_footprint(rospy.get_param(planner_ns + '/local_costmap/footprint'))
             horizon = max(p['compensation_horizon'],
-                          abs(target[0])/limits['accel_linear']+p['command_timeout'],
+                          abs(target[0])/brake_linear+p['command_timeout'],
                           abs(target[1])/limits['accel_angular']+p['command_timeout'])
             if not all(swept_clear(pose, *command, footprint[0], grid, horizon) for command in (target, output)):
                 return 'swept footprint occupied/unknown/outside grid'

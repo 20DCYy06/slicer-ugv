@@ -41,6 +41,10 @@ class MigrationChecks(unittest.TestCase):
             self.assertEqual(control['serial_number'],host['serial']['serial_number']);self.assertEqual(control['encoder_signs'],host['serial']['encoder_signs']);self.assertEqual(control['control_mode'],'body_speed')
             self.assertEqual(nav['TebLocalPlannerROS']['min_turning_radius'],0.)
             self.assertEqual(nav['TebLocalPlannerROS']['max_vel_x'],c['navigation']['max_forward'])
+            self.assertEqual(nav['TebLocalPlannerROS']['max_vel_x'], .8)
+            self.assertEqual(nav['TebLocalPlannerROS']['acc_lim_x'], .4)
+            self.assertEqual(c['navigation']['brake_linear'], .2)
+            self.assertEqual(control['motor_output_limit_percent'], 91)
             self.assertEqual(nav['global_costmap']['footprint'],nav['local_costmap']['footprint'])
         self.assertEqual(source.read_bytes(),before)
     def test_python_syntax(self):

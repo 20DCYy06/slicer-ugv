@@ -7,7 +7,10 @@ from pathlib import Path
 import yaml
 
 REPO = Path(__file__).resolve().parents[3]
-CONFIG_ROOT = REPO / 'src/ugv_bringup/config/no_rtk'
+BRINGUP_CONFIG = REPO / 'src/ugv_bringup/config'
+if not BRINGUP_CONFIG.is_dir():
+    BRINGUP_CONFIG = Path(__file__).resolve().parents[2] / 'share/ugv_bringup/config'
+CONFIG_ROOT = BRINGUP_CONFIG / 'no_rtk'
 
 
 def generate(root,output,workspace2=None):
@@ -47,11 +50,13 @@ def generate(root,output,workspace2=None):
     # 车端设备身份和极性来自 Hardware/config.yaml。
     workspace2=Path(workspace2 or os.environ.get('WORKSPACE2_ROOT') or REPO)
     host=yaml.safe_load((workspace2/'Hardware/config.yaml').read_text())
+    drive=yaml.safe_load((BRINGUP_CONFIG/'slicer_driver_body_speed.yaml').read_text())
     serial=host['serial']
     control=dict(control_mode='body_speed',base_frame=c['frames']['base'],odom_frame=c['frames']['odom'],
         publish_tf=False,output_topic='/cmd_vel',nav_topic='/cmd_vel/nav',mission_topic='/cmd_vel/mission',
         teleop_topic='/teleop/cmd_vel',odom_topic='/wheel/odom',publish_hz=20.,command_timeout_s=.25,
         telemetry_timeout_s=host['control']['telemetry_timeout_s'],max_linear=n['max_forward'],
+        motor_output_limit_percent=drive['motor_output_limit_percent'],
         max_angular=n['max_angular'],wheel_diameter=v['wheel_diameter'],track_width=v['track_width'],
         wheelbase=v['wheelbase'],counts_per_revolution=serial['counts_per_revolution'],
         encoder_signs=serial['encoder_signs'],serial_number=serial['serial_number'],

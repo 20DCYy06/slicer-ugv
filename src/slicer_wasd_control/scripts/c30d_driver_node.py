@@ -21,8 +21,13 @@ def main():
     rospy.init_node('slicer_c30d_driver')
     c=load_config(rospy.get_param('~config_file'))
     host=copy.deepcopy(load_host(rospy.get_param('~host_config_file',str(workspace/'Hardware/config.yaml'))))
-    # 导航使用自身的速度参数，MCU 仍执行其编译限幅。
+    # 导航覆盖本会话的速度和输出上限，独立工具继续使用硬件配置。
     host['speed']['linear_max']=c['max_linear'];host['speed']['angular_max']=c['max_angular']
+    if 'motor_output_limit_percent' in c:
+        percent=c['motor_output_limit_percent']
+        if type(percent) is not int or not 0<=percent<=100:
+            raise ValueError('motor_output_limit_percent must be an integer in 0..100')
+        host['control']['motor_output_limit_percent']=percent
     car=None;ready_pub=rospy.Publisher('~ready',Bool,queue_size=1,latch=True)
     odom_pub=rospy.Publisher(c['odom_topic'],OdomMsg,queue_size=5)
     ready_pub.publish(False);session=None;odom=Odometry(c)
@@ -40,9 +45,9 @@ def main():
                 commands.start(workspace/'Hardware/Unlock/unlock.py')
             if session.wait_fault and os.environ.get('SLICER_C30D_ENABLE_LOCK_TEST')=='1':
                 test_service=session.link_recovery.start_test_service(rospy)
-            rospy.loginfo('C30D USB=%s signs=%s/%s; 0x16 vx/wz; PWM cap=%.1f%%; lidar-only navigation',
+            rospy.loginfo('C30D USB=%s signs=%s/%s; 0x16 vx/wz; lidar-only navigation',
                           host['serial']['serial_number'],host['serial']['pwm_signs'],
-                          host['serial']['encoder_signs'],host['control'].get('mcu_pwm_accept_max_permille',800)/10)
+                          host['serial']['encoder_signs'])
         else:rospy.loginfo('MOCK_ONLY: no serial is opened, no physical motor commands')
         while not rospy.is_shutdown():
             value=None

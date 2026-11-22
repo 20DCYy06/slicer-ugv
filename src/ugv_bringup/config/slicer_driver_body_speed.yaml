@@ -54,5 +54,7 @@ publish_tf: false
 body_feedback_timeout_s: 0.3
 body_imu_timeout_ms: 100
 wheelbase: 0.13
-motor_output_limit_percent: 100
+# 0x18 uses integer percent of the 982-permille firmware ceiling. 91% is
+# 1429/1600 ticks (89.3125% duty), the highest setting within 900 permille.
+motor_output_limit_percent: 91
 mcu_pwm_accept_max_permille: 982

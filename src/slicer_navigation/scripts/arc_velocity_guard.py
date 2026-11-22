@@ -25,6 +25,9 @@ def main():
         config = yaml.safe_load(stream)
         limits = config['navigation']
     front_stop = float(limits['front_stop_distance'])
+    brake_linear = float(limits.get('brake_linear', limits['accel_linear']))
+    if not math.isfinite(brake_linear) or brake_linear <= 0:
+        raise ValueError('brake_linear must be finite and positive')
     if front_stop <= 0:
         raise ValueError('front_stop_distance must be positive')
     mount = config['sensors']['base_to_laser']
@@ -94,7 +97,7 @@ def main():
             if footprint[0] is None:
                 footprint[0] = parse_footprint(rospy.get_param('/move_base/local_costmap/footprint'))
             horizon = max(p['compensation_horizon'],
-                          abs(target[0])/limits['accel_linear']+p['command_timeout'],
+                          abs(target[0])/brake_linear+p['command_timeout'],
                           abs(target[1])/limits['accel_angular']+p['command_timeout'])
             if not all(swept_clear(pose, *command, footprint[0], grid, horizon) for command in (target, output)):
                 return 'compensated swept footprint occupied/unknown/outside grid'
@@ -157,7 +160,7 @@ def main():
                     # 保留现有规划与包络检查；这里只把前进速度限制到能在15cm线前停住。
                     delay = scan_age+1./p['publish_hz']+1./config['sensors']['lidar_publish_hz']
                     limited = limit_front_approach(output, previous[0], front_distance,
-                                                   front_stop, limits['accel_linear'], delay)
+                                                   front_stop, brake_linear, delay)
                     if limited != output:
                         if limited[0] == 0:
                             reason = 'front obstacle %.3fm from laser; stop line %.3fm' % (front_distance, front_stop)

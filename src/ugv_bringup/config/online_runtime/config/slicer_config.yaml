@@ -144,7 +144,8 @@ navigation:
   min_turning_radius: 0.0
   teb_forward_drive_weight: 900.0
   max_angular: 2.4725146199
-  accel_linear: 0.2
+  accel_linear: 0.4
+  brake_linear: 0.2
   accel_angular: 1.2
   xy_tolerance: 0.15
   yaw_tolerance: 0.3
