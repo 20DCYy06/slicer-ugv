@@ -67,7 +67,7 @@ PY
 if [[ "$static" == true ]]; then
     bash "$repo/tools/build_native.sh" --prepare-only "$workspace"
     hardware=$(realpath -m -- "${SLICER_HARDWARE_ROOT:-$workspace/deps/slicer_ugv_hardware}")
-    python3 - "$workspace/runtime" "$hardware/config.yaml" <<'PY'
+    python3 - "$workspace/runtime" "${SLICER_HARDWARE_CONFIG:-$hardware/config.yaml}" <<'PY'
 from pathlib import Path
 import sys
 

@@ -78,6 +78,7 @@ git -C "$repo" diff --quiet HEAD -- || fail 'selected release has modified track
 export SLICER_RELEASE_ID="$release_id" SLICER_RELEASE_WS="$release"
 export SLICER_NATIVE_WS="$release" SLICER_NO_RTK_RUNTIME="$release/runtime/no_rtk"
 export WORKSPACE2_ROOT="$repo" SLICER_HARDWARE_ROOT="$release/deps/slicer_ugv_hardware"
+export SLICER_HARDWARE_CONFIG="$SLICER_NO_RTK_RUNTIME/config/c30d_host.yaml"
 export SLICER_SITE_DIR="$root/site" SLICER_STATE_DIR="$root/site/state/$release_id"
 export SLICER_LOGS_DIR="$root/logs/$release_id" SLICER_RUNTIME_DIR="$root/data/$release_id"
 export ROS_HOME="$SLICER_STATE_DIR/ros" ROS_LOG_DIR="$SLICER_LOGS_DIR/ros"
