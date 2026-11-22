@@ -4,7 +4,7 @@
 
 | 路径 | 职责 |
 |---|---|
-| `src/<包名>/` | 整车自有或集成的 ROS 包。车端定位、导航、控制仲裁、通信、空地任务和正式视觉伺服。 |
+| [`src/` 包索引](src/README.md) | 整车自有或集成的 ROS 包。车端定位、导航、控制仲裁、通信、空地任务和正式视觉伺服。 |
 | `src/ugv_bringup/config/` | 整车参数。RTK 与无 RTK 使用各自的配置。 |
 | `tools/manual/` | 组合遥控、手柄和执行机构入口。 |
 | `dependencies.repos` | 硬件、FAST-LIO、Livox 驱动和 SDK2 的路径、公开来源与完整 SHA。 |
