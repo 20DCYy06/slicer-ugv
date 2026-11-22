@@ -9,7 +9,8 @@ import time
 
 class OwnedProcess:
     def __init__(self, key, argv, env, *, log_prefix='rtk', stdin=False):
-        log_dir = Path(env.get('ROS_HOME') or Path.home() / '.ros') / 'log'
+        log_dir = Path(env['ROS_LOG_DIR']) if env.get('ROS_LOG_DIR') else (
+            Path(env.get('ROS_HOME') or Path.home() / '.ros') / 'log')
         log_dir.mkdir(parents=True, exist_ok=True)
         with tempfile.NamedTemporaryFile(prefix=f'{log_prefix}-{key}-', suffix='.log',
                                          dir=str(log_dir), delete=False) as stream:
