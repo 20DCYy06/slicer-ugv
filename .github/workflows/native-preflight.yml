@@ -13,13 +13,17 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - name: Install source-check dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y python3-catkin-pkg python3-yaml
-      - name: Check native workspace preparation
+      - name: Check ROS package layout
         run: |
           bash -n tools/build_native.sh
           bash -n tools/check_native.sh
           bash -n tools/no_rtk.sh
-          bash tools/check_native.sh --static
+          bash tools/check_native.sh --layout
+      - name: Check runtime profiles with the baseline hardware
+        run: bash tools/check_native.sh --static

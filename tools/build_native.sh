@@ -20,6 +20,11 @@ if [[ "$workspace" == "$repo" || "$workspace" == "$repo/"* ]]; then
     exit 2
 fi
 
+if [[ ! -r "$repo/Hardware/config.yaml" ]]; then
+    echo "Hardware/config.yaml is missing. Check out the complete source tree for the selected branch." >&2
+    exit 1
+fi
+
 no_rtk_runtime="$workspace/runtime/no_rtk"
 rtk_config="$workspace/runtime/rtk_config"
 mkdir -p "$workspace"

@@ -3,18 +3,22 @@ set -eo pipefail
 
 repo=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 
-if [[ ${1:-} == --static ]]; then
-    workspace=$(mktemp -d)
-    trap 'rm -rf -- "$workspace"' EXIT
-    bash "$repo/tools/build_native.sh" --prepare-only "$workspace"
-    python3 - "$repo/src" "$workspace" <<'PY'
+if [[ ${1:-} == --static || ${1:-} == --layout ]]; then
+    paths=("$repo/src")
+    if [[ $1 == --static ]]; then
+        workspace=$(mktemp -d)
+        trap 'rm -rf -- "$workspace"' EXIT
+        bash "$repo/tools/build_native.sh" --prepare-only "$workspace"
+        paths+=("$workspace")
+    fi
+    python3 - "${paths[@]}" <<'PY'
 from pathlib import Path
 import sys
 from catkin_pkg.packages import find_packages
 from catkin_pkg.topological_order import topological_order_packages
 import yaml
 
-sources, workspace = map(Path, sys.argv[1:])
+sources = Path(sys.argv[1])
 packages = find_packages(str(sources), exclude_subspaces=True)
 available = {package.name for package in packages.values()}
 expected = {
@@ -28,7 +32,11 @@ assert available == expected, (expected - available, available - expected)
 assert len(packages) == len(available)
 assert all(path == package.name for path, package in packages.items())
 assert all(path is not None for path, _package in topological_order_packages(packages))
-runtime = workspace / 'runtime'
+if len(sys.argv) == 2:
+    print('NATIVE_LAYOUT_OK: 15 packages and one message definition')
+    sys.exit(0)
+
+runtime = Path(sys.argv[2]) / 'runtime'
 for source in ('no_rtk/.generated', 'rtk_config/online_runtime/.generated'):
     for filename in ('sensor_launch.yaml', 'fusion.yaml', 'lio.yaml', 'scan.yaml', 'MID360.json'):
         assert (runtime / source / filename).is_file(), (source, filename)
@@ -47,7 +55,7 @@ PY
 fi
 
 if [[ $# -ne 1 ]]; then
-    echo "Usage: bash tools/check_native.sh --static | WORKSPACE" >&2
+    echo "Usage: bash tools/check_native.sh --layout | --static | WORKSPACE" >&2
     exit 2
 fi
 

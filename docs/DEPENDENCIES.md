@@ -26,6 +26,7 @@ sudo cmake --install Livox-SDK2-build
 ## 设备和现场配置
 
 - 首次配置 rosdep 的 Focal 目标环境，安装 `build-essential cmake python3-rosdep ros-noetic-ros-base`，执行一次 `sudo rosdep init`，随后按 README 更新及解析依赖。
+- 若访问 GitHub Raw 时连接被重置，可按镜像站说明同时配置 rosdep 源列表和 `ROSDISTRO_INDEX_URL`，继续以普通用户运行 `rosdep update --include-eol-distros --rosdistro noetic`。Livox SDK2 仍需在目标机单独构建和安装。[中科大 rosdep 镜像说明](https://mirrors.ustc.edu.cn/help/rosdistro.html)
 - `deploy/udev/99-c30d.rules` 将 C30D 替换板 `1a86:55d4 / 5CF0016377` 绑定到 `/dev/c30d`。恢复的 `80-cup-gnss.rules` 匹配接收机 1a86:55d3、序列号 5185028488，别名为 `/dev/serial/by-id/usb-1a86_USB_Single_Serial_5185028488-if00`。安装匹配的规则后核对别名和 dialout 权限。
 - 复制安装后的 `slicer_gnss.yaml` 到 `~/.config/slicer/gnss.yaml`，设置实际 serial_port、ntrip_host、ntrip_port、ntrip_mountpoint、ntrip_credentials_file。凭据由操作员提供，0600 JSON 包含 username 和 password，仅留车端。把外部 YAML 的绝对路径传给 `slicer_field_sensors.launch config_file:=...`。默认 YAML 里的 /dev/gnss 和 /run/secrets/ 对应旧容器。
 - 旧 MID360 雷达/主机地址是 192.168.1.192 / 192.168.1.5，旧接口 enP8p1s0。电台车端/飞机端为 192.168.10.33 / 192.168.10.32。在新系统按实际接口确认。旧盘两种 CORS 配置都关联临时服务，当前服务和站点基准由现场确认。
