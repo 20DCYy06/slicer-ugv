@@ -219,12 +219,14 @@ class App:
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     mode = parser.add_mutually_exclusive_group()
-    mode.add_argument('--run', action='store_true', help='启用动作按钮；程序启动时仍不动作')
+    parser.add_argument('--run', action='store_true', help='启用正式抓取动作')
     mode.add_argument('--check', action='store_true', help='仅检查依赖和配置，不打开相机/串口')
     mode.add_argument('--headless', action='store_true', help='通过标准输入执行 pick / release')
     parser.add_argument('--pick-on-start', action='store_true', help='仅在无窗口模式启动时抓取一次')
     parser.add_argument('--config', type=Path)
     args = parser.parse_args()
+    if args.run and args.check:
+        parser.error('--run 不能与 --check 同用')
     if args.pick_on_start and not args.headless:
         parser.error('--pick-on-start 需要 --headless')
     config_home = Path(os.environ.get('XDG_CONFIG_HOME') or Path.home() / '.config')

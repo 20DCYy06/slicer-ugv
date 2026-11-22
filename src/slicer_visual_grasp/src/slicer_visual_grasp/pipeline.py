@@ -12,7 +12,6 @@ from .paths import device_config
 
 
 POST_GRASP_LIFT_S = 2.0
-TARGET_WAIT_S = 5.0
 VISUAL_UPDATE_S = 1.0
 ALIGNMENT_TIMEOUT_S = 60.0
 CORRECTION_STEP_M = .02
@@ -97,36 +96,17 @@ class Runtime:
         self.last_observation_frame = frame
         return obs
 
-    def wait_for_observation(self, since):
-        deadline = since + TARGET_WAIT_S
-        while True:
-            self.check_cancelled()
-            try:
-                observation = self.observation(since)
-                if observation.nozzle_center is None or observation.surface_quad is None:
-                    raise RuntimeError('未识别到固定吸嘴原点和物体四角')
-                return
-            except RuntimeError as exc:
-                remaining = deadline - time.monotonic()
-                if remaining <= 0:
-                    raise TimeoutError('等待新相机目标超时：'+str(exc)) from exc
-                self.cancel.wait(min(.05, remaining))
-
     def check_cancelled(self):
         if self.cancel.is_set():
             raise InterruptedError('用户中断')
 
-    def pick(self, *, wait_for_target=False):
-        started = time.monotonic()
+    def pick(self):
         if self.needs_release:
             raise RuntimeError('还有持物或未回升的行程，请先点击释放')
         servo, max_lower_s = self.servo_settings()
         cfg = self.cfg['snapshot_move']
         if cfg['forward_image_direction'] not in ('up','down','left','right'):
             raise ValueError('请在config.json设置底盘正线速度的画面方向')
-        if wait_for_target:
-            self.log('[STATE] WAIT_TARGET：等待本次抓取的新相机画面')
-            self.wait_for_observation(started)
         grasp = self.cfg['grasp']
         pcfg = json.loads(device_config(self.cfg, self.root, 'airgrip_config').read_text())
         pcfg['status_poll_s'] = grasp['status_poll_s']
@@ -137,7 +117,7 @@ class Runtime:
             try:
                 pump.start()
                 self.require_idle_pump(pump)
-                self.move_to_target(pump, started if wait_for_target else 0.)
+                self.move_to_target(pump)
                 self.require_idle_pump(pump)
             except BaseException:
                 pump.close()
@@ -165,7 +145,7 @@ class Runtime:
                     raise TimeoutError('到位复核或起步等待新相机画面超时') from exc
                 motion.tick()  # 等待新画面时，继续发送零速。
 
-    def move_to_target(self, pump, since):
+    def move_to_target(self, pump):
         from .snapshot_move import make_plan, LockedMove
 
         cfg = self.cfg['snapshot_move']
@@ -217,7 +197,7 @@ class Runtime:
             self.log('[STATE] WAIT_STATIONARY：等待底盘停稳并获取首帧')
             pose = motion.wait_stationary(deadline)
             self.camera.set_active(True)
-            observation = self.wait_for_motion_frame(motion, pump, max(since, time.monotonic()))
+            observation = self.wait_for_motion_frame(motion, pump, time.monotonic())
             if observation.center is None:
                 raise RuntimeError('起步未识别到绿框，请重新选框')
             best_error = distance_px(observation)

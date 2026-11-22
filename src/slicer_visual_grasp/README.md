@@ -16,7 +16,7 @@ rosrun slicer_visual_grasp run.sh --run
 
 时间 `t` 是舵机指令维持时间，仅记录在当前窗口内。没有记录时，释放只关泵。右键点击画面中的吸嘴中心可以保存红点，R 重连相机。启动和预览不占用底盘或气泵串口。
 
-RTK 桌面使用 `run.sh --headless --pick-on-start` 在首次点击时执行抓取。程序等候本次请求后的新目标画面，最多 5 秒。后续通过同一进程的标准输入发送 `release` 或 `pick`，每行一条。`run.sh --headless` 启动后等待指令，可用于仅释放。`GRASP_STATE` 后的 `held` 表示抓取和抬升完成，`idle` 表示待命或释放完成，`recovery` 表示需要释放或处理剩余行程，`error` 表示操作失败，`busy` 表示等待或执行中。
+RTK 桌面使用 `rosrun slicer_visual_grasp run.sh --run --headless --pick-on-start`。桌面等待后台相机首次可用，随后和可执行窗口调用相同的正式对准、下放、吸附和抬升流程。后续通过同一进程的标准输入发送 `release` 或 `pick`，每行一条。省略 `--pick-on-start` 时等待指令，可用于仅释放。`GRASP_STATE` 后的 `held` 表示抓取和抬升完成，`idle` 表示待命或释放完成，`recovery` 表示需要释放或处理剩余行程，`error` 表示操作失败，`busy` 表示等待或执行中。
 
 无窗口模式把持物、关泵和剩余升降时间保存在配置目录下的 `data/grasp_recovery.json`。关闭进程不会自动松开已确认抓住的物体。正常中断后，重启会报告 `recovery`，释放时先确认关泵，再补足已有记录的回升。若升降中被强制终止或无法读取恢复记录，释放只确认关泵并保持 `recovery`。关闭抓取程序并在现场手动恢复吸嘴初始高度后，清除该记录再启动抓取。
 

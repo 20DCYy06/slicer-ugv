@@ -27,7 +27,7 @@ SERIAL_GROUP = Path(__file__).resolve().parents[2] / 'manual' / 'serial_group.sh
 FIELD_NAVIGATION = (Path(__file__).resolve().parents[3] / 'src' / 'ugv_bringup' /
                     'launch' / 'slicer_field_navigation.launch')
 CONTROL_SOURCE = FIELD_NAVIGATION.parents[2] / 'ugv_slicer_control/scripts/control.py'
-VISUAL_GRASP = Path(__file__).resolve().parents[3] / 'src/slicer_visual_grasp/run.sh'
+VISUAL_GRASP = ('rosrun', 'slicer_visual_grasp', 'run.sh', '--run', '--headless')
 DRIVER_COMMAND = ('roslaunch', 'ugv_bringup', 'slicer_body_driver.launch')
 # The process runner escalates shutdown at 32 s. Allow another ROS graph poll.
 HANDOFF_TIMEOUT = 35.
@@ -279,7 +279,7 @@ class Workflow:
             self.grasp_command = command
 
     def _start_grasp(self):
-        argv = (str(VISUAL_GRASP), '--headless')
+        argv = VISUAL_GRASP
         if not self.grasp_recovery:
             argv += ('--pick-on-start',)
         if not self._start('vision', argv):

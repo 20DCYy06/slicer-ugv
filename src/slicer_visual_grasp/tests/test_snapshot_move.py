@@ -13,24 +13,6 @@ Q=[[200,150],[400,150],[400,290],[200,290]]
 
 
 class SnapshotTests(unittest.TestCase):
-    def test_headless_pick_times_out_on_an_observation_before_the_request(self):
-        clock = [10.]
-        camera = Mock()
-        camera.snapshot.return_value = (
-            None, Observation(1, 9.9, (300, 220), (344, 344), 1, None, Q), None, None)
-        cancel = Mock()
-        cancel.is_set.return_value = False
-        cancel.wait.side_effect = lambda duration: clock.__setitem__(0, clock[0] + duration)
-        runtime = Runtime(CFG, ROOT, camera, cancel, lambda _: None)
-        with patch('slicer_visual_grasp.pipeline.time.monotonic', side_effect=lambda: clock[0]), \
-                patch('slicer_visual_grasp.pipeline.PressureLink') as pressure, \
-                patch('slicer_visual_grasp.pipeline.Motion') as motion:
-            with self.assertRaisesRegex(TimeoutError, '等待新相机目标超时'):
-                runtime.pick(wait_for_target=True)
-        self.assertAlmostEqual(clock[0], 15.)
-        pressure.assert_not_called()
-        motion.assert_not_called()
-
     def test_visual_servo_rejects_pb15_without_sending_a_pulse(self):
         servo = Servo.__new__(Servo)
         servo.moved = False
@@ -114,7 +96,7 @@ class SnapshotTests(unittest.TestCase):
             runtime = Runtime(CFG, Path(folder), Camera(), threading.Event(), logs.append)
             outcome = self.assertRaisesRegex(RuntimeError, expected_error) if expected_error else nullcontext()
             with outcome:
-                runtime.move_to_target(pump, 0.)
+                runtime.move_to_target(pump)
             plan_path = Path(folder) / 'data/last_move_plan.json'
             plan = json.loads(plan_path.read_text()) if plan_path.exists() else None
         return pose, samples, logs, plan

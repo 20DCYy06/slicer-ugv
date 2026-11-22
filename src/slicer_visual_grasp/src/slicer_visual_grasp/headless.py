@@ -5,6 +5,7 @@ import os
 import select
 import signal
 import sys
+import time
 
 
 def run(runtime, pick_on_start):
@@ -37,7 +38,18 @@ def _run_session(runtime, pick_on_start):
                 if not camera_started:
                     runtime.camera.start()
                     camera_started = True
-                runtime.pick(wait_for_target=True)
+                # The graphical launch has a running preview before the operator
+                # clicks. Wait for camera startup only, then use the same action.
+                deadline = time.monotonic() + 5.
+                while True:
+                    runtime.check_cancelled()
+                    frame, _, _, error = runtime.camera.snapshot()
+                    if frame is not None and not error:
+                        break
+                    if time.monotonic() >= deadline:
+                        raise TimeoutError(error or '等待相机启动超时')
+                    runtime.cancel.wait(.05)
+                runtime.pick()
                 return 'held'
             runtime.release()
             return 'idle'

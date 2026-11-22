@@ -264,8 +264,8 @@ class WorkflowTests(unittest.TestCase):
         self.workflow.click('vision')
         key, argv, env, proc = self.starts[-1]
         self.assertEqual(key, 'vision')
-        self.assertEqual(Path(argv[0]).name, 'run.sh')
-        self.assertEqual(argv[1:], ('--headless', '--pick-on-start'))
+        self.assertEqual(argv, ('rosrun', 'slicer_visual_grasp', 'run.sh', '--run',
+                                '--headless', '--pick-on-start'))
         self.assertNotIn('ROS_NAMESPACE', env)
         self.assertEqual(self.color('vision'), 'yellow')
         self.workflow.click('vision')
@@ -292,7 +292,8 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(self.workflow.states['vision'][:2], ('yellow', '需释放'))
         self.workflow.click('vision')
         another = self.starts[-1][3]
-        self.assertEqual(self.starts[-1][1][1:], ('--headless',))
+        self.assertEqual(self.starts[-1][1], ('rosrun', 'slicer_visual_grasp', 'run.sh',
+                                             '--run', '--headless'))
         another.log_lines = ['GRASP_STATE recovery']
         self.refresh()
         self.assertEqual(another.sent, ['release'])

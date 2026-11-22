@@ -22,6 +22,7 @@ from airgrip import keyboard
 class Camera:
     def __init__(self, *args): pass
     def start(self): print('CAMERA_STARTED', flush=True)
+    def snapshot(self): return object(), None, None, None
     def close(self):
         if os.environ.get('VISUAL_GRASP_PROBE_FAIL_CLOSE'):
             raise OSError('mock camera close failure')
@@ -42,8 +43,7 @@ class AirGrip:
     def close(self): pass
 
 class Runtime(app.Runtime):
-    def pick(self, *, wait_for_target):
-        assert wait_for_target
+    def pick(self):
         assert not self.needs_release
         if os.environ.get('VISUAL_GRASP_PROBE_SLOW_PICK'):
             self.move_servo('down', 3., {'down': 900, 'refresh_hz': 20})
@@ -97,7 +97,7 @@ class HeadlessTests(unittest.TestCase):
                         process.kill()
 
     def test_start_pick_then_release_through_the_same_process(self):
-        with self.session('--pick-on-start') as (process, buffer, read_until):
+        with self.session('--run', '--pick-on-start') as (process, buffer, read_until):
             read_until(b'GRASP_STATE held\n')
             self.assertEqual(buffer.count(b'GRASP_STATE busy\n'), 1)
             self.assertNotIn(b'GRASP_STATE idle\n', buffer)
