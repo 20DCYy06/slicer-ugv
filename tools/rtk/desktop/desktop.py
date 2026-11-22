@@ -19,7 +19,7 @@ except ImportError:
 import rospy
 from rviz import bindings as rviz
 
-from dashboard_model import Dashboard, split_screen
+from dashboard_model import Dashboard, StableStatus, split_screen
 from ros_observer import Observer
 from workflow import OwnedProcess, Workflow
 from workflow_discovery import discover, get_master_uri, master_local, process_snapshot, vision_has_camera
@@ -44,107 +44,128 @@ COLORS = {
 WINDOW_FLAGS = QtCore.Qt.Window | QtCore.Qt.FramelessWindowHint
 
 
-def label(text='', muted=False):
-    widget = QtWidgets.QLabel(text)
-    widget.setTextFormat(QtCore.Qt.PlainText)
-    widget.setProperty('muted', muted)
-    widget.setWordWrap(True)
-    return widget
+class ReadoutLine(QtWidgets.QLabel):
+    """Keep one row and expose any clipped text in its tooltip."""
+    def __init__(self, muted=False):
+        super().__init__()
+        self.value = ''
+        self.setTextFormat(QtCore.Qt.PlainText)
+        self.setProperty('muted', muted)
+        self.setSizePolicy(QtWidgets.QSizePolicy.Ignored, QtWidgets.QSizePolicy.Fixed)
+
+    def set_value(self, value):
+        self.value = value
+        rendered = self.fontMetrics().elidedText(value, QtCore.Qt.ElideRight, self.width())
+        if rendered != self.text():
+            self.setText(rendered)
+        self.setToolTip(value if rendered != value else '')
+        self.setAccessibleName(value)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.set_value(self.value)
 
 
 class Readouts(QtWidgets.QWidget):
-    def __init__(self, workflow=None):
+    def __init__(self, workflow=None, cancel_pending_goal=None):
         super().__init__(flags=WINDOW_FLAGS | QtCore.Qt.WindowStaysOnTopHint)
         self.setObjectName('Dashboard')
         self.setWindowTitle('RTK 实时状态')
         self.setStyleSheet(STYLES)
+        self.stable = StableStatus()
         outer = QtWidgets.QVBoxLayout(self)
         outer.setContentsMargins(12, 10, 12, 10)
         outer.setSpacing(5)
-        self.rtk = label()
+        self.rtk = ReadoutLine()
+        self.status = ReadoutLine(muted=True)
         outer.addWidget(self.rtk)
-        self.status = label('', True)
         outer.addWidget(self.status)
-        self.sections = QtWidgets.QStackedWidget()
+
         readouts = QtWidgets.QScrollArea(widgetResizable=True)
         readouts.setFrameShape(QtWidgets.QFrame.NoFrame)
         readouts.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Ignored)
         readouts.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
-        readouts.setWidget(self.sections)
+        page = QtWidgets.QFrame(objectName='Readouts')
+        readouts.setWidget(page)
         outer.addWidget(readouts, 1)
-
-        self.prep = QtWidgets.QFrame(objectName='Readouts')
-        prep = QtWidgets.QVBoxLayout(self.prep)
-        self.phase = label('地理配准')
-        self.registration = label()
+        rows = QtWidgets.QVBoxLayout(page)
+        self.destination = ReadoutLine()
+        self.own = ReadoutLine()
+        self.registration = ReadoutLine()
         self.progress = QtWidgets.QProgressBar(minimum=0, maximum=4, textVisible=False)
         self.progress.setFixedHeight(7)
-        prep.addWidget(self.phase)
-        prep.addWidget(self.registration)
-        prep.addWidget(self.progress)
-        self.prep_goal = label()
-        prep.addWidget(self.prep_goal)
-        prep.addStretch()
-        self.system = {}
-        for name, title in (('lidar', 'MID360 / 扫描'), ('lio', 'LIO'), ('driver', '底盘驱动'), ('mux', 'Mux')):
-            self.system[name] = title, label()
-            prep.addWidget(self.system[name][1])
-        prep.addStretch()
-        self.sections.addWidget(self.prep)
-
-        nav = QtWidgets.QFrame(objectName='Readouts')
-        rows = QtWidgets.QVBoxLayout(nav)
-        self.destination = label()
-        self.own = label()
-        rows.addWidget(self.destination)
-        rows.addWidget(self.own)
-        self.points = [label() for _ in range(3)]
-        for item in self.points:
+        for item in (self.destination, self.own, self.registration, self.progress):
             rows.addWidget(item)
+        self.system = {}
+        for name, title in (('lidar', 'MID360 扫描'), ('lio', 'LIO'), ('driver', '底盘驱动'), ('mux', 'Mux')):
+            self.system[name] = title, ReadoutLine()
+            rows.addWidget(self.system[name][1])
         rows.addStretch()
-        self.sections.addWidget(nav)
-        self.feedback = label('', True)
-        self.feedback.hide()
+
+        self.feedback = ReadoutLine(muted=True)
         outer.addWidget(self.feedback)
-        self.workflow = WorkflowPanel(workflow) if workflow is not None else None
+        self.workflow = WorkflowPanel(workflow, cancel_pending_goal) if workflow is not None else None
         if self.workflow is not None:
             outer.addWidget(self.workflow)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
         available = self.height() - (self.workflow.sizeHint().height() if self.workflow else 0)
-        size = min(22, max(9, min(self.width() // 20, available // 23)))
-        body_font = QtGui.QFont('Noto Sans CJK SC', size)
-        for readout in self.findChildren(QtWidgets.QLabel):
-            if self.workflow is None or not self.workflow.isAncestorOf(readout):
-                readout.setFont(body_font)
-        self.rtk.setFont(QtGui.QFont('Noto Sans CJK SC', size + 2, QtGui.QFont.Bold))
-        self.destination.setFont(QtGui.QFont('Noto Sans CJK SC', size + 1, QtGui.QFont.Bold))
+        size = min(22, max(8, min(self.width() // 20, available // 23)))
+        family = 'Noto Sans CJK SC'
+        coordinates_example = '正在前往：-90.0000000, -180.0000000'
+        coordinate_size = size
+        # Reserve space for the two layouts and the optional vertical scrollbar.
+        while coordinate_size > 6:
+            font = QtGui.QFont(family, coordinate_size, QtGui.QFont.Bold)
+            if QtGui.QFontMetrics(font).horizontalAdvance(coordinates_example) <= self.width() - 64:
+                break
+            coordinate_size -= 1
+        rtk_size = size + 2
+        rtk_example = 'RTK状态：SINGLE（卫星：999 颗）'
+        while rtk_size > 8:
+            font = QtGui.QFont(family, rtk_size, QtGui.QFont.Bold)
+            if QtGui.QFontMetrics(font).horizontalAdvance(rtk_example) <= self.width() - 24:
+                break
+            rtk_size -= 1
+        for readout in self.findChildren(ReadoutLine):
+            if readout in (self.destination, self.own):
+                point_size = coordinate_size
+            else:
+                point_size = rtk_size if readout is self.rtk else size
+            weight = QtGui.QFont.Bold if readout in (self.rtk, self.destination) else QtGui.QFont.Normal
+            readout.setFont(QtGui.QFont(family, point_size, weight))
+            readout.setFixedHeight(readout.fontMetrics().height() + 2)
+            readout.set_value(readout.value)
 
-    def refresh(self, view):
-        self.rtk.setText(view['rtk'])
-        self.rtk.setStyleSheet('color: ' + COLORS[view['fix_color']])
+    def refresh(self, view, now=None):
+        now = time.monotonic() if now is None else now
+        stable = self.stable
+        fix = stable.update('fix', view['fix_color'], now)
+        if fix == view['fix_color']:
+            self.rtk.set_value(view['rtk'])
+            self.rtk.setStyleSheet('color: ' + COLORS[fix])
         status = ('新鲜 RTK 可用' if view['usable'] else '等待新鲜 RTK') + '  |  ' + view['frame']
         if view['degraded']:
             status += '  |  配准降级'
-        self.status.setText(status)
-        self.sections.setCurrentIndex(int(view['navigation']))
-        self.registration.setText(view['registration'])
-        self.progress.setValue(view['progress'])
-        self.prep_goal.setText(view['destination'])
-        self.prep_goal.setVisible(view['destination'] == '正在前往：RViz手动目标')
+        self.status.set_value(stable.update('status', status, now))
+        self.registration.set_value(stable.update('registration', view['registration'], now,
+                                                  immediate=view['collecting']))
+        self.progress.setValue(stable.update('progress', view['progress'], now))
         for key, (title, widget) in self.system.items():
-            text, color = view[key]
-            widget.setText(f'{title}　{text}')
+            value = view[key]
+            immediate = (key == 'driver' and value[1] == 'bad'
+                         or key == 'mux' and value[1] in ('bad', 'caution'))
+            message, color = stable.update(key, value, now, immediate)
+            widget.set_value(f'{title}　{message}')
             widget.setStyleSheet('color: ' + COLORS[color])
-        self.destination.setText(view['destination'])
-        self.own.setText(view['own'])
-        for widget, text in zip(self.points, view['points']):
-            widget.setText(text)
-        self.feedback.setText(view['feedback'])
-        self.feedback.setVisible(bool(view['feedback']))
+        self.destination.set_value(view['destination'])
+        own_available = not view['own'].endswith('—')
+        if stable.update('own_available', own_available, now) == own_available:
+            self.own.set_value(view['own'])
+        self.feedback.set_value(view['feedback'])
         if self.workflow is not None:
-            self.workflow.refresh()
+            self.workflow.refresh(now)
 
 
 class DesktopRviz(rviz.VisualizationFrame):
@@ -285,7 +306,7 @@ def run_desktop():
     board = Dashboard()
     observer = Observer(board)
     workflow = Workflow(board, local_scan=process_snapshot)
-    dashboard = Readouts(workflow)
+    dashboard = Readouts(workflow, observer.cancel_pending_goal)
     frame, manager = make_rviz(Path(__file__).with_name('rtk_desktop.rviz'), app)
     executor = ThreadPoolExecutor(max_workers=1)
     probe = executor.submit(desktop_probe)
@@ -337,11 +358,11 @@ def run_desktop():
             probe = executor.submit(desktop_probe)
             next_probe = now + .55
         view = observer.view(now)
-        # The live action parameter supersedes any late costmap from the outgoing planner.
-        frame_id = workflow.graph.frame or view['frame']
-        if manager.getFixedFrame() != frame_id:
+        # RViz and the goal dispatcher use the same observed planner frame.
+        frame_id = board.planner_frame(now)
+        if frame_id is not None and manager.getFixedFrame() != frame_id:
             manager.setFixedFrame(frame_id)
-        dashboard.refresh(view)
+        dashboard.refresh(view, now)
 
     timer = QtCore.QTimer()
     timer.timeout.connect(refresh)
@@ -350,6 +371,7 @@ def run_desktop():
         return app.exec_()
     finally:
         timer.stop()
+        observer.cancel_pending_goal()
         workflow.stop_all()
         while not workflow.idle:
             workflow.update()

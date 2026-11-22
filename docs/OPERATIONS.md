@@ -30,9 +30,9 @@ roslaunch ugv_bringup slicer_field_sensors.launch config_file:="$HOME/.config/sl
 # 底盘终端
 roslaunch ugv_bringup slicer_body_driver.launch
 # 起步导航终端
-roslaunch ugv_bringup slicer_field_navigation.launch geographic:=false
+roslaunch ./src/ugv_bringup/launch/slicer_field_navigation.launch geographic:=false
 # 已配准且停车后，用下行替换起步导航 launch，定位保持运行
-roslaunch ugv_bringup slicer_field_navigation.launch
+roslaunch ./src/ugv_bringup/launch/slicer_field_navigation.launch
 ```
 
 状态查看用 `rosrun cup_gnss gnss_status.py`、`rostopic echo -n 1 /geographic/status`。配准、地理目标与停止步骤见 [RTK 现场手册](rtk/field/AIR_GROUND_FIELD_RUNBOOK.md)。RTK 全局 EKF 发布 `map → odom`，局部 EKF 继续负责 `odom → base_link`，DWA 的 Action 为 `/ugv/move_base`。
@@ -54,7 +54,9 @@ Jetson 登录本地 X11 桌面后，从仓库根目录执行。脚本根据主�
 ./tools/rtk_desktop_ui.sh
 ```
 
-看板常驻显示 RTK 解算、卫星数和新鲜度。准备阶段显示配准、MID360 扫描、LIO、底盘和 Mux。进入已配准的 `map` 导航后显示车辆与当前目标的经纬度和 XY。RViz 固定坐标系随运行中的全局代价地图切换，启动阶段默认显示 `odom`。
+看板用固定的单行位置显示 RTK 解算、卫星数、配准、MID360 扫描、LIO、底盘、Mux、当前位置和当前目标。普通状态持续约 0.45 秒后更新，急停和保持停车会立即显示。目标校验使用原始实时状态。RViz 固定坐标系随运行中的全局代价地图切换，启动阶段默认显示 `odom`。
+
+通过分屏启动的 `odom` 和 `map` RTK 导航默认上限为前进 0.8 m/s、转向 45°/s（0.785398 rad/s）。DWA 参数在 `src/ugv_bringup/config/dwa_field.yaml`。速度上限在导航启动时加载，已运行的导航需要重启才会使用新参数。
 
 - 打开桌面后，依次点击 **定位与传感器 → 底盘驱动 → 起步导航 (odom)**。定位需要点击启动，底盘收到就绪状态后显示 **已完成**。黄色按钮显示正在等待的状态，例如雷达扫描或本地里程计。定位默认读取 `~/.config/slicer/gnss.yaml`，可通过 `SLICER_GNSS_CONFIG` 选择外部 YAML。
 - **地理配准** 要求新鲜 FIXED、前置节点就绪、车辆停稳且没有运行中的导航或空地任务。确认场地后，按钮调用现有的解除停车和约 2.5 m 直行配准流程，最后重新保持停车。
@@ -62,8 +64,8 @@ Jetson 登录本地 X11 桌面后，从仓库根目录执行。脚本根据主�
 - **视觉伺服抓取** 启动原有 Tk 窗口，并将画面置于左侧区域。出现 **底盘串口占用** 时先停车，再停止导航和底盘驱动。等面板显示 **相机就绪** 后，在视觉窗口点击 **移动并抓取**。抓取进程使用底盘期间应保持导航和底盘驱动关闭。
 - **飞机通信节点** 在同一行选择 V1 或 V2，然后点击按钮启动。V2 使用任务执行模式及原有任务校验。已有共享 Master 或通信桥接时直接使用 V2。独立 FKIE 链路可在启动桌面前设置 `SLICER_UAV_IP`。
 - 已从其他终端启动的步骤同样显示实际就绪状态。点击该步骤会提示其来源，需要重启时在原终端停止。完整的子进程日志保存在 `${ROS_HOME:-$HOME/.ros}/log/rtk-desktop-*.log`。
-- **2D Nav Goal** 在 RViz 平面按住并拖动指定位置和朝向。此入口使用现有 `/ugv/move_base` 和正常停车保护。Mux 保持停车、急停、配准采集或已有导航任务时，终端会提示当前阻塞原因。
-- **Waypoint 打点** 可在地图地面平面连续点击。启动终端会打印坐标。配准后使用当前 WGS84 原点换算经纬度，并在 TF 可用时给出 `odom` 坐标。配准前可读取当前固定坐标系的 XY。打点数据只输出到终端。
+- **2D Nav Goal** 在 RViz 平面按住并拖动指定位置和朝向。成功发送后，「正在前往」一行显示该目标的 WGS84 纬度、经度。配准或 TF 尚不可用时显示等待提示。Mux 保持停车、急停、配准采集或已有导航任务时，右侧显示当前阻塞原因。
+- **Waypoint 打点** 可在地图地面平面连续点击。启动终端打印 WGS84 纬度、经度，坐标转换未就绪时显示等待提示。
 - **解除停车 / 保持停车** 根据 Mux 当前状态显示对应操作。点击后可在下方查看等待原因或命令结果。**一键全部停止** 依次关闭面板启动的进程，并反馈停止状态。点击工具栏的 **关闭** 或按 **Esc** 也会清理这些进程。可用 `SLICER_NATIVE_WS` 选择与现有导航一致的 ROS 安装目录。
 
 ## 底盘通信锁存恢复与测试

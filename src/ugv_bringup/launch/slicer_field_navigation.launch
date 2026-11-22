@@ -8,8 +8,8 @@
   <arg name="mapping" default="false"/>
   <arg name="geographic" default="true"/>
   <arg name="enable_depth" default="false"/>
-  <!-- Empty uses the operator's dwa.yaml unchanged; lower-speed profiles are opt-in. -->
-  <arg name="cruise_config" default=""/>
+  <!-- RTK field defaults apply to odom bootstrap and geographic map navigation. -->
+  <arg name="cruise_config" default="$(eval '' if arg('mapping') else dirname() + '/../config/dwa_field.yaml')"/>
   <arg name="start_camera" default="true"/>
   <arg name="camera_serial" default=""/>
   <include unless="$(arg mapping)" file="$(find ugv_bringup)/launch/slicer_odom.launch">
@@ -44,8 +44,7 @@
       - {name: inflation_layer, type: 'costmap_2d::InflationLayer'}
     </rosparam>
   </group>
-  <!-- Only an explicitly selected profile overrides operator limits. The Guard
-       reads final planner limits at startup; restart navigation after edits. -->
+  <!-- The Guard reads final planner limits at startup; restart navigation after edits. -->
   <rosparam if="$(eval arg('cruise_config') != '')" command="load"
             ns="ugv/move_base" file="$(arg cruise_config)"/>
 </launch>

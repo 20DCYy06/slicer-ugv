@@ -19,6 +19,12 @@ def generate(config_dir):
     runtime = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(runtime)
     navigation = runtime.generate(runtime.CONFIG_ROOT, config_dir / 'online_runtime', REPOSITORY)
+    # The RTK Guard caps the DWA output independently of the no-RTK template.
+    field = yaml.safe_load((SOURCE_CONFIG / 'dwa_field.yaml').read_text())['DWAPlannerROS']
+    guard_path = config_dir / 'online_runtime/config/slicer_config.yaml'
+    guard = yaml.safe_load(guard_path.read_text())
+    guard['navigation']['max_forward'] = field['max_vel_x']
+    guard_path.write_text(yaml.safe_dump(guard, sort_keys=False))
     footprint = navigation['local_costmap']['footprint']
     params = {
         'global_costmap': {'footprint': footprint, 'footprint_padding': 0.0},

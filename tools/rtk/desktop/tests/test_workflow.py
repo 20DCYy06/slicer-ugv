@@ -182,7 +182,7 @@ class WorkflowTests(unittest.TestCase):
         self.graph.nodes.discard('/ugv/move_base')
         self.graph.subscribers.clear()
         self.refresh()
-        self.assertEqual(self.starts[-1][1][-1], 'slicer_field_navigation.launch')
+        self.assertEqual(Path(self.starts[-1][1][-1]).name, 'slicer_field_navigation.launch')
         self.assertEqual(self.color('odom'), 'red')
 
     def test_map_refuses_to_stop_external_odom(self):

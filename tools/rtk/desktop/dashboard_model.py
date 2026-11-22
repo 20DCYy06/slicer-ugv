@@ -19,6 +19,7 @@ REGISTRATION_REASONS = {
     'RTK unavailable/stale': '等待新鲜固定解',
     'waiting_for_global_prediction_at_GNSS_stamp': '等待全局定位更新',
 }
+NAV_STATUS_AGE = 1.5
 
 
 def split_screen(x, y, width, height):
@@ -35,11 +36,33 @@ def as_count(value):
 
 
 def coordinates(value):
-    def render(key, precision, unit=''):
-        member = value.get(key)
-        return f'{member:.{precision}f}{unit}' if isinstance(member, (int, float)) and math.isfinite(member) else '—'
-    return (f'{render("latitude", 7)}, {render("longitude", 7)} | '
-            f'X: {render("x", 2, "m")}, Y: {render("y", 2, "m")}')
+    lat, lon = value.get('latitude'), value.get('longitude')
+    if all(isinstance(member, (int, float)) and math.isfinite(member) for member in (lat, lon)):
+        return f'{lat:.7f}, {lon:.7f}'
+    return '—'
+
+
+class StableStatus:
+    """Debounce display changes without feeding values back into control checks."""
+    def __init__(self, delay=.45):
+        self.delay = delay
+        self.shown = {}
+        self.pending = {}
+
+    def update(self, key, value, now, immediate=False):
+        if immediate or key not in self.shown or self.shown[key] == value:
+            self.pending.pop(key, None)
+            self.shown[key] = value
+        else:
+            candidate, since = self.pending.get(key, (value, now))
+            if candidate != value:
+                since = now
+            if now - since >= self.delay:
+                self.shown[key] = value
+                self.pending.pop(key, None)
+            else:
+                self.pending[key] = value, since
+        return self.shown[key]
 
 
 class Dashboard:
@@ -54,12 +77,13 @@ class Dashboard:
     def recent(self, key, now, age=2.5):
         with self._lock:
             sample = self._samples.get(key)
-        return sample[1] if sample and 0 <= now - sample[0] <= age else None
+        # A callback may publish a receive-clock sample after the UI tick took its timestamp.
+        return sample[1] if sample and now - sample[0] <= age else None
 
     def latest_quality(self, now):
         with self._lock:
             samples = [self._samples[key] for key in ('quality', 'gnss') if key in self._samples]
-        fresh = [sample for sample in samples if 0 <= now - sample[0] <= 3.]
+        fresh = [sample for sample in samples if now - sample[0] <= 3.]
         return max(fresh, key=lambda sample: sample[0])[1] if fresh else {}
 
     def planner_frame(self, now):
@@ -72,7 +96,7 @@ class Dashboard:
                 gnss = {}
         except (TypeError, ValueError):
             pass
-        geo = self.recent('geographic', now, 1.5) or {}
+        geo = self.recent('geographic', now, NAV_STATUS_AGE) or {}
         frame = self.planner_frame(now) or 'odom'
         fix, fix_color = FIXES.get(as_count(gnss.get('gga_quality')), FIXES[0])
         satellites = as_count(gnss.get('satellites'))
@@ -80,8 +104,8 @@ class Dashboard:
         usable = str(gnss.get('fresh_rtk_usable')).lower() == 'true' and fix == 'FIXED'
         lidar = self.recent('lidar', now) is True
         lio = self.recent('lio', now) is True
-        driver = self.recent('driver', now, 1.5)
-        mux = self.recent('mux', now, 1.5) or {}
+        driver = self.recent('driver', now, NAV_STATUS_AGE)
+        mux = self.recent('mux', now, NAV_STATUS_AGE) or {}
         state = geo.get('state')
         nav = state in ('ready', 'degraded') and geo.get('registered') is True and frame == 'map'
         if mux.get('emergency_stop_latched') is True:
@@ -108,15 +132,13 @@ class Dashboard:
             registration += ' · 等待 Fixed'
         elif isinstance(reason, str) and reason:
             registration += ' · ' + REGISTRATION_REASONS.get(reason, reason)
-        manual = self.recent('manual', now)
-        route = self.recent('route', now) or {}
-        points = route.get('points', [])
         return {
             'rtk': f'RTK状态：{fix}（卫星：{satellite_text}）',
             'fix_color': fix_color,
             'frame': frame,
             'navigation': nav,
             'degraded': state == 'degraded',
+            'collecting': state == 'collecting',
             'usable': usable,
             'registration': registration,
             'progress': 4 if nav else 3 if state in ('ready', 'collecting', 'degraded')
@@ -126,10 +148,8 @@ class Dashboard:
             'driver': ('就绪', 'good') if driver is True else
             ('未就绪', 'bad') if driver is False else ('等待状态', 'neutral'),
             'mux': mux_label,
-            'destination': '正在前往：' + (manual or route.get('destination') or '待命'),
-            'own': '自身坐标：' + coordinates(self.recent('own', now) or {}),
-            'points': ['Point1：' + coordinates(points[0] if points else {}),
-                       'Point2：棍木', 'Point3：棍木'],
+            'destination': '正在前往：' + (self.recent('destination', now) or '待命'),
+            'own': '当前位置：' + coordinates(self.recent('own', now) or {}),
         }
 
 

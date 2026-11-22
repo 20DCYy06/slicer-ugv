@@ -1,5 +1,8 @@
 """Compact controls for the RTK desktop workflow."""
+import time
+
 from PyQt5 import QtCore, QtGui, QtWidgets
+from dashboard_model import StableStatus
 
 
 STEPS = {
@@ -40,9 +43,11 @@ STYLES = """
 
 
 class WorkflowPanel(QtWidgets.QWidget):
-    def __init__(self, controller):
+    def __init__(self, controller, cancel_pending_goal=None):
         super().__init__(objectName='WorkflowPanel')
         self.controller = controller
+        self.cancel_pending_goal = cancel_pending_goal
+        self.stable = StableStatus()
         self.setStyleSheet(STYLES)
         self.setFont(QtGui.QFont('Noto Sans CJK SC', 10))
         self.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Maximum)
@@ -94,12 +99,15 @@ class WorkflowPanel(QtWidgets.QWidget):
         self.log.setFont(QtGui.QFont('Noto Sans CJK SC', 9))
         self.log.setFixedHeight(64)
         self.log.setSizePolicy(QtWidgets.QSizePolicy.Ignored, QtWidgets.QSizePolicy.Fixed)
-        self.log.setLineWrapMode(QtWidgets.QPlainTextEdit.WidgetWidth)
+        self.log.setLineWrapMode(QtWidgets.QPlainTextEdit.NoWrap)
+        self.log.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
         self.log.setPlaceholderText('等待操作')
         layout.addWidget(self.log)
         self.refresh()
 
     def click(self, key):
+        if self.cancel_pending_goal is not None:
+            self.cancel_pending_goal()
         options = {'mode': self.air_mode.currentData()}
         result = self.controller.click(key, confirmed=False, **options)
         if result == 'confirm':
@@ -111,17 +119,25 @@ class WorkflowPanel(QtWidgets.QWidget):
         self.refresh()
 
     def stop_all(self):
+        if self.cancel_pending_goal is not None:
+            self.cancel_pending_goal()
         self.controller.stop_all()
         self.refresh()
 
     def parking_clicked(self):
+        if self.cancel_pending_goal is not None:
+            self.cancel_pending_goal()
         self.controller.control(self.parking_action)
         self.refresh()
 
-    def refresh(self):
+    def refresh(self, now=None):
+        immediate = now is None
+        now = time.monotonic() if now is None else now
         states = self.controller.states
         for key, button in self.buttons.items():
-            color, suffix, clickable = states[key]
+            raw_color, raw_suffix, clickable = states[key]
+            color, suffix = self.stable.update(key, (raw_color, raw_suffix), now,
+                                               immediate=immediate or not clickable)
             if button.property('stage') != color:
                 button.setProperty('stage', color)
                 button.style().unpolish(button)

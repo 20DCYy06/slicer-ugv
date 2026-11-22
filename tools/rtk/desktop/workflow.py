@@ -20,6 +20,8 @@ NODE_GROUPS = {
 AUX = ('release', 'hold', 'switch_hold', 'calibration_hold', 'stop_nav_hold')
 CONTROL = ('rosrun', 'ugv_slicer_control', 'control.py')
 SERIAL_GROUP = Path(__file__).resolve().parents[2] / 'manual' / 'serial_group.sh'
+FIELD_NAVIGATION = (Path(__file__).resolve().parents[3] / 'src' / 'ugv_bringup' /
+                    'launch' / 'slicer_field_navigation.launch')
 
 
 class OwnedProcess:
@@ -370,7 +372,7 @@ class Workflow:
         commands = {
             'sensors': ('roslaunch', 'ugv_bringup', 'slicer_field_sensors.launch', f'config_file:={gnss}'),
             'driver': ('roslaunch', 'ugv_bringup', 'slicer_body_driver.launch'),
-            'odom': ('roslaunch', 'ugv_bringup', 'slicer_field_navigation.launch', 'geographic:=false'),
+            'odom': ('roslaunch', str(FIELD_NAVIGATION), 'geographic:=false'),
             'vision': ('rosrun', 'slicer_visual_grasp', 'run.sh', '--run'),
             'air': ('roslaunch', 'ugv_bringup', 'slicer_air_ground.launch'),
         }
@@ -455,7 +457,7 @@ class Workflow:
         elif 'odom' not in self.owned and 'switch_hold' not in self.owned and not self.nav_present:
             self.switching = False
             if self.ready('calibrate') and self.ready('sensors') and self.ready('driver'):
-                self._start('map', ('roslaunch', 'ugv_bringup', 'slicer_field_navigation.launch'))
+                self._start('map', ('roslaunch', str(FIELD_NAVIGATION)))
             else:
                 self.report('定位、底盘或配准状态变化，暂停切换。')
 

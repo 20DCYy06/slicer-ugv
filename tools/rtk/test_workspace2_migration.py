@@ -46,8 +46,9 @@ class MigrationTests(unittest.TestCase):
                            cwd=output, check=True, capture_output=True, text=True)
             config = ROOT / 'src/ugv_bringup/config'
             generated_sensors = output / 'online_runtime/config/slicer_config.yaml'
-            self.assertEqual(yaml.safe_load(generated_sensors.read_text()),
-                             yaml.safe_load((config / 'no_rtk/slicer_config.yaml').read_text()))
+            expected = yaml.safe_load((config / 'no_rtk/slicer_config.yaml').read_text())
+            expected['navigation']['max_forward'] = .8
+            self.assertEqual(yaml.safe_load(generated_sensors.read_text()), expected)
             for name in ('footprint.yaml', 'slicer_driver_body_speed.yaml'):
                 self.assertEqual(yaml.safe_load((output / name).read_text()),
                                  yaml.safe_load((config / name).read_text()))

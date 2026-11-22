@@ -1,5 +1,7 @@
 """Resolve operator presets with Noetic XML; no nodes/devices are started."""
+import math
 from pathlib import Path
+import sys
 import unittest
 
 import roslaunch
@@ -9,6 +11,8 @@ import yaml
 ROOT = Path(__file__).resolve().parents[2]
 LAUNCH = ROOT / 'src/ugv_bringup/launch'
 CONFIG = ROOT / 'src/ugv_bringup/config'
+sys.path.insert(0, str(ROOT / 'src/ugv_slicer_control/scripts'))
+from navigation_core import planner_limits
 
 
 def load(name, arguments=()):
@@ -56,20 +60,25 @@ class FieldLaunchTests(unittest.TestCase):
         self.assertFalse(any(n.type in ('c30d_driver_node.py', 'move_base', 'slam_gmapping')
                              for n in config.nodes))
 
-    def assert_navigation_chain(self, config):
+    def assert_navigation_chain(self, config, field=True):
         types = [n.type for n in config.nodes]
         for name in ('move_base', 'arc_velocity_guard.py', 'velocity_mux.py'):
             self.assertEqual(types.count(name), 1)
         for name in ('c30d_driver_node.py', 'ekf_localization_node', 'goal.py', 'control.py'):
             self.assertNotIn(name, types)
         params = config.params
-        self.assertEqual(params['/ugv/move_base/base_local_planner'].value,
-                         'dwa_local_planner/DWAPlannerROS')
-        configured = yaml.safe_load((CONFIG / 'dwa.yaml').read_text())['DWAPlannerROS']
+        plugin = params['/ugv/move_base/base_local_planner'].value
+        self.assertEqual(plugin, 'dwa_local_planner/DWAPlannerROS')
+        prefix = '/ugv/move_base/DWAPlannerROS/'
+        planner = {key[len(prefix):]: param.value for key, param in params.items() if key.startswith(prefix)}
         for key in ('max_vel_x', 'max_vel_trans'):
-            self.assertEqual(params['/ugv/move_base/DWAPlannerROS/' + key].value,
-                             configured[key])
-        self.assertEqual(params['/ugv/move_base/DWAPlannerROS/max_vel_theta'].value, .25)
+            self.assertEqual(planner[key], .8 if field else .4)
+        self.assertAlmostEqual(planner['max_vel_theta'], math.pi / 4 if field else .25)
+        if field:
+            source = Path(params['/slicer_nav_arc_guard/config_file'].value)
+            effective = planner_limits(yaml.safe_load(source.read_text())['navigation'], plugin, planner)
+            self.assertEqual(effective['max_forward'], .8)
+            self.assertAlmostEqual(effective['max_angular'], math.pi / 4)
         self.assertEqual(params['/ugv/move_base/DWAPlannerROS/min_vel_x'].value, 0.0)
         self.assertFalse(params['/ugv/move_base/recovery_behavior_enabled'].value)
         self.assertEqual(params['/ugv/move_base/recovery_behaviors'].value, [])
@@ -128,7 +137,7 @@ class FieldLaunchTests(unittest.TestCase):
 
     def test_online_profile_keeps_map_layers_and_one_gmapping_without_duplicate_ekf(self):
         config = load('slicer_field_navigation.launch', ['mapping:=true'])
-        self.assert_navigation_chain(config)
+        self.assert_navigation_chain(config, field=False)
         self.assert_no_depth(config)
         self.assertEqual(sum(n.type == 'slam_gmapping' for n in config.nodes), 1)
         self.assertEqual(config.params['/ugv/move_base/global_costmap/global_frame'].value, 'map')
@@ -151,7 +160,7 @@ class FieldLaunchTests(unittest.TestCase):
                              for n in config.nodes))
         self.assertTrue(any(n.type == 'depth_obstacles.py' for n in config.nodes))
 
-    def test_explicit_cruise_selection_changes_only_linear_caps_for_both_map_modes(self):
+    def test_explicit_cruise_selection_remains_available_for_both_map_modes(self):
         for mode in ('false', 'true'):
             baseline = load('slicer_field_navigation.launch', ['mapping:=' + mode])
             for filename, cap in (('dwa_cruise_020.yaml', .20), ('dwa_cruise_030.yaml', .30)):
@@ -161,8 +170,11 @@ class FieldLaunchTests(unittest.TestCase):
                 after = {key: p.value for key, p in selected.params.items()}
                 changed = {key for key in before.keys() | after.keys()
                            if before.get(key) != after.get(key)}
-                self.assertEqual(changed, {'/ugv/move_base/DWAPlannerROS/max_vel_x',
-                                           '/ugv/move_base/DWAPlannerROS/max_vel_trans'})
+                expected = {'/ugv/move_base/DWAPlannerROS/max_vel_x',
+                            '/ugv/move_base/DWAPlannerROS/max_vel_trans'}
+                if mode == 'false':
+                    expected.add('/ugv/move_base/DWAPlannerROS/max_vel_theta')
+                self.assertEqual(changed, expected)
                 self.assertEqual(after['/ugv/move_base/DWAPlannerROS/max_vel_x'], cap)
 
 

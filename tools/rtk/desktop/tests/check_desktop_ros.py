@@ -52,13 +52,16 @@ def main():
     odom = rospy.Publisher('/global/odom', Odometry, queue_size=1)
     costmap = rospy.Publisher('/ugv/move_base/global_costmap/costmap', OccupancyGrid, queue_size=1)
     grid_frame = 'odom'
+    status_delay = 0.
+    held = False
     transform = tf2_ros.TransformBroadcaster()
     origin = {'latitude': 31.2, 'longitude': 121.5, 'altitude_ellipsoid_m': 18.}
     active = []
 
     def tick():
         now = rospy.Time.now()
-        status.publish(GoalStatusArray(header=dict_header(now), status_list=active))
+        status.publish(GoalStatusArray(header=dict_header(now - rospy.Duration(status_delay)),
+                                       status_list=active))
         registered = rospy.get_param('/ugv/move_base/global_costmap/global_frame') == 'map'
         geo.publish(json.dumps(dict(state='ready' if registered else 'invalid', registered=registered,
                                     status_stamp=now.to_sec(), origin=origin, datum='WGS84')))
@@ -69,7 +72,7 @@ def main():
             ]),
         ]))
         driver.publish(True)
-        mux.publish(json.dumps(dict(schema_version=1, manual_hold=False, emergency_stop_latched=False)))
+        mux.publish(json.dumps(dict(schema_version=1, manual_hold=held, emergency_stop_latched=False)))
         grid = OccupancyGrid(header=dict_header(now, grid_frame), data=[0])
         grid.info.width = grid.info.height = 1
         grid.info.resolution = .25
@@ -116,12 +119,14 @@ def main():
                                   env=dict(os.environ, ROS_NAMESPACE='/ugv'))
         wait(lambda: dashboard.rtk.text() == 'RTK状态：FIXED（卫星：28 颗）'
              and observer.board.recent('frame', time.monotonic()) == 'odom'
-             and observer.board.recent('action_stamp', time.monotonic(), .3) is not None
+             and observer.board.recent('action', time.monotonic(), .3) is not None
+             and observer.board.recent('configured_frame', time.monotonic()) == 'odom'
              and observer.goal_pub.impl.has_connection('/ugv/move_base'))
-        readable = [dashboard.status, dashboard.registration, dashboard.own, *dashboard.points,
+        readable = [dashboard.status, dashboard.registration,
                     *(row for _, row in dashboard.system.values())]
         assert all(row.font().pointSize() >= max(15, dashboard.rtk.font().pointSize() - 2)
                    for row in readable)
+        assert dashboard.destination.font().pointSize() >= 15
         panel = next(w for w in window.findChildren(QtWidgets.QWidget)
                      if 'RenderPanel' in w.metaObject().className())
         toolbar = window.findChild(QtWidgets.QToolBar, 'DesktopTools')
@@ -136,11 +141,20 @@ def main():
             click('Waypoint 打点')
             wait(lambda: len(clicks) == 1 and '待配准' in output.getvalue())
             assert clicks[0].header.frame_id == 'odom' and not goals
+            # A brief Action heartbeat gap must not reject an otherwise valid click.
+            status_delay = .7
+            wait(lambda: observer.board.recent('action', time.monotonic(), .5) is None
+                 and observer.board.recent('action', time.monotonic(), 1.5) is not None)
             click('2D Nav Goal')
+            wait(lambda: observer.pending_goal is not None)
+            assert not goals
+            status_delay = 0.
             wait(lambda: len(goals) == 1)
             assert goals[0].goal.target_pose.header.frame_id == 'odom'
+            assert dashboard.destination.value == '正在前往：待配准或等待 TF'
             active[:] = [GoalStatus(goal_id=goals[0].goal_id, status=GoalStatus.ACTIVE)]
-            wait(lambda: dashboard.prep_goal.text() == '正在前往：RViz手动目标')
+            wait(lambda: observer.board.recent('action', time.monotonic())
+                 == [(goals[0].goal_id.id, GoalStatus.ACTIVE)])
             click('2D Nav Goal')
             wait(lambda: '当前目标优先' in output.getvalue())
             assert len(goals) == 1
@@ -149,16 +163,37 @@ def main():
             wait(lambda: observer.board.recent('configured_frame', time.monotonic()) == 'map')
             assert manager.getFixedFrame() == 'odom'
             grid_frame = 'map'
-            wait(lambda: manager.getFixedFrame() == 'map' and dashboard.sections.currentIndex() == 1)
-            assert dashboard.points[1].text() == 'Point2：棍木'
-            assert dashboard.points[2].text() == 'Point3：棍木'
+            wait(lambda: manager.getFixedFrame() == 'map'
+                 and re.fullmatch(r'当前位置：31\.\d{7}, 121\.\d{7}', dashboard.own.value))
             click('Waypoint 打点')
             wait(lambda: len(clicks) == 2 and re.search(
-                r'经纬度：3[01]\.\d+, 121\.\d+.*odom X: -1\.00m', output.getvalue()))
+                r'经纬度：3[01]\.\d{7}, 121\.\d{7}\n', output.getvalue()))
             assert clicks[1].header.frame_id == 'map' and len(goals) == 1
+            held = True
+            wait(lambda: (observer.board.recent('mux', time.monotonic()) or {}).get('manual_hold') is True)
+            click('2D Nav Goal')
+            wait(lambda: 'Mux 保持停车' in output.getvalue())
+            assert len(goals) == 1
+            held = False
+            wait(lambda: (observer.board.recent('mux', time.monotonic()) or {}).get('manual_hold') is False)
             click('2D Nav Goal')
             wait(lambda: len(goals) == 2)
             assert goals[1].goal.target_pose.header.frame_id == 'map'
+            wait(lambda: dashboard.destination.value == '正在前往：31.2000000, 121.5000000')
+            assert ' X:' not in output.getvalue()
+            target_row = dashboard.destination.geometry()
+            dashboard.feedback.set_value('等待' * 200)
+            app.processEvents()
+            assert dashboard.destination.geometry() == target_row
+            assert not dashboard.feedback.wordWrap() and dashboard.feedback.toolTip()
+            assert dashboard.destination.text() == dashboard.destination.value
+            active[:] = [GoalStatus(goal_id=goals[1].goal_id, status=GoalStatus.SUCCEEDED)]
+            wait(lambda: dashboard.destination.value == '正在前往：待命')
+            status_delay = 2.
+            wait(lambda: observer.board.recent('action', time.monotonic(), 1.5) is None)
+            click('2D Nav Goal')
+            wait(lambda: '等待当前导航坐标系和 move_base 状态' in output.getvalue())
+            assert len(goals) == 2
         print('RTK_DESKTOP_GUI_PASS split odom map waypoint coordinates manual goal isolation')
     except AssertionError:
         print(output.getvalue(), file=sys.stderr)
