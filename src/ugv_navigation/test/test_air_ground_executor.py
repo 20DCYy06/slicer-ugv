@@ -80,7 +80,7 @@ class Backend:
         self.mux['manual_hold'] = False
         return dict(self.mux)
 
-    def stopped(self, since):
+    def stopped(self, since, allow_missing_action=False):
         return dict(confirmed=self.quiet, reason='' if self.quiet else 'still moving')
 
     def review(self, target, action, since):
@@ -154,6 +154,20 @@ class ExecutorTests(unittest.TestCase):
         self.command('RESUME')
         self.assertEqual(self.backend.releases, 1)
         self.assertEqual(len(self.backend.prep_starts), 2)
+
+    def test_cancel_before_preparation_send_still_needs_quiet_odom(self):
+        self.backend.prep_required = True
+        self.backend.active_server_goal = lambda: None
+        self.backend.quiet = False
+        self.command()
+        self.command('CANCEL')
+        self.backend.prep_phase = 'STOPPED'
+        self.executor.tick()
+        self.executor.tick()
+        self.assertEqual(self.executor.snapshot()['phase'], 'CANCELING')
+        self.backend.quiet = True
+        self.executor.tick()
+        self.assertEqual(self.executor.snapshot()['phase'], 'CANCELED')
 
     def test_cancel_during_switch_does_not_dispatch_even_if_ready_arrives(self):
         self.backend.prep_required = True

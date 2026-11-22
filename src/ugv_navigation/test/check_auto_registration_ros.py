@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Exercise one real WGS84 task interface on a private, device-free ROS graph.
 
-Source the task's Noetic install, then run this script for v1 and v2. The
+Source the task's Noetic install, then run this script for v1, v2 or cli. The
 existing differential plant consumes only final Mux Twist. Scan, local odom,
 receiver FIXED and chassis-ready are synthetic; navigation and global EKF are
 real. The script launches no hardware or transport processes.
@@ -32,10 +32,12 @@ def wait_until(check, label, timeout=15., diagnostic=lambda: None):
 
 def run(protocol, interruption, logs, launch):
     import rosgraph
+    import rospkg
     import rospy
     from diagnostic_msgs.msg import DiagnosticArray, DiagnosticStatus, KeyValue
     from geometry_msgs.msg import Twist
     from move_base_msgs.msg import MoveBaseActionGoal
+    from nav_msgs.msg import Odometry
     from sensor_msgs.msg import NavSatFix
     from slicer_air_ground_msgs.msg import Command, GeoPoint
     from std_msgs.msg import Bool, String
@@ -117,6 +119,11 @@ def run(protocol, interruption, logs, launch):
     publisher = rospy.Publisher(command_topic, Command if protocol == 'v1' else String, queue_size=10)
     seq = 0
 
+    def cli_args(operation, point):
+        return ['rosrun', 'ugv_navigation', 'geographic.py', operation,
+                '--latitude', str(point[0]), '--longitude', str(point[1]),
+                '--altitude-ellipsoid', str(point[2])]
+
     def send(operation, task='TEST_ONLY_first', point=None):
         nonlocal seq
         seq += 1
@@ -139,6 +146,23 @@ def run(protocol, interruption, logs, launch):
             diagnostic=lambda: state.get('task'))
         assert reply['accepted'], reply
 
+    geographic = ['roslaunch', 'ugv_bringup', 'slicer_geographic.launch']
+    forward_global = False
+    if interruption == 'global-output':
+        location = rospkg.RosPack().get_path('ugv_bringup')
+        base_launch = Path(location) / 'launch' / 'slicer_geographic.launch'
+        delayed_launch = logs / base_launch.name
+        delayed_launch.write_text(base_launch.read_text().replace(
+            'to="/global/odom"', 'to="/TEST_ONLY/delayed_global_odom"'))
+        geographic = ['roslaunch', str(delayed_launch)]
+        global_pub = rospy.Publisher('/global/odom', Odometry, queue_size=10)
+
+        def on_global(message):
+            if forward_global:
+                global_pub.publish(message)
+
+        subscriptions.append(rospy.Subscriber('/TEST_ONLY/delayed_global_odom', Odometry,
+                                              on_global, queue_size=10))
     plant = Plant()
 
     def evidence():
@@ -153,23 +177,39 @@ def run(protocol, interruption, logs, launch):
                     velocity_sources=sorted(raw_sources), logs=str(logs))
 
     try:
-        launch('geographic', 'roslaunch', 'ugv_bringup', 'slicer_geographic.launch',
+        launch('geographic', *geographic,
                f'session_file:={logs / "session.json"}')
         launch('runtime', 'roslaunch', 'ugv_bringup', 'slicer_navigation_runtime.launch')
         if protocol == 'v1':
             launch('task', 'roslaunch', 'ugv_bringup', 'slicer_air_ground.launch')
-        else:
+        elif protocol == 'v2':
             launch('task', 'roslaunch', 'ag_ugv_task', 'ugv.launch', 'monitor_only:=false', 'start_fkie:=false')
         wait_until(lambda: (state.get('runtime', {}).get('mode') == 'odom'
                    and state.get('geo', {}).get('paired_rtk_usable')
                    and state.get('mux', {}).get('manual_hold') is False
                    and plant.grid('global_costmap') is not None
-                   and state.get('task', {}).get('phase') == 'IDLE'
-                   and publisher.get_num_connections()), 'released odom startup and qualified RTK', 32., evidence)
+                   and (protocol == 'cli' or (state.get('task', {}).get('phase') == 'IDLE'
+                                             and publisher.get_num_connections()))),
+                   'released odom startup and qualified RTK', 32., evidence)
         assert not state['geo']['registered'] and not goals
 
         set_op = 'SET_TASK' if protocol == 'v1' else 'SET_TARGET'
         initial, destination = wgs84(2.85, 0.), wgs84(2.35, 0.)
+        preview = subprocess.run(cli_args('plan', initial), capture_output=True, text=True, timeout=10.)
+        assert preview.returncode != 0 and ('must be map' in preview.stderr or
+                                            'registered' in preview.stderr), preview
+        assert not goals and not state['runtime']['busy'] and not state['geo']['registered'], evidence()
+        if protocol == 'cli':
+            cli = launch('cli-send', *cli_args('send', destination), '--timeout', '30')
+            wait_until(lambda: cli.poll() is not None, 'CLI geographic arrival', 90., evidence)
+            assert cli.returncode == 0, (logs / 'cli-send.log').read_text()
+            assert [row[0] for row in goals] == ['odom', 'map'], evidence()
+            assert goals[0][3] == '/slicer_navigation_runtime', evidence()
+            expected = to_enu(*destination, state['geo']['origin'])
+            assert math.dist(goals[1][1:3], expected[:2]) < .01, evidence()
+            assert state['geo']['registered'] and len(mux_ids) == 2, evidence()
+            print(f'PASS CLI: plan did not move, send prepared and completed the original map target; {logs}')
+            return
         send(set_op, point=initial)
         wait_until(lambda: state.get('runtime', {}).get('phase') == 'PREPARING',
                    'bounded odom preparation motion', 18., evidence)
@@ -190,6 +230,15 @@ def run(protocol, interruption, logs, launch):
             wait_until(lambda: state.get('runtime', {}).get('phase') == 'PREPARING',
                        'resumed bounded odom motion', 12., evidence)
             assert state['geo']['generation'] == generation, evidence()
+        if interruption == 'global-output':
+            wait_until(lambda: state.get('geo', {}).get('registered')
+                       and state.get('runtime', {}).get('phase') == 'WAITING_GLOBAL',
+                       'registered with global odometry delayed', 30., evidence)
+            time.sleep(2.)
+            assert state['runtime']['phase'] == 'WAITING_GLOBAL', evidence()
+            assert state['task'].get('active', state['task'].get('active_point')) is None, evidence()
+            assert all(row[0] == 'odom' for row in goals) and abs(plant.velocity) < .001, evidence()
+            forward_global = True
         if interruption == 'cancel':
             wait_until(lambda: state.get('runtime', {}).get('phase') == 'SWITCHING_NAVIGATION',
                        'mode switch before cancellation', 30., evidence)
@@ -239,9 +288,11 @@ def run(protocol, interruption, logs, launch):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('protocol', choices=('v1', 'v2'))
-    parser.add_argument('--interrupt', choices=('pause', 'cancel'))
+    parser.add_argument('protocol', choices=('v1', 'v2', 'cli'))
+    parser.add_argument('--interrupt', choices=('pause', 'cancel', 'global-output'))
     args = parser.parse_args()
+    if args.protocol == 'cli' and args.interrupt:
+        parser.error('interruption variants apply to a V1 or V2 task')
     with socket.socket() as free:
         free.bind(('127.0.0.1', 0))
         port = free.getsockname()[1]
@@ -255,6 +306,7 @@ def main():
         with (logs / (label + '.log')).open('w') as output:
             process = subprocess.Popen(argv, stdout=output, stderr=subprocess.STDOUT, start_new_session=True)
         processes.append(process)
+        return process
 
     def master_alive():
         try:

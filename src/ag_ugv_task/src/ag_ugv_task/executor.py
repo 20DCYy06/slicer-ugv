@@ -89,17 +89,19 @@ class TaskExecutor:
         if self.preparation_retry:
             busy = self.backend.active_server_goal()
             if busy is not False:
-                # The runtime can confirm stop after its old navigation process
-                # has exited. There may be no Action/Mux to hold in that gap.
-                if self.preparation_stopped and busy is None:
-                    self._mark_stopped(dict(confirmed=True, source='geographic_preparation'))
-                elif self.clock()-self.stop_since > self.stop_timeout:
-                    self._block('stop not confirmed: fresh idle navigation unavailable')
+                # A canceled preparation can leave no Action/Mux to hold in
+                # the switch gap. Require quiet local odom even in that case.
+                quiet = (self.backend.stopped(self.stop_since, allow_missing_action=True)
+                         if self.preparation_stopped and busy is None else
+                         dict(confirmed=False, reason='fresh idle navigation unavailable'))
+                self._observe_stop(quiet)
                 return
         self._hold()
         if self.active is not None:
             return
-        quiet = self.backend.stopped(self.stop_since)
+        self._observe_stop(self.backend.stopped(self.stop_since))
+
+    def _observe_stop(self, quiet):
         self.stop_result = quiet
         if quiet.get('confirmed'):
             self._mark_stopped(quiet)

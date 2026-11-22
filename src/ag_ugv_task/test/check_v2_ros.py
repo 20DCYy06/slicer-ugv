@@ -74,7 +74,7 @@ class FakeNavigation:
     def position(self):
         return self.xy
 
-    def stopped(self, since):
+    def stopped(self, since, allow_missing_action=False):
         return dict(confirmed=self.held and self.state != 1)
 
     def review(self, target, action, since):

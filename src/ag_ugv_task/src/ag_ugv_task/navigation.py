@@ -169,8 +169,9 @@ class RosNavigation:
     def release(self, expected_hold):
         return self._control('release', expected_hold)
 
-    def stopped(self, since):
-        if self.active_server_goal() is not False:
+    def stopped(self, since, allow_missing_action=False):
+        busy = self.active_server_goal()
+        if busy is True or (busy is None and not allow_missing_action):
             return dict(confirmed=False, reason='fresh global Action termination ACK unavailable')
         _, _, rows = self.geo.observation()
         return self.geometry.quiet_odom_tail([r for r in rows if r['received'] >= since], time.monotonic(),
