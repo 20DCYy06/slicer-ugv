@@ -1,4 +1,10 @@
-# Slicer navigation — ROS Noetic Docker
+# Slicer navigation components
+
+This package supplies the B-spline planner, navigation utilities, and shared
+sensor filters. For the current NoRTK start command and RTK package map, see
+[the package index](../README.md). The defaults and deployment examples below
+describe the older stack. See the [current operations guide](../../docs/OPERATIONS.md)
+for the deployed profiles.
 
 ## Control flow
 

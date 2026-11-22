@@ -35,3 +35,13 @@ FAST-LIO 和 Livox ROS Driver2 已在团队 fork 保留原上游历史、车端�
 - 整车布局按 [PR #3](https://github.com/20DCYy06/slicer-ugv/pull/3) 的保护规则集成。软件源以该 PR 和候选恢复分支为准，当前主线 SHA 可用 `git rev-parse origin/main` 核对。
 - 干净 Catkin 构建与两项隔离 ROS 场景使用候选应用源码，随后只补发布入口的参数保护与文档，并重新安装和验证入口。远端 `prepare` 用公开固定依赖执行静态与设备隔离单测。
 - 现场前先按原版停稳并退出，用发布选择入口核对候选和旧选择。回退同时核对对应源检出与安装。固件与标定单独恢复。
+
+
+## 合入后的日常浏览
+
+从 [ROS 包导航](../../src/README.md) 进入各模式。整车 PR #2 和 #3 的远端任务分支清理前，
+已核对分支末端在 `main` 历史中。原始提交和清理记录保存在
+`~/workspace/slicer/logs/git-cleanup-20261122/`。
+
+在 VS Code 可单独打开 `~/workspace/slicer/Slicer-UGV.code-workspace`，只在源代码管理中显示
+主线整车检出。开发和发布目录的依赖检出仍按各自锁定版本管理。
