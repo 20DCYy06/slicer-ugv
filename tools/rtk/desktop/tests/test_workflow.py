@@ -5,6 +5,7 @@ import sys
 import unittest
 from unittest.mock import Mock, patch
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[4] / 'src/ugv_navigation/scripts'))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from dashboard_model import Dashboard
 from workflow import OwnedProcess, Workflow
@@ -39,7 +40,7 @@ class OwnedProcessTests(unittest.TestCase):
         child.process.poll.return_value = -15
         child.stop_at = 1.
         child.signal_stage = 1
-        with patch('workflow.time.monotonic', return_value=28.), patch('workflow.os.killpg') as kill:
+        with patch('owned_process.time.monotonic', return_value=28.), patch('owned_process.os.killpg') as kill:
             self.assertIsNone(child.poll())
             kill.assert_called_once_with(2345, 0)
             kill.side_effect = ProcessLookupError
@@ -98,31 +99,31 @@ class WorkflowTests(unittest.TestCase):
         self.sample(driver=True)
         self.refresh()
         self.assertEqual(self.color('driver'), 'green')
-        self.workflow.click('odom')
-        self.assertEqual(self.starts[-1][1][-1], 'geographic:=false')
+        self.workflow.click('navigation')
+        self.assertEqual(self.starts[-1][1], ('roslaunch', 'ugv_bringup', 'slicer_navigation_runtime.launch'))
         self.graph.frame = 'odom'
         self.graph.subscribers['/ugv/move_base/goal'] = {'/ugv/move_base'}
         self.sample(action=[])
         self.refresh()
-        self.assertEqual(self.color('odom'), 'green')
-        self.workflow.click('odom')
+        self.assertEqual(self.color('navigation'), 'green')
+        self.workflow.click('navigation')
         self.starts[-1][3].status = 0
         self.graph.frame = None
         self.graph.subscribers.clear()
         self.refresh()
-        self.assertEqual(self.color('odom'), 'red')
+        self.assertEqual(self.color('navigation'), 'red')
 
     def test_external_ready_and_stale_owner_both_block_duplicate(self):
         self.prerequisites()
-        expected = {'sensors': '已就绪', 'driver': '已完成', 'odom': '已就绪'}
-        for key in ('sensors', 'driver', 'odom'):
+        expected = {'sensors': '已就绪', 'driver': '已完成', 'navigation': '外部运行'}
+        for key in ('sensors', 'driver', 'navigation'):
             self.assertEqual(self.workflow.states[key][:2], ('green', expected[key]))
             self.workflow.click(key)
         self.assertEqual(self.starts, [])
         self.clock += 10.
         self.refresh()
-        self.assertEqual(self.color('odom'), 'yellow')
-        self.workflow.click('odom')
+        self.assertEqual(self.color('navigation'), 'yellow')
+        self.workflow.click('navigation')
         self.assertEqual(self.starts, [])
 
     def test_partial_external_sensor_stack_reports_missing_data_and_allows_retry_after_exit(self):
@@ -139,26 +140,26 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual([key for key, *_ in self.starts], ['sensors'])
 
     def test_odom_reports_missing_local_odometry_and_unexpected_exit_can_retry(self):
-        self.workflow.click('odom')
-        self.assertEqual(self.workflow.states['odom'][:2], ('yellow', '等待本地里程计'))
+        self.workflow.click('navigation')
+        self.assertEqual(self.workflow.states['navigation'][:2], ('yellow', '等待本地里程计'))
         self.starts[-1][3].status = 0
         self.refresh()
-        self.assertEqual(self.workflow.states['odom'][:2], ('red', '进程已退出'))
-        self.workflow.click('odom')
-        self.assertEqual([key for key, *_ in self.starts], ['odom', 'odom'])
+        self.assertEqual(self.workflow.states['navigation'][:2], ('red', '进程已退出'))
+        self.workflow.click('navigation')
+        self.assertEqual([key for key, *_ in self.starts], ['navigation', 'navigation'])
 
-    def test_calibration_release_then_initialize_then_restore_hold(self):
+    def test_manual_calibration_requires_released_mux_then_restores_own_hold(self):
         self.prerequisites(fixed=False)
         self.assertIsNone(self.workflow.click('calibrate'))
         self.assertEqual(self.starts, [])
         self.prerequisites()
+        self.assertIsNone(self.workflow.click('calibrate'))
+        self.assertEqual(self.starts, [])
+        self.sample(mux={'manual_hold': False, 'teleop_fresh': False, 'emergency_stop_latched': False,
+                         'mux_instance_id': 'mux-a', 'takeover_generation': 0})
         self.assertEqual(self.workflow.click('calibrate'), 'confirm')
         self.workflow.click('calibrate', confirmed=True)
-        self.assertIn('release', self.starts[-1][1])
         self.assertEqual(self.color('calibrate'), 'yellow')
-        self.starts[-1][3].status = 0
-        self.sample(mux={'manual_hold': False, 'teleop_fresh': False, 'emergency_stop_latched': False})
-        self.refresh()
         self.assertIn('initialize', self.starts[-1][1])
         self.starts[-1][3].status = 0
         self.sample(geographic={'state': 'ready', 'registered': True})
@@ -171,62 +172,74 @@ class WorkflowTests(unittest.TestCase):
         self.refresh()
         self.assertEqual(self.color('calibrate'), 'red')
 
-    def test_map_waits_only_for_owned_odom_and_keeps_sensors_and_driver(self):
+    def test_diagnostic_map_requests_owned_runtime_switch(self):
         self.workflow.click('sensors')
         self.workflow.click('driver')
-        self.workflow.click('odom')
-        odom = self.starts[-1][3]
-        self.prerequisites()
+        self.workflow.click('navigation')
+        self.prerequisites(held=False)
+        self.sample(geographic={'state': 'ready', 'registered': True})
+        self.workflow.click('map')
+        self.assertEqual(self.starts[-1][1], ('rosservice', 'call', '/geographic/navigation_map'))
+        self.assertTrue(all(not p.stopped for _, _, _, p in self.starts[:3]))
+
+    def test_diagnostic_map_releases_only_its_own_calibration_hold(self):
+        self.workflow.click('navigation')
+        self.prerequisites(held=False)
+        self.sample(mux=dict(self.workflow.mux, mux_instance_id='mux-a', takeover_generation=0))
+        self.workflow.click('calibrate', confirmed=True)
+        self.starts[-1][3].status = 0
         self.sample(geographic={'state': 'ready', 'registered': True})
         self.refresh()
+        hold = self.starts[-1][3]
+        ack = dict(self.workflow.mux, manual_hold=True, takeover_generation=1,
+                   last_intent_action='takeover', last_intent_accepted=True)
+        hold.log_lines = [json.dumps(ack)]
+        hold.status = 0
+        self.sample(mux=dict(ack, takeover_generation=2))
+        self.refresh()
         self.workflow.click('map')
-        self.assertTrue(odom.stopped)
-        self.assertEqual(self.color('map'), 'yellow')
-        self.assertTrue(all(not p.stopped for _, _, _, p in self.starts[:2]))
-        odom.status = 0
+        self.assertIs(self.starts[-1][3], hold)
+        self.sample(mux=ack)
+        self.workflow.click('map')
+        step, command, _, release = self.starts[-1]
+        self.assertEqual(step, 'map_release')
+        self.assertEqual(command[-4:], ('--expected-mux-instance', 'mux-a', '--expected-generation', '1'))
+        release.status = 0
         self.refresh()
-        self.assertEqual(len(self.starts), 3)
-        self.graph.frame = None
-        self.graph.nodes.discard('/ugv/move_base')
-        self.graph.subscribers.clear()
-        self.refresh()
-        self.assertEqual(Path(self.starts[-1][1][-1]).name, 'slicer_field_navigation.launch')
-        self.assertEqual(self.color('odom'), 'red')
+        self.assertEqual(self.starts[-1][1], ('rosservice', 'call', '/geographic/navigation_map'))
 
     def test_map_refuses_to_stop_external_odom(self):
         self.prerequisites()
         self.sample(geographic={'state': 'ready', 'registered': True})
-        self.refresh()
         self.workflow.click('map')
         self.assertEqual(self.starts, [])
         self.assertIn('外部终端', self.workflow.messages[-1])
 
-    def test_map_starts_after_external_terminal_stops_odom_and_mux(self):
+    def test_diagnostic_map_starts_managed_runtime_after_external_navigation_stops(self):
         self.prerequisites()
         self.graph.frame = None
         self.graph.nodes.discard('/ugv/move_base')
         self.graph.subscribers.clear()
         self.sample(mux={}, geographic={'state': 'ready', 'registered': True})
-        self.refresh()
         self.workflow.click('map')
-        self.refresh()
-        self.assertEqual([step for step, *_ in self.starts], ['map'])
+        self.assertEqual(self.starts[-1][0:2], ('navigation', (
+            'roslaunch', 'ugv_bringup', 'slicer_navigation_runtime.launch', 'initial_mode:=map')))
 
-    def test_stop_all_cancels_pending_map_even_when_no_process_is_owned(self):
-        self.prerequisites()
-        self.graph.frame = None
-        self.graph.nodes.discard('/ugv/move_base')
-        self.graph.subscribers.clear()
+    def test_stop_all_interrupts_switch_and_stops_only_owned_runtime(self):
+        self.workflow.click('navigation')
+        self.prerequisites(held=False)
         self.sample(geographic={'state': 'ready', 'registered': True})
-        self.refresh()
         self.workflow.click('map')
-        self.assertTrue(self.workflow.switching)
+        owned_navigation, switch = self.starts[-2][3], self.starts[-1][3]
         self.workflow.stop_all()
+        self.assertTrue(switch.stopped)
+        self.assertFalse(owned_navigation.stopped)
+        switch.status = -2
         self.refresh()
-        self.assertEqual(self.starts, [])
+        self.assertTrue(owned_navigation.stopped)
 
     def test_calibration_can_retry_when_manager_remains_collecting_but_worker_exited(self):
-        self.prerequisites()
+        self.prerequisites(held=False)
         self.sample(geographic={'state': 'collecting'})
         self.graph.nodes.add('/slicer_geographic_client_123')
         self.refresh()
@@ -237,16 +250,54 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(self.color('calibrate'), 'red')
         self.assertEqual(self.workflow.click('calibrate'), 'confirm')
 
-    def test_stop_all_holds_owned_navigation_before_signalling_it(self):
-        self.workflow.click('odom')
+    def test_stop_all_cancels_local_wgs84_before_runtime(self):
+        self.workflow.click('navigation')
         navigation = self.starts[-1][3]
         self.prerequisites(held=False)
+        self.sample(runtime={'phase': 'IDLE', 'busy': False})
+        self.assertTrue(self.workflow.send_wgs84(20., 120., 7.))
+        key, command, _, sender = self.starts[-1]
+        self.assertEqual(key, 'wgs84')
+        self.assertEqual(command, ('rosrun', 'ugv_navigation', 'geographic.py', 'send',
+                                   '--latitude', '20.0', '--longitude', '120.0',
+                                   '--altitude-ellipsoid', '7.0'))
         self.workflow.stop_all()
+        self.assertTrue(sender.stopped)
         self.assertFalse(navigation.stopped)
-        self.assertIn('hold', self.starts[-1][1])
-        self.starts[-1][3].status = 0
+        sender.status = -2
         self.refresh()
         self.assertTrue(navigation.stopped)
+
+    def test_failed_local_task_retains_its_destination_without_running_it_again(self):
+        self.workflow.click('navigation')
+        self.prerequisites(held=False)
+        self.sample(runtime={'phase': 'IDLE', 'busy': False})
+        self.assertTrue(self.workflow.send_wgs84(20., 120., 7.))
+        self.starts[-1][3].status = 1
+        self.refresh()
+        self.assertIsNone(self.board.local_target())
+        self.assertEqual(self.board.recent('wgs84_failure', self.clock), {'latitude': 20., 'longitude': 120.})
+        self.assertEqual([key for key, *_ in self.starts], ['navigation', 'wgs84'])
+
+    def test_local_wgs84_can_restart_preparation_after_map_odom_epoch_expires(self):
+        self.workflow.click('navigation')
+        self.prerequisites(held=False)
+        self.graph.frame = 'map'
+        self.sample(runtime={'phase': 'IDLE', 'mode': 'map', 'busy': False},
+                    geographic={'state': 'invalid', 'registered': False})
+        self.assertFalse(self.workflow.ready('navigation'))
+        self.assertTrue(self.workflow.send_wgs84(20., 120., 7.))
+        self.assertEqual([key for key, *_ in self.starts], ['navigation', 'wgs84'])
+
+    def test_auto_preparation_blocks_grasp_and_local_wgs84(self):
+        self.workflow.click('driver')
+        self.workflow.click('navigation')
+        self.prerequisites(held=False)
+        self.sample(runtime={'phase': 'WAITING_RTK', 'busy': True})
+        self.workflow.click('vision')
+        self.assertFalse(self.starts[0][3].stopped)
+        self.assertFalse(self.workflow.send_wgs84(20., 120., 7.))
+        self.assertEqual([key for key, *_ in self.starts], ['driver', 'navigation'])
 
     def test_new_external_local_process_discovered_again_at_click(self):
         self.workflow.click('vision', process_groups={'vision': {820}})
@@ -336,8 +387,8 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(self.color('driver'), 'yellow')
         self.graph.nodes.add('/geographic')
         self.sample(driver=True, lidar=True, odom=(0., 0.))
-        self.workflow.click('odom')
-        self.assertEqual(self.starts[-1][0], 'odom')
+        self.workflow.click('navigation')
+        self.assertEqual(self.starts[-1][0], 'navigation')
         self.assertFalse(grasp.stopped)
         self.assertEqual(grasp.sent, [])
 
@@ -354,8 +405,8 @@ class WorkflowTests(unittest.TestCase):
         restarted = self.starts[-1][3]
         self.graph.nodes.add('/geographic')
         self.sample(driver=True, lidar=True, odom=(0., 0.))
-        self.workflow.click('odom')
-        self.assertEqual(self.starts[-1][0], 'odom')
+        self.workflow.click('navigation')
+        self.assertEqual(self.starts[-1][0], 'navigation')
         nav = self.starts[-1][3]
         self.prerequisites(held=True)
         mux = dict(manual_hold=True, teleop_fresh=False, emergency_stop_latched=False,
@@ -373,7 +424,7 @@ class WorkflowTests(unittest.TestCase):
         self.assertTrue(grasp.stopped)
         grasp.status = 0
         self.refresh()
-        self.assertEqual([key for key, *_ in self.starts], ['driver', 'vision', 'driver', 'odom', 'driver'])
+        self.assertEqual([key for key, *_ in self.starts], ['driver', 'vision', 'driver', 'navigation', 'driver'])
         self.assertFalse(nav.stopped)
         self.assertEqual(self.workflow.states['vision'][:2], ('red', '已释放'))
 
@@ -430,8 +481,8 @@ class WorkflowTests(unittest.TestCase):
         driver = self.starts[-1][3]
         self.graph.nodes.add('/geographic')
         self.sample(driver=True, wheel_still=True, lidar=True, odom=(0., 0.))
-        self.workflow.click('odom')
-        self.assertEqual([key for key, *_ in self.starts], ['driver', 'odom'])
+        self.workflow.click('navigation')
+        self.assertEqual([key for key, *_ in self.starts], ['driver', 'navigation'])
         self.workflow.click('vision')
         self.assertFalse(driver.stopped)
         self.assertIn('等待导航空闲', self.workflow.messages[-1])
@@ -487,29 +538,15 @@ class WorkflowTests(unittest.TestCase):
         self.refresh()
         self.assertEqual(self.workflow.states['air'][:2], ('green', '收到对端消息'))
 
-    def test_owned_idle_navigation_releases_only_generation_bound_startup_hold(self):
-        self.workflow.click('odom')
+    def test_runtime_alone_manages_its_startup_hold(self):
+        self.workflow.click('navigation')
         self.prerequisites()
-        mux = dict(manual_hold=True, teleop_fresh=False, emergency_stop_latched=False,
-                   hold_reason='manual_takeover', mux_instance_id='mux-a', takeover_generation=3)
-        self.sample(mux=mux)
+        self.sample(mux=dict(manual_hold=True, teleop_fresh=False, emergency_stop_latched=False,
+                             hold_reason='startup', mux_instance_id='mux-a', takeover_generation=0))
         self.refresh()
         self.assertEqual(len(self.starts), 1)
-        self.sample(mux=dict(mux, hold_reason='startup', emergency_stop_latched=True))
-        self.refresh()
-        self.assertEqual(len(self.starts), 1)
-        self.sample(mux=dict(mux, hold_reason='startup'))
-        self.refresh()
-        key, argv, _, proc = self.starts[-1]
-        self.assertEqual(key, 'startup_release')
-        self.assertEqual(argv[-4:], ('--expected-mux-instance', 'mux-a', '--expected-generation', '3'))
         self.workflow.stop_all()
-        self.assertTrue(proc.stopped)
-        proc.status = -2
-        self.refresh()
-        # The cached Mux state may still be startup-held while release is in flight.
-        self.assertEqual(self.starts[-1][0], 'stop_nav_hold')
-        self.assertFalse(self.starts[0][3].stopped)
+        self.assertTrue(self.starts[0][3].stopped)
 
     def test_stop_all_signals_only_owned_groups_in_order(self):
         self.workflow.click('sensors')

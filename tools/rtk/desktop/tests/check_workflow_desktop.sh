@@ -39,7 +39,7 @@ export PYTHONPATH="$PWD/src/ugv_navigation/scripts${PYTHONPATH:+:$PYTHONPATH}"
 ./tools/rtk_desktop_ui.sh >"$root/desktop.log" 2>&1 &
 desktop=$!
 for _ in {1..40}; do
-    if xwininfo -root -tree | rg 'RTK 导航 RViz'; then break; fi
+    if xwininfo -root -tree | rg 'RTK 导航 RViz.*1920x1080.*\+0\+0'; then break; fi
     if ! kill -0 "$desktop" 2>/dev/null; then cat "$root/desktop.log"; exit 1; fi
     sleep .25
 done

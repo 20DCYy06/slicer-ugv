@@ -19,7 +19,8 @@ class Route:
     def snapshot(self):
         return dict(task_id=self.task_id, phase=self.phase,
                     paused=self.phase in ('PAUSING', 'PAUSED', 'BLOCKED'),
-                    active=self.active, reason=self.reason)
+                    active=self.active, reason=self.reason,
+                    final_goal=self.backend_point(self.target) if self.target is not None else None)
 
     def next_point(self):
         if self.mvps:

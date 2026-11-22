@@ -54,20 +54,28 @@ def registration_observation_problem(status, ros_now, max_fix_age):
     return None
 
 
-def resolve_target(args, status, current_pose):
+def load_wgs84_target(target_file):
+    with target_file.open(encoding='utf-8') as stream:
+        record = json.load(stream)
+    if (not isinstance(record, dict) or record.get('kind') != 'slicer_geographic_target'
+            or type(record.get('version')) is not int or record['version'] != 1
+            or record.get('datum') != 'WGS84'
+            or record.get('physical_reference') != 'base_link_horizontal'):
+        raise ValueError('unsupported WGS84 base_link target file')
+    lat, lon, height = (record.get(key) for key in ('latitude', 'longitude', 'altitude_ellipsoid_m'))
+    geodetic_to_ecef(lat, lon, height)
+    return dict(latitude=lat, longitude=lon, altitude_ellipsoid_m=height,
+                height_semantics=record.get('height_semantics'))
+
+
+def resolve_target(args, status, current_pose, file_intent=None):
     """Return one fixed map target with original input and explicit yaw policy."""
     origin = origin_record(status)
     original = {'datum': 'WGS84', 'yaw': args.yaw}
     target_file = getattr(args, 'target_file', None)
     if target_file is not None:
-        with target_file.open(encoding='utf-8') as stream:
-            record = json.load(stream)
-        if (not isinstance(record, dict) or record.get('kind') != 'slicer_geographic_target'
-                or type(record.get('version')) is not int or record['version'] != 1
-                or record.get('datum') != 'WGS84'
-                or record.get('physical_reference') != 'base_link_horizontal'):
-            raise ValueError('unsupported WGS84 base_link target file')
-        lat, lon, height = (record.get(key) for key in ('latitude', 'longitude', 'altitude_ellipsoid_m'))
+        record = file_intent if file_intent is not None else load_wgs84_target(target_file)
+        lat, lon, height = (record[key] for key in ('latitude', 'longitude', 'altitude_ellipsoid_m'))
         xyz = list(to_enu(lat, lon, height, origin))
         original.update(kind='captured_wgs84', target_file=str(target_file), latitude=lat,
                         longitude=lon, altitude_ellipsoid_m=height,

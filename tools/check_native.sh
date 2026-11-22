@@ -73,6 +73,8 @@ rosrun slicer_visual_grasp run.sh --check
 
 roslaunch --nodes ugv_bringup slicer_field_sensors.launch
 roslaunch --nodes ugv_bringup slicer_field_navigation.launch geographic:=false
+roslaunch --nodes ugv_bringup slicer_field_navigation.launch geographic:=false preparation:=true
+roslaunch --nodes ugv_bringup slicer_navigation_runtime.launch
 roslaunch --nodes ugv_bringup slicer_field_navigation.launch
 roslaunch --nodes ugv_bringup slicer_body_driver.launch
 roslaunch --nodes ugv_bringup slicer_air_ground.launch

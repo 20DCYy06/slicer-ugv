@@ -78,7 +78,9 @@ class GroundNode:
             phase = {'CANCELING': 'STOPPING', 'CANCELED': 'STOPPED'}[phase]
         elif phase == 'READY' and active:
             phase = 'SWITCHING'
-        if self.route.phase == 'READY' and not active:
+        if exec_.preparing or exec_.preparation_reason:
+            reason = reason or exec_.preparation_reason or None
+        elif self.route.phase == 'READY' and not active:
             status = self.backend.active_server_goal()
             if status is not False:
                 reason = 'WAITING_NAVIGATION' if status is None else 'NAVIGATION_BUSY'
@@ -86,10 +88,13 @@ class GroundNode:
         summary = dict(task_id=self.route.task_id, phase=phase, reason=reason,
                        active=active, mvps=self.route.mvps, target=self.route.target,
                        last_command=self.last_command)
-        signature = json.dumps(summary, sort_keys=True)
+        execution = dict(runtime_phase=exec_.runtime_phase,
+                         preparation_reason=exec_.preparation_reason or None)
+        signature = json.dumps(dict(summary, **execution), sort_keys=True)
         now = time.monotonic()
         if signature != self.last_signature or now - self.published >= 1.0:
             data = snapshot('ugv', rospy.Time.now().to_sec(), self.position(), **summary)
+            data.update(execution)
             self.publisher.publish(String(data=json.dumps(data, ensure_ascii=False, allow_nan=False)))
             self.last_signature, self.published = signature, now
 
@@ -102,10 +107,7 @@ class GroundNode:
                     except queue.Empty:
                         break
                     self.process(raw, stamp)
-                # Don't touch another goal when starting alongside an existing navigator.
-                if (self.route.phase != 'READY' or self.executor.active is not None
-                        or self.backend.active_server_goal() is False):
-                    self.executor.tick()
+                self.executor.tick()
                 self.publish_if_changed()
                 time.sleep(.05)
         finally:

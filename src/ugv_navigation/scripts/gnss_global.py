@@ -11,6 +11,7 @@ from pathlib import Path
 import subprocess
 import sys
 import threading
+import time
 
 import rospy
 from actionlib_msgs.msg import GoalID
@@ -27,8 +28,9 @@ import yaml
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from cup_gnss.enu import to_enu
-from geographic_core import (base_from_antenna, fit_alignment,
+from geographic_core import (base_from_antenna, fit_alignment, fit_trajectory_alignment,
                              interpolate_odom, transform_xy, wrap)
+from geographic_goal_core import quiet_odom_tail
 from geographic_state import antenna_xy, finite, horizontal_covariance, odom_reset, qualified_fix
 
 
@@ -69,7 +71,12 @@ class GeographicLocalization:
         self.datum = self.site.get('datum')
         self.registered, self.collecting = False, False
         self.generation, self.alignment = 0, None
-        self.odoms, self.globals, self.pairs = deque(maxlen=600), deque(maxlen=600), []
+        self.registration_mode, self.registration_started, self.registered_stamp = None, None, None
+        self.trajectory, self.resume_anchor = None, False
+        self.paired_rtk_reason = 'waiting_for_qualified_rtk_odom_pair'
+        fit_trajectory_alignment([], self.lever, **self.options.get('automatic_registration', {}))
+        self.odoms, self.globals = deque(maxlen=600), deque(maxlen=600)
+        self.pairs = deque(maxlen=3600)
         self.pending, self.qualities, self.done = {}, {}, deque(maxlen=1000)
         self.last_fix_stamp_ns = 0
         self.latest, self.qualified_stamp, self.reason = None, None, 'registration_required'
@@ -88,7 +95,13 @@ class GeographicLocalization:
             rospy.Subscriber('/gnss/fix_quality', DiagnosticArray, self.quality, queue_size=20)]
         self.services = [
             rospy.Service('/geographic/begin_registration', Trigger, self.begin),
-            rospy.Service('/geographic/finish_registration', Trigger, self.finish)]
+            rospy.Service('/geographic/finish_registration', Trigger, self.finish),
+            rospy.Service('/geographic/abort_registration', Trigger, self.abort),
+            rospy.Service('/geographic/auto_begin_registration', Trigger, self.auto_begin),
+            rospy.Service('/geographic/auto_check_registration', Trigger, self.auto_check),
+            rospy.Service('/geographic/auto_finish_registration', Trigger, self.auto_finish),
+            rospy.Service('/geographic/auto_suspend_registration', Trigger, self.auto_suspend),
+            rospy.Service('/geographic/auto_abort_registration', Trigger, self.auto_abort)]
         self.timer = rospy.Timer(rospy.Duration(.1), self.tick)
 
     def save(self, reason=''):
@@ -103,22 +116,28 @@ class GeographicLocalization:
 
     def invalidate(self, reason):
         active = self.registered or self.collecting
-        self.registered = self.collecting = False
+        had_evidence = active or self.registration_mode == 'automatic'
+        self.clear_collection()
+        self.registered = False
+        self.registered_stamp = self.qualified_stamp = None
+        self.paired_rtk_reason = 'waiting_for_qualified_rtk_odom_pair'
         self.alignment, self.latest = None, None
         self.last_fix_stamp_ns = 0
         self.reason = reason
-        self.pairs.clear()
         self.odoms.clear()
         self.globals.clear()
         self.pending.clear()
         self.qualities.clear()
-        if not active:
+        self.done.clear()
+        if not had_evidence:
             return
         self.generation += 1
         try:
             self.save(reason)
         except OSError as error:
             self.reason = reason+'; persist_failed: '+str(error)
+        if not active:
+            return
         self.cancel_pub.publish(GoalID())
         # This is the existing ownership protocol, not another velocity output.
         # Only a detected reset invokes it, once, with no release or retry.
@@ -137,6 +156,7 @@ class GeographicLocalization:
     def odom(self, message):
         try:
             row = pose_record(message)
+            row['received'] = time.monotonic()
         except ValueError as error:
             with self.lock:
                 self.invalidate(str(error))
@@ -164,6 +184,8 @@ class GeographicLocalization:
         if row['frame'] != 'map' or row['child'] != 'base_link':
             return
         with self.lock:
+            if self.registered_stamp is not None and row['stamp'] < self.registered_stamp:
+                return
             if self.globals and row['stamp'] <= self.globals[-1]['stamp']:
                 return
             self.globals.append(row)
@@ -194,15 +216,21 @@ class GeographicLocalization:
         with self.lock:
             if self.datum != 'WGS84':
                 return TriggerResponse(False, 'set the verified datum in gnss_site.yaml; no relabelling')
+            if not self.registered and self.registration_mode == 'automatic':
+                return TriggerResponse(False, 'automatic_registration_in_progress')
+            self.clear_collection()
             self.registered, self.collecting = False, True
+            self.registration_mode = 'manual'
             self.generation += 1
-            self.pairs.clear()
+            self.registered_stamp = None
             self.latest, self.alignment = None, None
             self.reason = 'collecting_stationary_endpoints_and_motion'
             return TriggerResponse(True, json.dumps(dict(generation=self.generation, origin=self.origin)))
 
     def finish(self, _request):
         with self.lock:
+            if self.registration_mode == 'automatic':
+                return TriggerResponse(False, 'automatic_registration_in_progress')
             if not self.collecting:
                 return TriggerResponse(False, 'registration_not_collecting')
             try:
@@ -210,54 +238,178 @@ class GeographicLocalization:
                           if abs(pair['odom'].get('vx', 0.)) > .02 or abs(pair['odom'].get('wz', 0.)) > .02]
                 if not moving:
                     raise ValueError('no_motion_between_stationary_windows')
-                start, end = self.pairs[:moving[0]], self.pairs[moving[-1]+1:]
+                pairs = list(self.pairs)
+                start, end = pairs[:moving[0]], pairs[moving[-1]+1:]
                 if not start or not end:
                     raise ValueError('need_stationary_start_and_end_GNSS_windows')
                 alignment = fit_alignment(start+end, self.lever,
                                           self.options['min_alignment_displacement_m'],
                                           self.options['max_alignment_residual_m'])
-                current = self.odoms[-1]
-                x, y = transform_xy(current['x'], current['y'], alignment['yaw'], *alignment['translation'])
-                seed = PoseWithCovarianceStamped()
-                seed.header.frame_id, seed.header.stamp = 'map', rospy.Time.now()
-                seed.pose.pose.position.x, seed.pose.pose.position.y = x, y
-                yaw = wrap(alignment['yaw']+current['yaw'])
-                seed.pose.pose.orientation.z, seed.pose.pose.orientation.w = math.sin(yaw/2), math.cos(yaw/2)
-                for index in (0, 7):
-                    seed.pose.covariance[index] = self.options['gnss_position_std_m']**2
-                for index in (14, 21, 28):
-                    seed.pose.covariance[index] = 1e-6
-                seed.pose.covariance[35] = alignment['heading_std_rad']**2
-                self.alignment = alignment
-                try:
-                    self.save()
-                except OSError as error:
-                    self.alignment = None
-                    self.collecting = False
-                    self.reason = 'persist_failed: '+str(error)
-                    return TriggerResponse(False, self.reason)
-                rospy.wait_for_service('/global_localization/set_pose', timeout=3.)
-                rospy.ServiceProxy('/global_localization/set_pose', SetPose)(SetPoseRequest(pose=seed))
-                self.globals.clear()
-                self.pending.clear()
-                self.qualities.clear()
-                self.latest = None
-                self.registered, self.collecting = True, False
-                self.reason, self.correction_reference, self.rebuild_recommended = '', None, False
-                return TriggerResponse(True, json.dumps(alignment, allow_nan=False))
-            except (ValueError, IndexError, rospy.ROSException, rospy.ServiceException) as error:
+                return self.commit(alignment)
+            except (ValueError, IndexError) as error:
                 self.reason = str(error)
                 return TriggerResponse(False, self.reason)
+
+    def clear_collection(self):
+        self.collecting = False
+        self.registration_mode = self.registration_started = None
+        self.trajectory, self.resume_anchor = None, False
+        self.pairs.clear()
+
+    def stop_collection(self, mode, keep=False):
+        with self.lock:
+            if self.registered or self.registration_mode is None:
+                return TriggerResponse(True, 'no_pending_registration')
+            if self.registration_mode != mode:
+                return TriggerResponse(False, self.registration_mode+'_registration_in_progress')
+            if keep:
+                self.collecting = False
+                self.reason = 'automatic_registration_suspended'
+            else:
+                self.clear_collection()
+                self.reason = 'registration_aborted'
+            return TriggerResponse(True, self.reason)
+
+    def abort(self, _request):
+        return self.stop_collection('manual')
+
+    def auto_abort(self, _request):
+        return self.stop_collection('automatic')
+
+    def auto_suspend(self, _request):
+        return self.stop_collection('automatic', keep=True)
+
+    def auto_begin(self, _request):
+        with self.lock:
+            if self.datum != 'WGS84':
+                return TriggerResponse(False, 'set the verified datum in gnss_site.yaml; no relabelling')
+            if not self.registered:
+                if self.collecting and self.registration_mode != 'automatic':
+                    return TriggerResponse(False, 'manual_registration_in_progress')
+                if not self.collecting:
+                    if self.registration_mode == 'automatic':
+                        self.resume_anchor = bool(self.pairs)
+                    else:
+                        self.clear_collection()
+                        self.generation += 1
+                    self.registration_mode = 'automatic'
+                    self.registration_started = rospy.Time.now().to_sec()
+                    self.collecting = True
+                    self.reason = 'collecting_paired_trajectory'
+            payload = dict(generation=self.generation, origin=self.origin, registered=self.registered)
+            return TriggerResponse(True, json.dumps(payload, allow_nan=False))
+
+    def paired_rtk_problem(self, now, since=None):
+        if self.paired_rtk_reason:
+            return self.paired_rtk_reason
+        stamp = self.qualified_stamp
+        if stamp is None or not 0 <= now-stamp <= self.options['max_fix_age_s']:
+            return 'qualified_RTK_odom_pair_stale'
+        if since is not None and stamp < since:
+            return 'waiting_for_qualified_RTK_odom_pair_after_start'
+        if not self.odoms or not 0 <= now-self.odoms[-1]['stamp'] <= self.options['max_odom_gap_s']:
+            return 'local_odom_stale'
+        return ''
+
+    def trajectory_fit(self):
+        stamp = self.pairs[-1]['stamp'] if self.pairs else None
+        if self.trajectory is None or self.trajectory[0] != stamp:
+            alignment, progress = fit_trajectory_alignment(
+                self.pairs, self.lever, **self.options.get('automatic_registration', {}))
+            self.trajectory = stamp, alignment, progress
+        return self.trajectory[1:]
+
+    def auto_candidate(self, now):
+        if not self.collecting or self.registration_mode != 'automatic':
+            return None, 'automatic_registration_not_collecting'
+        reason = self.paired_rtk_problem(now, self.registration_started)
+        if reason:
+            return None, reason
+        alignment, progress = self.trajectory_fit()
+        return alignment, progress['reason']
+
+    def auto_check(self, _request):
+        with self.lock:
+            alignment, reason = self.auto_candidate(rospy.Time.now().to_sec())
+            return (TriggerResponse(True, json.dumps(alignment, allow_nan=False)) if alignment
+                    else TriggerResponse(False, reason))
+
+    def auto_finish(self, _request):
+        with self.lock:
+            if self.registered and self.registration_mode == 'automatic':
+                return TriggerResponse(True, json.dumps(self.alignment, allow_nan=False))
+            now = rospy.Time.now().to_sec()
+            alignment, reason = self.auto_candidate(now)
+            if not alignment:
+                return TriggerResponse(False, reason)
+            rows = [dict(row, speed=math.hypot(row['vx'], row['vy']), angular_speed=row['wz'])
+                    for row in self.odoms]
+            stop = quiet_odom_tail(rows, time.monotonic(), now,
+                                   window=self.options.get('stop_window_s', 1.),
+                                   max_age=min(.5, self.options['max_odom_gap_s']))
+            if not stop['confirmed']:
+                return TriggerResponse(False, stop['reason'])
+            if not stop['window_start_stamp'] <= self.qualified_stamp <= stop['window_end_stamp']:
+                return TriggerResponse(False, 'waiting_for_qualified_RTK_in_stopped_window')
+            return self.commit(alignment)
+
+    def commit(self, alignment):
+        set_pose = '/global_localization/set_pose'
+        automatic = self.registration_mode == 'automatic'
+        try:
+            rospy.wait_for_service(set_pose, timeout=.25 if automatic else 3.)
+            self.alignment = alignment
+            self.save()
+            seed = PoseWithCovarianceStamped()
+            seed.header.frame_id, seed.header.stamp = 'map', rospy.Time.now()
+            if automatic:
+                reason = self.paired_rtk_problem(seed.header.stamp.to_sec(), self.registration_started)
+                if reason:
+                    self.alignment = None
+                    return TriggerResponse(False, reason)
+            current = self.odoms[-1]
+            x, y = transform_xy(current['x'], current['y'], alignment['yaw'], *alignment['translation'])
+            seed.pose.pose.position.x, seed.pose.pose.position.y = x, y
+            yaw = wrap(alignment['yaw']+current['yaw'])
+            seed.pose.pose.orientation.z, seed.pose.pose.orientation.w = math.sin(yaw/2), math.cos(yaw/2)
+            for index in (0, 7):
+                seed.pose.covariance[index] = self.options['gnss_position_std_m']**2
+            for index in (14, 21, 28):
+                seed.pose.covariance[index] = 1e-6
+            seed.pose.covariance[35] = alignment['heading_std_rad']**2
+            rospy.ServiceProxy(set_pose, SetPose)(SetPoseRequest(pose=seed))
+        except OSError as error:
+            self.alignment = None
+            self.clear_collection()
+            self.reason = 'persist_failed: '+str(error)
+            return TriggerResponse(False, self.reason)
+        except (rospy.ROSException, rospy.ServiceException) as error:
+            self.alignment = None
+            self.reason = 'global_EKF_seed_failed: '+str(error)
+            if automatic:
+                self.clear_collection()
+            return TriggerResponse(False, self.reason)
+        self.globals.clear()
+        self.pending.clear()
+        self.qualities.clear()
+        self.latest = self.qualified_stamp = None
+        self.registered_stamp = seed.header.stamp.to_sec()
+        self.paired_rtk_reason = 'waiting_for_post_registration_pair'
+        self.registered, self.collecting = True, False
+        self.reason, self.correction_reference, self.rebuild_recommended = '', None, False
+        return TriggerResponse(True, json.dumps(alignment, allow_nan=False))
 
     def process_fix(self, message, quality, now):
         fix = dict(stamp=message.header.stamp.to_sec(), stamp_ns=message.header.stamp.to_nsec(),
                    frame=message.header.frame_id, status=message.status.status,
                    latitude=message.latitude, longitude=message.longitude, altitude=message.altitude,
                    covariance_type=message.position_covariance_type, covariance=list(message.position_covariance))
+        if self.registered_stamp is not None and fix['stamp'] < self.registered_stamp:
+            return True
         quality = dict(quality, stamp=fix['stamp'], stamp_ns=fix['stamp_ns'])
         reason = qualified_fix(fix, quality, now, self.options['max_fix_age_s'])
         if reason:
-            self.reason = reason
+            self.reason = self.paired_rtk_reason = reason
             if self.latest is not None:
                 self.latest = dict(self.latest, fresh_rtk_usable=False, rejected_reason=reason)
             self.rejected_count += 1
@@ -269,19 +421,26 @@ class GeographicLocalization:
         nearest = min(self.odoms, key=lambda row: abs(row['stamp']-fix['stamp']))
         odom.update(vx=nearest['vx'], wz=nearest['wz'])
         self.qualified_stamp = fix['stamp']
-        if self.origin is None and self.collecting:
+        self.paired_rtk_reason = ''
+        collect = self.collecting and (self.registration_started is None or fix['stamp'] >= self.registration_started)
+        if self.origin is None and collect:
             self.origin = dict(latitude=fix['latitude'], longitude=fix['longitude'], altitude_ellipsoid_m=fix['altitude'])
             try:
                 self.save()
             except OSError as error:
-                self.collecting = False
+                self.clear_collection()
                 self.reason = 'persist_failed: '+str(error)
                 return True
         if self.origin is None or self.datum != 'WGS84':
             return True
         enu = list(to_enu(fix['latitude'], fix['longitude'], fix['altitude'], self.origin))
-        if self.collecting:
+        if collect:
             self.pairs.append(dict(stamp=fix['stamp'], odom=odom, enu=enu))
+            if self.resume_anchor:
+                self.pairs[-1]['resumed'] = True
+                self.resume_anchor = False
+            self.reason = ('collecting_paired_trajectory' if self.registration_mode == 'automatic'
+                           else 'collecting_stationary_endpoints_and_motion')
         if not self.registered:
             return True
         yaw = self.alignment['yaw']+odom['yaw']
@@ -343,12 +502,18 @@ class GeographicLocalization:
                 elif now-message.header.stamp.to_sec() > self.options['max_fix_age_s']:
                     self.pending.pop(key, None)
             self.qualities = {k: v for k, v in self.qualities.items() if now-k/1e9 <= self.options['max_fix_age_s']}
+            paired_reason = self.paired_rtk_problem(now, self.registration_started if self.collecting else None)
+            progress = None
+            if self.registration_mode == 'automatic':
+                _, progress = self.trajectory_fit()
+                if not self.registered and (paired_reason or not self.collecting):
+                    progress = dict(progress, ready=False, reason=paired_reason if self.collecting else self.reason)
             fresh = (self.latest is not None and self.latest['fresh_rtk_usable'] and
                      0 <= now-self.latest['stamp'] <= self.options['max_fix_age_s'])
             if self.datum != 'WGS84':
                 state, reason = 'unconfigured', 'verified WGS84 datum required'
             elif self.collecting:
-                state, reason = 'collecting', self.reason
+                state, reason = 'collecting', progress['reason'] if progress is not None else self.reason
             elif self.registered:
                 state, reason = ('ready', '') if fresh and not self.reason else ('degraded', self.reason or 'RTK unavailable/stale')
             else:
@@ -357,7 +522,11 @@ class GeographicLocalization:
                          datum=self.datum, origin=self.origin, alignment=self.alignment,
                          latest_observation=self.latest, generation=self.generation,
                          observation_count=self.observation_count, rejected_count=self.rejected_count,
+                         registration_mode=self.registration_mode, alignment_progress=progress,
                          registration_samples=len(self.pairs), qualified_stamp=self.qualified_stamp,
+                         paired_rtk_usable=not paired_reason, paired_rtk_reason=paired_reason,
+                         registered_stamp=self.registered_stamp,
+                         global_stamp=self.globals[-1]['stamp'] if self.globals else None,
                          antenna_in_base_link_xy_m=self.lever, physical_reference='base_link',
                          timestamp_semantics='host receipt/adapter time, not PPS measurement time',
                          depth='enabled/candidate' if self.depth_enabled else 'disabled/not required',

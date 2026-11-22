@@ -78,13 +78,32 @@ class RosNavigation:
                                      is not None else 'task-origin ellipsoid height; 2D Up=0; not measured base height'))
         return target
 
-    def validate_route(self, final, vias):
-        self.geo.frame_check('map')
-        status, pose = self.status(), self.geo.current_pose('map')
-        for point in vias+[final]:
-            self._convert(point, status, pose)
+    def needs_preparation(self):
+        if self.geo.preparation_active() or self.health():
+            return True
+        try:
+            self.geo.frame_check('map')
+        except ValueError:
+            return True
+        if self.geo.prepare_available():
+            try:
+                mux = self.mux_state()
+            except ValueError:
+                return True
+            return mux['manual_hold'] and mux.get('hold_reason') == 'startup'
+        return False
+
+    def prepare_start(self, task_id, target):
+        self.geo.prepare_start(task_id=task_id, target=target)
+
+    def prepare_poll(self):
+        return self.geo.prepare_poll()
+
+    def prepare_cancel(self):
+        self.geo.prepare_cancel()
 
     def target(self, point):
+        self.geo.frame_check('map')
         target = self._convert(point, self.status(), self.geo.current_pose('map'))
         self.ensure_idle()  # A known pre-dispatch failure must not create a phantom owned Action.
         return target
@@ -150,8 +169,9 @@ class RosNavigation:
     def release(self, expected_hold):
         return self._control('release', expected_hold)
 
-    def stopped(self, since):
-        if self.active_server_goal() is not False:
+    def stopped(self, since, allow_missing_action=False):
+        busy = self.active_server_goal()
+        if busy is True or (busy is None and not allow_missing_action):
             return dict(confirmed=False, reason='fresh global Action termination ACK unavailable')
         _, _, rows = self.geo.observation()
         return self.geometry.quiet_odom_tail([r for r in rows if r['received'] >= since], time.monotonic(),

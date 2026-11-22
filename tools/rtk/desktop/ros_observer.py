@@ -19,7 +19,8 @@ from std_msgs.msg import Bool, String
 from slicer_air_ground_msgs.msg import Command
 
 from geographic_core import enu_to_geodetic
-from dashboard_model import ACTIVE_ACTION_STATES, NAV_STATUS_AGE, coordinates, manual_goal_block
+from dashboard_model import (ACTIVE_ACTION_STATES, NAV_STATUS_AGE, coordinates,
+                             manual_goal_block, task_destination)
 
 
 ACTION = '/ugv/move_base'
@@ -52,7 +53,6 @@ class Observer:
         self.board = board
         self.tf = tf2_ros.Buffer(cache_time=rospy.Duration(5.))
         self.listener = tf2_ros.TransformListener(self.tf)
-        self.registration = None
         self.lock = Lock()
         self.goal_id = None
         self.goal_sent = 0.
@@ -69,6 +69,7 @@ class Observer:
             ('/gnss/diagnostics', DiagnosticArray, self.diagnostics),
             ('/gnss/fix_quality', DiagnosticArray, self.fix_quality),
             ('/geographic/status', String, self.geographic),
+            ('/geographic/navigation_runtime', String, self.navigation_runtime),
             ('/scan', LaserScan, lambda m: self.sensor('lidar', m)),
             ('/lio/odom', Odometry, lambda m: self.sensor('lio', m)),
             ('/odom', Odometry, self.local_odom),
@@ -109,6 +110,11 @@ class Observer:
         if value is not None:
             self.board.record('geographic', value)
 
+    def navigation_runtime(self, message):
+        value = json_sample(message, 'stamp')
+        if value is not None:
+            self.board.record('runtime', value)
+
     def sensor(self, key, message):
         if recent_stamp(message.header.stamp.to_sec(), 2.5):
             self.board.record(key, True)
@@ -134,18 +140,6 @@ class Observer:
             return
         self.board.record('odom', (p.x, p.y))
         self.board.record('odom_still', abs(speed.linear.x) <= .02 and abs(speed.angular.z) <= .02)
-        geo = self.board.recent('geographic', time.monotonic(), 1.5) or {}
-        if geo.get('state') != 'collecting':
-            self.registration = None
-            return
-        generation = geo.get('generation')
-        if self.registration is None or self.registration[0] != generation:
-            self.registration = generation, p.x, p.y
-        _, x, y = self.registration
-        self.board.record('registration_motion', {
-            'moving': abs(speed.linear.x) > .02 or abs(speed.angular.z) > .02,
-            'distance': math.hypot(p.x - x, p.y - y),
-        })
 
     def global_odom(self, message):
         p = message.pose.pose.position
@@ -212,6 +206,9 @@ class Observer:
                     self._goal_blocked_locked('未收到新的 move_base 状态，请重新点选', now)
 
     def action_goal(self, message):
+        header = getattr(message, '_connection_header', None) or {}
+        if header.get('callerid', '').startswith('/slicer_navigation_runtime'):
+            return
         pose = message.goal.target_pose
         p = pose.pose.position
         if pose.header.frame_id in ('odom', 'map') and finite(p.x, p.y, p.z) and message.goal_id.id:
@@ -323,6 +320,9 @@ class Observer:
             self._dispatch_goal_locked(message, time.monotonic(), may_wait=True)
 
     def _dispatch_goal_locked(self, message, now, may_wait=False):
+        if self.board.local_target() is not None:
+            self._goal_blocked_locked('正在执行本地 WGS84 任务', now)
+            return
         if self.calibration_active:
             self._goal_blocked_locked('正在地理配准，等待配准动作结束', now)
             return
@@ -332,7 +332,8 @@ class Observer:
         reason = manual_goal_block(frame, self.board.recent('driver', now, NAV_STATUS_AGE),
                                    self.board.recent('mux', now, NAV_STATUS_AGE), status, geo,
                                    [self.board.recent(key, now) for key in ('v1', 'v2')],
-                                   self.desktop_goals)
+                                   self.desktop_goals,
+                                   runtime=self.board.recent('runtime', now, NAV_STATUS_AGE))
         if reason is None:
             reported = dict(status)
             if any(now - seen <= GOAL_STATUS_AGE and goal not in reported and goal not in self.desktop_goals
@@ -370,6 +371,12 @@ class Observer:
               flush=True)
 
     def destination(self, now):
+        target = task_destination(self.board, now)
+        if target:
+            return target
+        runtime = self.board.recent('runtime', now) or {}
+        if runtime.get('busy'):
+            return None
         with self.lock:
             statuses = self.board.recent('action', now, NAV_STATUS_AGE)
             if self.goal_id is not None and (statuses is not None or now - self.goal_sent <= 2.):
@@ -384,7 +391,15 @@ class Observer:
             p = message.pose.position
             geographic = self.wgs84(self.point(message.header.frame_id, p.x, p.y, p.z), now)
             return coordinates(geographic) if geographic else '待配准或等待 TF'
-        return '等待目标坐标' if active else None
+        if active:
+            return '等待目标坐标'
+        failed_target = self.board.recent('wgs84_failure', now, 30.)
+        if failed_target is None and runtime.get('phase') in ('BLOCKED', 'FAILED'):
+            failed_target = runtime.get('target')
+        if isinstance(failed_target, dict):
+            text = coordinates(failed_target)
+            return text if text != '—' else None
+        return None
 
     def view(self, now):
         current = self.board.recent('map_odom', now, 1.5)

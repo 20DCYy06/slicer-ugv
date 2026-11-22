@@ -20,12 +20,30 @@ class Backend:
         self.goals, self.cancels, self.holds, self.releases = [], 0, 0, 0
         self.state, self.xy, self.quiet, self.bad_point = 1, (0., 0.), True, None
         self.review_result = None
+        self.prep_required = False
+        self.prep_phase, self.prep_reason = 'WAITING_RTK', ''
+        self.prep_starts, self.prep_cancels = [], 0
         self.mux = dict(manual_hold=False, emergency_stop_latched=False, teleop_fresh=False,
                         mux_instance_id='mux', takeover_generation=0)
 
     def validate_route(self, final, vias):
         if self.bad_point in [p['latitude'] for p in [final]+vias]:
             raise ValueError('conversion unavailable')
+
+    def needs_preparation(self):
+        return self.prep_required
+
+    def prepare_start(self, task_id, target):
+        self.prep_starts.append((task_id, target))
+
+    def prepare_poll(self):
+        return self.prep_phase, self.prep_reason
+
+    def prepare_cancel(self):
+        self.prep_cancels += 1
+
+    def active_server_goal(self):
+        return bool(self.goals) and self.state not in (2, 3, 4, 5, 8)
 
     def target(self, p):
         return dict(map_xyz=[p['latitude'], p['longitude'], 0.], yaw=1., frame='map',
@@ -62,7 +80,7 @@ class Backend:
         self.mux['manual_hold'] = False
         return dict(self.mux)
 
-    def stopped(self, since):
+    def stopped(self, since, allow_missing_action=False):
         return dict(confirmed=self.quiet, reason='' if self.quiet else 'still moving')
 
     def review(self, target, action, since):
@@ -94,6 +112,88 @@ class ExecutorTests(unittest.TestCase):
         self.assertTrue(result['accepted'], result)
         self.executor.tick()
         return cmd
+
+    def test_first_task_uses_latest_intent_only_after_preparation(self):
+        self.backend.prep_required = True
+        self.command(via_points=[point(3., 4.)])
+        self.assertEqual(self.backend.prep_starts, [('task', point())])
+        self.backend.prep_phase = 'PREPARING'
+        self.executor.tick()
+        self.command('SET_TASK', task='replacement', final_goal=point(7., 8.),
+                     via_points=[point(5., 6.)])
+        state = self.executor.snapshot()
+        self.assertEqual(state['runtime_phase'], 'PREPARING')
+        self.assertIsNone(state['active'])
+        self.assertEqual(state['remaining_via_points'], [point(5., 6.)])
+        self.assertEqual(self.backend.goals, [])
+        self.backend.prep_phase = 'SWITCHING_NAVIGATION'
+        self.command('REPLACE_VIA_POINTS', task='replacement', via_points=[point(8., 9.)])
+        self.assertEqual(self.backend.goals, [])
+        self.backend.prep_phase = 'READY'
+        self.backend.prep_required = False
+        self.executor.tick()
+        self.executor.tick()
+        self.assertEqual(len(self.backend.prep_starts), 1)
+        self.assertEqual(self.backend.prep_cancels, 0)
+        self.assertEqual([goal['original'] for goal in self.backend.goals], [point(8., 9.)])
+
+    def test_pause_during_preparation_waits_for_stop_and_resumes_with_owned_hold(self):
+        self.backend.prep_required = True
+        self.command()
+        self.backend.prep_phase = 'PREPARING'
+        self.command('PAUSE')
+        self.assertEqual(self.backend.prep_cancels, 1)
+        self.assertEqual(self.executor.snapshot()['phase'], 'PAUSING')
+        self.assertEqual(self.backend.goals, [])
+        self.backend.prep_phase = 'STOPPED'
+        self.executor.tick()
+        self.executor.tick()
+        self.assertEqual(self.executor.snapshot()['phase'], 'PAUSED')
+        self.assertTrue(self.backend.mux['manual_hold'])
+        self.backend.prep_phase = 'WAITING_RTK'
+        self.command('RESUME')
+        self.assertEqual(self.backend.releases, 1)
+        self.assertEqual(len(self.backend.prep_starts), 2)
+
+    def test_cancel_before_preparation_send_still_needs_quiet_odom(self):
+        self.backend.prep_required = True
+        self.backend.active_server_goal = lambda: None
+        self.backend.quiet = False
+        self.command()
+        self.command('CANCEL')
+        self.backend.prep_phase = 'STOPPED'
+        self.executor.tick()
+        self.executor.tick()
+        self.assertEqual(self.executor.snapshot()['phase'], 'CANCELING')
+        self.backend.quiet = True
+        self.executor.tick()
+        self.assertEqual(self.executor.snapshot()['phase'], 'CANCELED')
+
+    def test_cancel_during_switch_does_not_dispatch_even_if_ready_arrives(self):
+        self.backend.prep_required = True
+        self.command()
+        self.backend.prep_phase = 'SWITCHING_NAVIGATION'
+        self.command('CANCEL')
+        self.assertEqual(self.backend.prep_cancels, 1)
+        self.backend.prep_phase = 'READY'
+        self.backend.prep_required = False
+        self.executor.tick()
+        self.executor.tick()
+        self.assertEqual(self.executor.snapshot()['phase'], 'CANCELED')
+        self.assertEqual(self.backend.goals, [])
+
+    def test_preparation_failure_preserves_route_without_canceling_unowned_action(self):
+        self.backend.prep_required = True
+        self.command()
+        self.backend.prep_phase, self.backend.prep_reason = 'FAILED', 'external goal in progress'
+        self.executor.tick()
+        self.executor.tick()
+        state = self.executor.snapshot()
+        self.assertEqual(state['phase'], 'BLOCKED')
+        self.assertEqual(state['last_error'], 'external goal in progress')
+        self.assertEqual(state['final_goal'], point())
+        self.assertEqual(self.backend.holds, 0)
+        self.assertEqual(self.backend.cancels, 0)
 
     def test_duplicate_does_not_dispatch_twice(self):
         cmd = self.command()
