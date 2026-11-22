@@ -3,7 +3,7 @@ name: Native Noetic preflight
 on:
   pull_request:
   push:
-    branches: [main, migration/native-noetic, refactor/ros-layout]
+    branches: [main]
 
 permissions:
   contents: read
@@ -14,16 +14,25 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          path: src/slicer-ugv
           persist-credentials: false
-      - name: Install source-check dependencies
+      - name: Install source-check and offline test dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y python3-catkin-pkg python3-yaml
-      - name: Check ROS package layout
+          sudo apt-get install -y python3-catkin-pkg python3-yaml python3-venv python3-pyqt5 python3-numpy
+          python3 -m venv "$RUNNER_TEMP/vcstool"
+          "$RUNNER_TEMP/vcstool/bin/pip" install 'vcstool==0.3.0'
+      - name: Import pinned public source dependencies
+        run: |
+          "$RUNNER_TEMP/vcstool/bin/vcs" import . < src/slicer-ugv/dependencies.repos
+      - name: Check Catkin graph and runtime profiles
+        working-directory: src/slicer-ugv
         run: |
           bash -n tools/build_native.sh
           bash -n tools/check_native.sh
           bash -n tools/no_rtk.sh
-          bash tools/check_native.sh --layout
-      - name: Check runtime profiles with the baseline hardware
-        run: bash tools/check_native.sh --static
+          bash -n tools/run_release.sh
+          bash tools/check_native.sh --static "$GITHUB_WORKSPACE"
+      - name: Run offline unit tests without a ROS master
+        working-directory: src/slicer-ugv
+        run: bash tools/check_offline.sh
