@@ -10,6 +10,12 @@
 | `dependencies.repos` | 硬件、FAST-LIO、Livox 驱动和 SDK2 的路径、公开来源与完整 SHA。 |
 | `deploy/udev/`、`docs/` | 设备规则、运行手册和任务交接。 |
 
+## 车端日常入口
+
+在 Jetson 打开 `~/workspace/slicer/START_HERE.md`。它记录当前选用的发布、RTK 和 NoRTK
+的启停命令、遥控和视觉入口，以及现场验收和旧版回退。源码主线在
+`~/workspace/slicer/main/src/slicer-ugv/`，正式运行从 `~/workspace/slicer/run status` 开始。
+
 ## 从克隆到构建
 
 先按[依赖说明](docs/DEPENDENCIES.md)准备 Focal/Noetic、rosdep 和 `python3-vcstool`。每个工作区各自获取固定依赖，从 `W/src` 组合构建。
