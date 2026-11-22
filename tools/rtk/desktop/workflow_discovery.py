@@ -18,6 +18,7 @@ LAUNCHES = {
     'slicer_body_driver.launch': ('driver',),
     'slicer_driver.launch': ('driver',),
     'slicer_odom.launch': ('nav',),
+    'slicer_navigation_runtime.launch': ('navigation', 'nav'),
     'slicer_online.launch': ('nav',),
     'slicer_air_ground.launch': ('air', 'v1'),
 }
@@ -113,6 +114,8 @@ def _process_keys(argv):
     if name in ('c30d_driver_node.py', 'run_b15_servo.sh', 'run_combined_gamepad.sh',
                 'combined_gamepad.py') or name == 'keyboard.py' and Path(program).parent.name == 'b15_servo':
         return ('driver',)
+    if name == 'navigation_runtime.py':
+        return ('navigation', 'nav')
     if name == 'move_base':
         return ('nav',)
     return ()

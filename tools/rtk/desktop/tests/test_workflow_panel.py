@@ -22,12 +22,13 @@ class WorkflowPanelTests(unittest.TestCase):
         self.controller = Mock()
         self.controller.states = {
             key: ('red', '', True)
-            for key in ('sensors', 'driver', 'odom', 'calibrate', 'map', 'vision', 'air')
+            for key in ('sensors', 'driver', 'navigation', 'calibrate', 'map', 'vision', 'air', 'wgs84')
         }
         self.controller.messages = []
         self.controller.mux = {}
         self.controller.owned = {}
         self.controller.calibrating = False
+        self.controller.switching = False
         self.panel = WorkflowPanel(self.controller)
         self.panel.resize(260, self.panel.sizeHint().height())
         self.panel.show()
@@ -38,7 +39,7 @@ class WorkflowPanelTests(unittest.TestCase):
         QtTest.QTest.mouseClick(button, QtCore.Qt.LeftButton)
 
     def test_step_button_clicks_refresh_and_show_external_ownership(self):
-        for key in ('sensors', 'driver', 'odom', 'calibrate', 'map', 'vision'):
+        for key in ('sensors', 'driver', 'navigation', 'vision'):
             self.click(self.panel.buttons[key])
             self.controller.click.assert_called_with(key, mode='v1', confirmed=False)
         item = self.panel.buttons['sensors']
@@ -72,24 +73,38 @@ class WorkflowPanelTests(unittest.TestCase):
         self.controller.click.return_value = 'confirm'
         confirmation_states = []
         self.panel.calibration_active.connect(confirmation_states.append)
-        self.click(self.panel.buttons['calibrate'])
+        self.panel.diagnostics_actions['calibrate'].trigger()
         confirmation = self.panel.confirmation
         self.assertIsNotNone(confirmation)
         self.assertEqual(confirmation.windowModality(), QtCore.Qt.NonModal)
         self.click(confirmation.button(QtWidgets.QMessageBox.No))
         self.assertEqual(self.controller.click.call_count, 1)
         self.app.processEvents()
-        self.click(self.panel.buttons['calibrate'])
+        self.panel.diagnostics_actions['calibrate'].trigger()
         confirmation = self.panel.confirmation
         self.click(confirmation.button(QtWidgets.QMessageBox.Yes))
         self.controller.click.assert_called_with('calibrate', mode='v1', confirmed=True)
         self.app.processEvents()
-        self.click(self.panel.buttons['calibrate'])
+        self.panel.diagnostics_actions['calibrate'].trigger()
         self.assertIsNotNone(self.panel.confirmation)
         self.click(self.panel.stop_button)
         self.controller.stop_all.assert_called_once_with()
         self.assertIsNone(self.panel.confirmation)
         self.assertEqual(confirmation_states, [True, False, True, False, True, False])
+
+    def test_wgs84_form_calls_shared_sender_and_stop_closes_unsubmitted_form(self):
+        self.click(self.panel.buttons['wgs84'])
+        dialog = self.panel.target_dialog
+        self.assertIsNotNone(dialog)
+        for item, value in zip(dialog.findChildren(QtWidgets.QLineEdit), ('20.2', '120.8', '7')):
+            item.setText(value)
+        self.click(dialog.findChild(QtWidgets.QDialogButtonBox).button(QtWidgets.QDialogButtonBox.Ok))
+        self.controller.send_wgs84.assert_called_once_with('20.2', '120.8', '7')
+        self.assertIsNone(self.panel.target_dialog)
+        self.click(self.panel.buttons['wgs84'])
+        self.click(self.panel.stop_button)
+        self.assertIsNone(self.panel.target_dialog)
+        self.assertEqual(self.controller.send_wgs84.call_count, 1)
 
     def test_slow_process_scan_leaves_stop_responsive(self):
         future = Future()
@@ -162,7 +177,7 @@ class WorkflowPanelTests(unittest.TestCase):
     def test_held_grasp_button_switches_to_release_and_parking_control_is_absent(self):
         self.controller.states['vision'] = ('green', '抓取完成', True)
         self.panel.refresh()
-        self.assertEqual(list(self.panel.buttons)[:4], ['sensors', 'driver', 'vision', 'odom'])
+        self.assertEqual(list(self.panel.buttons)[:4], ['sensors', 'driver', 'vision', 'navigation'])
         self.assertTrue(self.panel.buttons['vision'].text().startswith('3. 释放'))
         self.assertNotIn('解除停车', [button.text() for button in
                                        self.panel.findChildren(QtWidgets.QPushButton)])

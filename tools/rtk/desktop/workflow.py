@@ -1,32 +1,30 @@
 """Orchestrate the existing launch files on the user's ROS master."""
 from collections import deque
 import json
+import math
 import os
 from pathlib import Path
 import shlex
-import signal
-import subprocess
 import sys
-import tempfile
 import time
 
 from dashboard_model import ACTIVE_ACTION_STATES, task_in_progress
+from owned_process import OwnedProcess as ProcessGroup
 from workflow_discovery import Graph, NAV_ACTION
 
-STEPS = ('sensors', 'driver', 'vision', 'odom', 'calibrate', 'map', 'air')
-STOP_ORDER = ('grasp_hold', 'grasp_unhold', 'startup_release', 'release', 'calibrate', 'map', 'odom',
-              'vision', 'air', 'driver', 'sensors')
+STEPS = ('sensors', 'driver', 'vision', 'navigation', 'air', 'wgs84', 'calibrate', 'map')
+STOP_ORDER = ('wgs84', 'grasp_hold', 'grasp_unhold', 'map_release', 'map', 'calibrate',
+              'air', 'navigation', 'vision', 'driver', 'sensors')
 NODE_GROUPS = {
     'sensors': {'/geographic', '/cup_gnss', '/slicer_cloud_to_scan', '/slicer_ekf'},
     'driver': {'/slicer_c30d_driver'},
 }
-AUX = ('startup_release', 'release', 'switch_hold', 'calibration_hold', 'stop_nav_hold',
-       'grasp_hold', 'grasp_unhold')
+AUX = ('map_release', 'calibration_hold', 'grasp_hold', 'grasp_unhold', 'map')
 CONTROL = ('rosrun', 'ugv_slicer_control', 'control.py')
 SERIAL_GROUP = Path(__file__).resolve().parents[2] / 'manual' / 'serial_group.sh'
-FIELD_NAVIGATION = (Path(__file__).resolve().parents[3] / 'src' / 'ugv_bringup' /
-                    'launch' / 'slicer_field_navigation.launch')
-CONTROL_SOURCE = FIELD_NAVIGATION.parents[2] / 'ugv_slicer_control/scripts/control.py'
+CONTROL_SOURCE = Path(__file__).resolve().parents[3] / 'src/ugv_slicer_control/scripts/control.py'
+NAVIGATION = ('roslaunch', 'ugv_bringup', 'slicer_navigation_runtime.launch')
+SWITCH_MAP = ('rosservice', 'call', '/geographic/navigation_map')
 VISUAL_GRASP = ('rosrun', 'slicer_visual_grasp', 'run.sh', '--run', '--headless')
 DRIVER_COMMAND = ('roslaunch', 'ugv_bringup', 'slicer_body_driver.launch')
 # The process runner escalates shutdown at 32 s. Allow another ROS graph poll.
@@ -35,7 +33,7 @@ AIR_PEER_TOPICS = {'v1': '/uav/test', 'v2': '/air_ground/v2/uav_state'}
 GRASP_STATES = {'idle', 'busy', 'held', 'recovery', 'error'}
 
 
-class OwnedProcess:
+class OwnedProcess(ProcessGroup):
     def __init__(self, key, argv, env):
         if key in ('sensors', 'driver'):
             # The setuid sg helper strips the loader path; restore it for the ROS binaries.
@@ -43,67 +41,7 @@ class OwnedProcess:
                 argv = ('env', f'LD_LIBRARY_PATH={env["LD_LIBRARY_PATH"]}', *argv)
             argv = ('bash', '-c', 'source "$1" && shift && run_serial_tool "$@"',
                     'rtk-desktop', str(SERIAL_GROUP), *argv)
-        log_dir = Path(env.get('ROS_HOME') or Path.home() / '.ros') / 'log'
-        log_dir.mkdir(parents=True, exist_ok=True)
-        with tempfile.NamedTemporaryFile(prefix=f'rtk-desktop-{key}-', suffix='.log',
-                                         dir=str(log_dir), delete=False) as stream:
-            self.log = Path(stream.name)
-            self.process = subprocess.Popen(argv, env=env,
-                                            stdin=subprocess.PIPE if key == 'vision' else subprocess.DEVNULL,
-                                            stdout=stream, stderr=subprocess.STDOUT,
-                                            start_new_session=True)
-        self.offset = 0
-        self.pending_line = b''
-        self.stop_at = None
-        self.signal_stage = 0
-
-    def send(self, command):
-        self.process.stdin.write((command + '\n').encode('ascii'))
-        self.process.stdin.flush()
-
-    def _signal(self, sig):
-        try:
-            os.killpg(self.process.pid, sig)
-        except ProcessLookupError:
-            return False
-        return True
-
-    def stop(self):
-        if self.stop_at is None:
-            self.stop_at = time.monotonic()
-            self._signal(signal.SIGINT)
-
-    def poll(self):
-        status = self.process.poll()
-        if self.stop_at is None:
-            return status
-        # sg may exit on SIGTERM before its child finishes closing the serial port.
-        if status is not None and (self.signal_stage == 2 or not self._signal(0)):
-            return status
-        elapsed = time.monotonic() - self.stop_at
-        # Allow roslaunch and Tk to finish their own shutdown handlers.
-        if elapsed > 32. and self.signal_stage == 1:
-            self.signal_stage = 2
-            self._signal(signal.SIGKILL)
-        elif elapsed > 25. and self.signal_stage == 0:
-            self.signal_stage = 1
-            self._signal(signal.SIGTERM)
-        return None
-
-    def lines(self):
-        try:
-            with self.log.open('rb') as stream:
-                # Skip old verbose output rather than stalling the GUI.
-                stream.seek(max(self.offset, self.log.stat().st_size - 8192))
-                data = self.pending_line + stream.read(8192)
-                self.offset = stream.tell()
-        except OSError:
-            return []
-        *lines, self.pending_line = data.split(b'\n')
-        if self.process.poll() is not None and self.pending_line:
-            lines.append(self.pending_line)
-            self.pending_line = b''
-        return [line.decode(errors='replace').strip() for line in lines if line.strip()]
+        super().__init__(key, argv, env, log_prefix='rtk-desktop', stdin=key == 'vision')
 
 
 class Workflow:
@@ -127,15 +65,9 @@ class Workflow:
         self.stopping = set()
         self.exited = {}
         self.messages = deque(maxlen=3)
-        self.switching = False
-        self.switch_deadline = 0.
-        self.nav_to_stop = None
+        self.calibration_hold = None
         self.calibrating = False
-        self.calibration_started = False
         self.stopping_all = False
-        self.next_startup_release = 0.
-        self.startup_release_key = None
-        self.release_interrupted = False
 
     def recent(self, key):
         return self.board.recent(key, self.clock(), 2.5)
@@ -148,9 +80,12 @@ class Workflow:
         graph = self.graph
         if key == 'air':
             return bool(graph.air_mode or graph.processes.get('air'))
-        if key in ('odom', 'map'):
-            return bool(graph.processes.get(key) or
-                        (graph.frame == key and NAV_ACTION in graph.nodes))
+        if key == 'navigation':
+            return self.nav_present
+        if key == 'map':
+            return graph.frame == 'map' and NAV_ACTION in graph.nodes
+        if key == 'wgs84':
+            return False
         if key == 'vision':
             return bool(graph.processes.get(key))
         if key == 'calibrate':
@@ -168,11 +103,20 @@ class Workflow:
         return self.recent('mux') or {}
 
     @property
+    def runtime(self):
+        return self.recent('runtime') or {}
+
+    @property
     def nav_present(self):
-        return bool('odom' in self.owned or 'map' in self.owned
-                    or self.present('odom') or self.present('map') or self.graph.processes.get('nav')
+        return bool('navigation' in self.owned or self.runtime
+                    or any(self.graph.processes.get(key) for key in ('navigation', 'odom', 'map', 'nav'))
                     or {NAV_ACTION, '/slicer_nav_arc_guard', '/slicer_velocity_mux'} & self.graph.nodes
                     or self.graph.publishers.get('/cmd_vel'))
+
+    @property
+    def switching(self):
+        return ('map' in self.owned or 'map_release' in self.owned
+                or self.runtime.get('phase') == 'SWITCHING_NAVIGATION')
 
     @property
     def vision_driver_busy(self):
@@ -183,6 +127,11 @@ class Workflow:
     def air_local_modes(self):
         return tuple(mode for mode in (self.graph.air_mode or '').split('+')
                      if mode and self.recent(mode) is not None)
+
+    def _navigation_connected(self):
+        return (self.graph.online and self.graph.frame in ('odom', 'map')
+                and self.recent('action') is not None
+                and NAV_ACTION in self.graph.subscribers.get(NAV_ACTION + '/goal', ()))
 
     def ready(self, key):
         if key == 'vision':
@@ -197,10 +146,11 @@ class Workflow:
             ready = self.recent('driver')
             return (bool(self.owned.get(key)) or self.present(key)) and (
                 ready is True or (ready is None and self.recent('wheel_odom') is True))
-        if key in ('odom', 'map'):
-            return (self.graph.frame == key and self.recent('action') is not None
-                    and NAV_ACTION in self.graph.subscribers.get(NAV_ACTION + '/goal', ())
-                    and (key == 'odom' or self.ready('calibrate')))
+        if key in ('navigation', 'map'):
+            return self._navigation_connected() and (
+                key == 'navigation' if self.graph.frame == 'odom' else self.ready('calibrate'))
+        if key == 'wgs84':
+            return False
         if key == 'calibrate':
             return self.geo.get('state') == 'ready' and self.geo.get('registered') is True
         if key == 'air':
@@ -214,7 +164,7 @@ class Workflow:
             return '等待雷达扫描' if not self.recent('lidar') else '等待定位数据'
         if key == 'driver':
             return '等待底盘遥测'
-        if key in ('odom', 'map') and self.recent('odom') is None:
+        if key in ('navigation', 'map') and self.recent('odom') is None:
             return '等待本地里程计'
         if key == 'vision':
             return '外部抓取进程'
@@ -228,10 +178,12 @@ class Workflow:
         for key in STEPS:
             owned = key in self.owned
             external = self.present(key) and not owned
-            if key in self.stopping or key == self.nav_to_stop:
+            if key in self.stopping:
                 result[key] = ('yellow', '停止中', False)
             elif key == 'map' and self.switching:
                 result[key] = ('yellow', '切换中', False)
+            elif key == 'wgs84' and owned:
+                result[key] = ('yellow', '取消本地任务', not self.stopping_all)
             elif key == 'calibrate' and (self.calibrating or self.present(key)):
                 result[key] = ('yellow', '配准中', False)
             elif key == 'driver' and self.grasp_handoff in ('to_grasp', 'grasp', 'to_driver'):
@@ -259,6 +211,11 @@ class Workflow:
             elif self.ready(key):
                 status = {'driver': '已完成', 'calibrate': '已配准',
                           'air': '收到对端消息'}.get(key, '已就绪')
+                if key == 'navigation':
+                    if external:
+                        status = '外部运行'
+                    else:
+                        status = 'map 已就绪' if self.graph.frame == 'map' else '等待 WGS84 任务'
                 result[key] = ('green', status, key != 'calibrate' and not self.stopping_all)
             elif owned or external:
                 result[key] = ('yellow', self._waiting_status(key), not self.stopping_all)
@@ -289,7 +246,8 @@ class Workflow:
         return True
 
     def _request_grasp(self):
-        if self.switching or self.calibrating or any(key in self.owned for key in AUX):
+        if (self.runtime.get('busy') or 'wgs84' in self.owned or self.switching
+                or self.calibrating or any(key in self.owned for key in AUX)):
             self.report('请等待当前停车、配准或导航切换操作结束。')
             return
         if self.vision_driver_busy and 'driver' not in self.owned:
@@ -448,8 +406,6 @@ class Workflow:
 
     def _signal_stop(self, key):
         if key not in self.stopping:
-            if key == 'startup_release' and (self.stopping_all or self.nav_to_stop):
-                self.release_interrupted = True
             self.stopping.add(key)
             self.owned[key].stop()
             self.report(f'正在停止 {key}')
@@ -462,42 +418,22 @@ class Workflow:
         if key in ('sensors', 'driver') and self.nav_present and not self.stopping_all:
             self.report('请先停止导航，再关闭定位或底盘。')
             return
-        if key in ('odom', 'map'):
-            self._stop_navigation(key)
+        if key == 'navigation' and not self.stopping_all and (
+                self.calibrating or 'wgs84' in self.owned
+                or self.runtime.get('busy')
+                or any(task_in_progress(self.recent(mode)) for mode in ('v1', 'v2'))):
+            self.report('导航任务或配准仍在运行，请先取消任务或使用一键全部停止。')
             return
         self._signal_stop(key)
-
-    def _stop_navigation(self, key):
-        if self.nav_to_stop is not None or key in self.stopping:
-            return
-        if self.calibrating and not self.stopping_all:
-            self.report('配准中，请使用一键全部停止。')
-            return
-        if 'startup_release' in self.owned:
-            self.nav_to_stop = key
-            self._signal_stop('startup_release')
-            return
-        mux = self.mux
-        key_matches = (mux.get('mux_instance_id'), mux.get('takeover_generation')) == self.startup_release_key
-        # A release just sent by control.py may have reached Mux ahead of the last observed state.
-        need_hold = (mux.get('manual_hold') is False or self.release_interrupted
-                     or (key_matches and mux.get('hold_reason') == 'startup'))
-        if (self.graph.online and need_hold
-                and not any(item in self.owned for item in AUX)
-                and self._move_control('stop_nav_hold', 'hold')):
-            self.nav_to_stop = key
-        else:
-            self._signal_stop(key)
 
     def stop_all(self):
         if self.stopping_all:
             return
         self.grasp_handoff = None
         self.grasp_mux = self.grasp_unpark = None
-        if self.idle and not self.switching:
+        if self.idle:
             self.report('本面板没有可停止的进程。外部流程请在原终端停止。')
             return
-        self.switching = False
         self.stopping_all = True
         self.report('正在停止本面板启动的流程。')
         if 'vision' in self.owned:
@@ -505,14 +441,11 @@ class Workflow:
         self._advance_stop()
 
     def _advance_stop(self):
-        if 'calibration_hold' in self.owned or 'stop_nav_hold' in self.owned:
+        if 'calibration_hold' in self.owned:
             return
         for key in STOP_ORDER:
             if key in self.owned:
-                if key in ('odom', 'map'):
-                    self._stop_navigation(key)
-                else:
-                    self._signal_stop(key)
+                self._signal_stop(key)
                 return
         for key in AUX:
             if key in self.owned:
@@ -527,7 +460,8 @@ class Workflow:
 
     def _nav_idle(self):
         items = self.recent('action')
-        return (items is not None and not any(state in ACTIVE_ACTION_STATES for _, state in items)
+        return (not self.runtime.get('busy') and 'wgs84' not in self.owned
+                and items is not None and not any(state in ACTIVE_ACTION_STATES for _, state in items)
                 and not any(task_in_progress(self.recent(mode)) for mode in ('v1', 'v2')))
 
     def _safe_to_move(self):
@@ -536,13 +470,15 @@ class Workflow:
                 and self.mux.get('emergency_stop_latched') is False)
 
     def _calibration_block(self):
-        for key, title in (('sensors', '定位与传感器'), ('driver', '底盘驱动'), ('odom', '起步导航 (odom)')):
+        for key, title in (('sensors', '定位与传感器'), ('driver', '底盘驱动'), ('navigation', '导航')):
             if not self.ready(key):
                 return f'请先等待{title}就绪。'
+        if self.graph.frame != 'odom':
+            return '直行诊断仅在 odom 导航下可用。'
         if not self._nav_idle():
             return '请先结束运行中的导航或空地任务。'
-        if not self._safe_to_move():
-            return '请检查 Mux 状态、急停与手动控制。'
+        if not self._safe_to_move() or self.mux.get('manual_hold') is not False:
+            return '请在控制端核对停车来源、急停和接管状态。直行诊断需要导航已放行。'
         if self.recent('odom_still') is not True:
             return '请确认车辆停稳，并等待本地里程计。'
         if not self.geo:
@@ -555,26 +491,39 @@ class Workflow:
         if '/ugv/control' in self.graph.nodes and not any(item in self.owned for item in AUX):
             self.report('控制台已在操作停车状态，请稍后再试。')
             return False
-        command = (sys.executable, str(CONTROL_SOURCE)) if key == 'grasp_hold' else CONTROL
+        command = ((sys.executable, str(CONTROL_SOURCE))
+                   if key in ('grasp_hold', 'calibration_hold') else CONTROL)
         return self._start(key, (*command, action, '--timeout', '4', *options))
 
-    def _release_startup_hold(self):
-        if (self.calibrating or self.nav_to_stop or self.stopping
-                or any(key in self.owned for key in AUX) or self.clock() < self.next_startup_release):
-            return
-        if not any(key in self.owned and self.ready(key) for key in ('odom', 'map')):
-            return
-        mux = self.mux
-        instance, generation = mux.get('mux_instance_id'), mux.get('takeover_generation')
-        if (mux.get('manual_hold') is not True or mux.get('hold_reason') != 'startup'
-                or not isinstance(instance, str) or not instance or type(generation) is not int
-                or not (self._safe_to_move() and self._nav_idle() and self.ready('driver'))
-                or self.board.recent('driver', self.clock(), 1.5) is not True):
-            return
-        self.next_startup_release = self.clock() + 2.
-        if self._move_control('startup_release', 'release', '--expected-mux-instance', instance,
-                              '--expected-generation', str(generation)):
-            self.startup_release_key = instance, generation
+    def can_send_wgs84(self):
+        return (not self.stopping_all and not self.calibrating and not self.grasp_handoff
+                and not self.switching and not any(key in self.owned for key in AUX)
+                and not (self.present('vision') and 'vision' not in self.owned)
+                and self.grasp_state not in ('starting', 'busy')
+                and self.ready('driver') and self._nav_idle()
+                and (self._navigation_connected() if self.runtime else self.ready('map')))
+
+    def send_wgs84(self, latitude, longitude, altitude):
+        if not self.can_send_wgs84():
+            self.report('等待底盘和导航就绪，或先结束当前任务、配准和抓取。')
+            return False
+        try:
+            latitude, longitude, altitude = map(float, (latitude, longitude, altitude))
+        except (TypeError, ValueError):
+            self.report('请填写数值经纬度和椭球高。')
+            return False
+        if not (-90. <= latitude <= 90. and -180. <= longitude <= 180. and math.isfinite(altitude)):
+            self.report('请检查 WGS84 经纬度范围和椭球高。')
+            return False
+        command = ('rosrun', 'ugv_navigation', 'geographic.py', 'send',
+                   '--latitude', str(latitude), '--longitude', str(longitude),
+                   '--altitude-ellipsoid', str(altitude))
+        self.board.record('wgs84_failure', None, self.clock())
+        self.board.record('wgs84', {'latitude': latitude, 'longitude': longitude}, self.clock())
+        if self._start('wgs84', command):
+            return True
+        self.board.record('wgs84', None, self.clock())
+        return False
 
     def click(self, key, mode='v1', confirmed=False, process_groups=None):
         if self.stopping_all or key in self.stopping:
@@ -590,14 +539,14 @@ class Workflow:
             else:
                 self.stop(key)
             return
-        if self.present(key) and key != 'calibrate':
+        if self.present(key) and key not in ('calibrate', 'map'):
             pending = '' if self.ready(key) else self._waiting_status(key) + '。'
             self.report(pending + '该步骤由外部终端启动。需要重启时请先在原终端停止。')
             return
         if not self.graph.online and key != 'vision':
             self.report('等待全局 ROS Master。')
             return
-        if key in ('driver', 'odom', 'map', 'calibrate') and (
+        if key in ('driver', 'navigation', 'map', 'calibrate') and (
                 self.grasp_handoff or (self.present('vision') and 'vision' not in self.owned)
                 or ('vision' in self.owned and self.grasp_state in ('starting', 'busy'))):
             self.report('等待视觉抓取结束并交还底盘串口。')
@@ -610,9 +559,6 @@ class Workflow:
         if key == 'map':
             self._map()
             return
-        if key == 'odom' and (self.nav_present or self.switching or 'map' in self.owned):
-            self.report('已有导航或速度 Mux，请先停止。')
-            return
         if key == 'sensors' and (self.graph.publishers.get('/scan') or self.graph.publishers.get('/lio/odom')):
             self.report('已有雷达或 LIO 发布源，请先停止原定位入口。')
             return
@@ -624,7 +570,7 @@ class Workflow:
         commands = {
             'sensors': ('roslaunch', 'ugv_bringup', 'slicer_field_sensors.launch', f'config_file:={gnss}'),
             'driver': DRIVER_COMMAND,
-            'odom': ('roslaunch', str(FIELD_NAVIGATION), 'geographic:=false'),
+            'navigation': NAVIGATION,
             'air': ('roslaunch', 'ugv_bringup', 'slicer_air_ground.launch'),
         }
         if key == 'air' and mode == 'v2':
@@ -651,65 +597,49 @@ class Workflow:
             return
         if not confirmed:
             return 'confirm'
-        self.calibrating = True
-        if self.mux.get('manual_hold') is True:
-            self.calibrating = self._move_control('release', 'release')
-        else:
-            self._start_registration()
-
-    def _start_registration(self):
-        if (self._calibration_block() is None and self.mux.get('manual_hold') is False
-                and self.board.view(self.clock())['usable']):
-            self.calibration_started = self._start(
-                'calibrate', ('rosrun', 'ugv_navigation', 'geographic.py', 'initialize', '--distance', '2.5'))
-        if not self.calibration_started:
-            self.report('配准启动前状态变化，保持停车。')
-            self._end_registration()
+        self.calibrating = self._start(
+            'calibrate', ('rosrun', 'ugv_navigation', 'geographic.py', 'initialize', '--distance', '2.5'))
 
     def _end_registration(self):
-        self.calibration_started = False
-        if self.graph.online and self.mux:
-            if self._move_control('calibration_hold', 'hold'):
-                return
+        instance, generation = self._mux_key(self.mux)
+        if (self.graph.online and self.mux.get('manual_hold') is False
+                and instance and type(generation) is int and self._safe_to_move()
+                and self._move_control('calibration_hold', 'hold', '--require-idle',
+                                       '--expected-mux-instance', instance,
+                                       '--expected-generation', str(generation))):
+            return
         self.calibrating = False
-        self.report('未确认停车状态，请查看 Mux。')
+        self.report('请查看 Mux，确认诊断结束后车辆保持停车。')
 
     def _map(self):
-        if self.switching:
+        if self.switching or self.graph.frame == 'map':
             return
         if not self.ready('calibrate'):
-            self.report('请先完成第 5 步地理配准。')
+            self.report('请等待地理配准就绪。')
             return
         if not (self.ready('sensors') and self.ready('driver')):
             self.report('切换前请等待定位与底盘就绪。')
             return
-        if self.nav_present and 'odom' not in self.owned:
-            self.report('odom 导航由外部终端启动。请在原终端停掉导航，保留定位和底盘。')
+        if self.nav_present and 'navigation' not in self.owned:
+            self.report('导航由外部终端启动，请在该终端管理，或由统一入口提交 WGS84 任务。')
             return
         if self.recent('odom_still') is not True or (
-                'odom' in self.owned and not (self._safe_to_move() and self._nav_idle())):
+                'navigation' in self.owned and not (self._safe_to_move() and self._nav_idle())):
             self.report('切换导航前请结束任务，确认车辆停稳。')
             return
         if any(key in self.owned for key in AUX) or self.calibrating:
             self.report('请等待配准与停车操作结束。')
             return
-        self.switching = True
-        self.switch_deadline = self.clock() + 30.
-        if 'odom' in self.owned and self.mux.get('manual_hold') is False:
-            self.switching = self._move_control('switch_hold', 'hold')
-        elif 'odom' in self.owned:
-            self._signal_stop('odom')
-
-    def _advance_map(self):
-        if self.clock() > self.switch_deadline:
-            self.switching = False
-            self.report('等待旧导航退出超时。')
-        elif 'odom' not in self.owned and 'switch_hold' not in self.owned and not self.nav_present:
-            self.switching = False
-            if self.ready('calibrate') and self.ready('sensors') and self.ready('driver'):
-                self._start('map', ('roslaunch', str(FIELD_NAVIGATION)))
-            else:
-                self.report('定位、底盘或配准状态变化，暂停切换。')
+        if 'navigation' not in self.owned:
+            self._start('navigation', (*NAVIGATION, 'initial_mode:=map'))
+        elif self.mux.get('manual_hold') is False:
+            self._start('map', SWITCH_MAP)
+        elif self.calibration_hold == self._mux_key(self.mux):
+            instance, generation = self.calibration_hold
+            self._move_control('map_release', 'release',
+                               '--expected-mux-instance', instance, '--expected-generation', str(generation))
+        else:
+            self.report('请在原控制端核对并解除其停车状态。')
 
     def _exit(self, key, status, log):
         stopping = key in self.stopping
@@ -743,31 +673,20 @@ class Workflow:
             self.grasp_mux = self.grasp_unpark = None
             if status != 0 and not self.stopping_all:
                 self.report('导航仍保持停车，请检查 Mux。')
-        if key in ('odom', 'map'):
-            self.startup_release_key = None
-            self.release_interrupted = False
-        if key == 'startup_release' and self.nav_to_stop is not None:
-            target, self.nav_to_stop = self.nav_to_stop, None
-            if target in self.owned:
-                self._stop_navigation(target)
+        if key == 'wgs84':
+            if status != 0 and not stopping:
+                self.board.record('wgs84_failure', self.board.local_target(), self.clock())
+            self.board.record('wgs84', None, self.clock())
         if key == 'calibrate':
             self._end_registration()
-        elif key == 'release' and self.calibrating:
-            if status == 0 and not self.stopping_all:
-                self._start_registration()
-            else:
-                self._end_registration()
         elif key == 'calibration_hold':
+            if status != 0:
+                self.calibration_hold = None
             self.calibrating = False
-        elif key == 'switch_hold' and self.switching:
-            if status == 0 and 'odom' in self.owned:
-                self._signal_stop('odom')
-            else:
-                self.switching = False
-        elif key == 'stop_nav_hold':
-            target, self.nav_to_stop = self.nav_to_stop, None
-            if target in self.owned:
-                self._signal_stop(target)
+        elif key == 'map_release':
+            self.calibration_hold = None
+            if status == 0 and not self.stopping_all and 'navigation' in self.owned:
+                self._start('map', SWITCH_MAP)
 
     def update(self, graph=None, read_logs=True):
         if graph is not None:
@@ -781,7 +700,7 @@ class Workflow:
                 lines = proc.lines()
                 if key == 'vision':
                     self._grasp_log(lines, status is None)
-                elif key == 'grasp_hold' and self.grasp_handoff == 'parking':
+                elif key in ('grasp_hold', 'calibration_hold'):
                     for line in lines:
                         if line.startswith('{'):
                             try:
@@ -790,10 +709,13 @@ class Workflow:
                                 continue
                             if (held.get('last_intent_action') == 'takeover' and held.get('manual_hold') is True
                                     and held.get('last_intent_accepted') is True):
-                                self.grasp_mux = self._mux_key(held)
+                                if key == 'calibration_hold':
+                                    self.calibration_hold = self._mux_key(held)
+                                elif self.grasp_handoff == 'parking':
+                                    self.grasp_mux = self._mux_key(held)
                 concise = [line for line in lines if any(
                     token in line for token in ('ERROR', 'FATAL', 'RLException', 'PermissionError',
-                                                'Traceback', '相机', '[READY]', 'control:', '"reason":'))]
+                                                'Traceback', '相机', '[READY]', 'control:', '"reason":', 'message:'))]
                 if concise:
                     self.report(concise[-1][:210])
             if status is not None:
@@ -802,9 +724,5 @@ class Workflow:
                 self._exit(key, status, getattr(proc, 'log', None))
         if self.stopping_all:
             self._advance_stop()
-        elif self.switching:
-            self._advance_map()
         elif self.grasp_handoff is not None:
             self._advance_grasp_handoff(fresh_graph=graph is not None)
-        else:
-            self._release_startup_hold()

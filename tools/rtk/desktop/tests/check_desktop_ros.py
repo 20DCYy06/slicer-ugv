@@ -47,6 +47,8 @@ def main():
     ]
     status = rospy.Publisher('/rtk_desktop_test/status_input', GoalStatusArray, queue_size=1)
     geo = rospy.Publisher('/geographic/status', String, queue_size=1)
+    runtime_pub = rospy.Publisher('/geographic/navigation_runtime', String, queue_size=1)
+    v2_pub = rospy.Publisher('/air_ground/v2/state', String, queue_size=1)
     gnss = rospy.Publisher('/gnss/diagnostics', DiagnosticArray, queue_size=1)
     driver = rospy.Publisher('/slicer_c30d_driver/ready', Bool, queue_size=1)
     mux = rospy.Publisher('/cup_nav/manual_state', String, queue_size=1)
@@ -58,6 +60,8 @@ def main():
     transform = tf2_ros.TransformBroadcaster()
     origin = {'latitude': 31.2, 'longitude': 121.5, 'altitude_ellipsoid_m': 18.}
     active = []
+    runtime = {'phase': 'IDLE', 'busy': False}
+    route = {'phase': 'IDLE'}
 
     def tick():
         now = rospy.Time.now()
@@ -72,6 +76,8 @@ def main():
                 KeyValue('fresh_rtk_usable', 'true'),
             ]),
         ]))
+        runtime_pub.publish(json.dumps(dict(runtime, stamp=now.to_sec())))
+        v2_pub.publish(json.dumps(dict(route, updated_at=now.to_sec())))
         driver.publish(True)
         mux.publish(json.dumps(dict(schema_version=1, manual_hold=held, emergency_stop_latched=False)))
         grid = OccupancyGrid(header=dict_header(now, grid_frame), data=[0])
@@ -183,6 +189,24 @@ def main():
             assert len(goals) == 2
             active[1].status = GoalStatus.SUCCEEDED
             active.pop()
+            runtime.update(phase='PREPARING', busy=True, distance_m=2.4, span_m=1.7, rmse_m=.06,
+                           target={'latitude': 31.1, 'longitude': 121.1}, reason='paired RTK')
+            route.update(task_id='inflight', phase='READY', target={'lat': 31.3, 'lon': 121.4})
+            temporary = MoveBaseActionGoal(goal_id=GoalID(id='temporary-odom'), goal=goals[1].goal)
+            temporary._connection_header = {'callerid': '/slicer_navigation_runtime'}
+            observer.action_goal(temporary)
+            assert 'temporary-odom' not in observer.action_goals
+            active.append(GoalStatus(goal_id=temporary.goal_id, status=GoalStatus.ACTIVE))
+            wait(lambda: dashboard.destination.value == '正在前往：31.3000000, 121.4000000'
+                 and '自动准备运动' in dashboard.task_phase.value
+                 and '路程 2.4 m · 展开 1.7 m · 残差 0.06 m' == dashboard.task_metrics.value)
+            click('2D Nav Goal')
+            wait(lambda: '正在自动准备地理航行' in output.getvalue())
+            assert len(goals) == 2
+            route.update(phase='STOPPED')
+            runtime.update(phase='IDLE', busy=False)
+            active.pop()
+            wait(lambda: dashboard.destination.value == '正在前往：待命')
             rospy.set_param('/ugv/move_base/global_costmap/global_frame', 'map')
             wait(lambda: observer.board.recent('configured_frame', time.monotonic()) == 'map')
             assert manager.getFixedFrame() == 'odom'
@@ -198,6 +222,8 @@ def main():
             wait(lambda: '正在地理配准' in output.getvalue())
             assert len(goals) == 2
             observer.set_calibration_active(False)
+            runtime.update(phase='BLOCKED', reason='previous WGS84 preparation blocked')
+            wait(lambda: dashboard.destination.value == '正在前往：31.1000000, 121.1000000')
             held = True
             wait(lambda: (observer.board.recent('mux', time.monotonic()) or {}).get('manual_hold') is True)
             click('2D Nav Goal')
@@ -208,7 +234,10 @@ def main():
             click('2D Nav Goal')
             wait(lambda: len(goals) == 3)
             assert goals[2].goal.target_pose.header.frame_id == 'map'
-            wait(lambda: dashboard.destination.value == '正在前往：31.2000000, 121.5000000')
+            active[:] = [GoalStatus(goal_id=goals[2].goal_id, status=GoalStatus.ACTIVE)]
+            wait(lambda: dashboard.destination.value == '正在前往：31.2000000, 121.5000000'
+                 and dashboard.task_phase.value == '任务阶段：导航中')
+            runtime.update(phase='IDLE')
             assert ' X:' not in output.getvalue()
             target_row = dashboard.destination.geometry()
             dashboard.feedback.set_value('等待' * 200)
@@ -223,7 +252,7 @@ def main():
             click('2D Nav Goal')
             wait(lambda: '等待当前导航坐标系和 move_base 状态' in output.getvalue())
             assert len(goals) == 3
-        print('RTK_DESKTOP_GUI_PASS split odom map waypoint coordinates manual goal isolation')
+        print('RTK_DESKTOP_GUI_PASS split odom map waypoint WGS84 preparation manual goal isolation')
     except AssertionError:
         print(output.getvalue(), file=sys.stderr)
         raise

@@ -30,8 +30,6 @@ QWidget#Dashboard { background: #101923; color: #e9f3fc; }
 QLabel { color: #e9f3fc; }
 QLabel[muted="true"] { color: #a3b6c7; }
 QFrame#Readouts { background: #172534; border: 1px solid #2c4051; border-radius: 8px; }
-QProgressBar { background: #293e50; border: 0; border-radius: 3px; }
-QProgressBar::chunk { background: #59c4ec; border-radius: 3px; }
 QToolBar#DesktopTools { background: #172534; padding: 5px; border-bottom: 1px solid #344d60; spacing: 7px; }
 QToolBar#DesktopTools QToolButton { color: #e9f3fc; padding: 7px 12px; background: #243a4b; border-radius: 4px; }
 QToolBar#DesktopTools QToolButton:checked { background: #79cfed; color: #0a2030; }
@@ -107,9 +105,10 @@ class Readouts(QtWidgets.QWidget):
         self.destination = ReadoutLine()
         self.own = ReadoutLine()
         self.registration = ReadoutLine()
-        self.progress = QtWidgets.QProgressBar(minimum=0, maximum=4, textVisible=False)
-        self.progress.setFixedHeight(7)
-        for item in (self.destination, self.own, self.registration, self.progress):
+        self.task_phase = ReadoutLine()
+        self.task_metrics = ReadoutLine(muted=True)
+        self.task_metrics.hide()
+        for item in (self.destination, self.own, self.registration, self.task_phase, self.task_metrics):
             rows.addWidget(item)
         self.system = {}
         for name, title in (('lidar', 'MID360 扫描'), ('lio', 'LIO'), ('driver', '底盘驱动'), ('mux', 'Mux')):
@@ -167,7 +166,9 @@ class Readouts(QtWidgets.QWidget):
         self.status.set_value(stable.update('status', status, now))
         self.registration.set_value(stable.update('registration', view['registration'], now,
                                                   immediate=view['collecting']))
-        self.progress.setValue(stable.update('progress', view['progress'], now))
+        self.task_phase.set_value(view['task_phase'])
+        self.task_metrics.set_value(view['task_metrics'])
+        self.task_metrics.setVisible(bool(view['task_metrics']))
         for key, (title, widget) in self.system.items():
             value = view[key]
             immediate = (key == 'driver' and value[1] == 'bad'

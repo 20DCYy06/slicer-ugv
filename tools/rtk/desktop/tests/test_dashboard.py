@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from dashboard_model import Dashboard, StableStatus, coordinates, manual_goal_block
+from dashboard_model import Dashboard, StableStatus, coordinates, manual_goal_block, task_destination
 
 
 class DashboardTests(unittest.TestCase):
@@ -58,6 +58,30 @@ class DashboardTests(unittest.TestCase):
         self.assertIn('7', view['registration'])
         self.assertIn('急停', view['mux'][0])
 
+    def test_auto_preparation_shows_distance_span_residual_and_latest_true_target(self):
+        board = Dashboard()
+        runtime = {'phase': 'PREPARING', 'busy': True, 'reason': 'collecting',
+                   'target': {'latitude': 19., 'longitude': 119.},
+                   'distance_m': 2.9, 'span_m': 1.5, 'rmse_m': .04}
+        board.record('runtime', runtime, 1.)
+        board.record('v2', {'task_id': 'route', 'phase': 'READY',
+                            'target': {'lat': 20., 'lon': 120.}}, 1.)
+        view = board.view(1.)
+        self.assertIn('自动准备', view['task_phase'])
+        self.assertIn('路程 2.9 m', view['task_metrics'])
+        self.assertIn('展开 1.5 m', view['task_metrics'])
+        self.assertIn('残差 0.04 m', view['task_metrics'])
+        self.assertEqual(task_destination(board, 1.), '20.0000000, 120.0000000')
+        self.assertIn('自动准备', manual_goal_block('odom', True, {}, [], {}, [], runtime=runtime))
+
+    def test_a_new_active_goal_takes_precedence_over_a_prior_preparation_failure(self):
+        board = Dashboard()
+        board.record('runtime', {'phase': 'BLOCKED', 'busy': False, 'reason': 'no path',
+                                 'target': {'latitude': 20., 'longitude': 120.}}, 1.)
+        self.assertIn('任务受阻', board.view(1.)['task_phase'])
+        board.record('action', [('new-rviz-goal', 1)], 1.)
+        self.assertEqual(board.view(1.)['task_phase'], '任务阶段：导航中')
+
     def test_only_wgs84_is_displayed_for_position_and_destination(self):
         board = Dashboard()
         point = {'latitude': 20., 'longitude': 120., 'x': .25, 'y': 2.5}
@@ -69,6 +93,7 @@ class DashboardTests(unittest.TestCase):
     def test_desktop_goal_respects_existing_owners_and_holds(self):
         mux = {'manual_hold': False, 'emergency_stop_latched': False}
         self.assertIsNone(manual_goal_block('odom', True, mux, [], {}, []))
+        self.assertIn('接管', manual_goal_block('odom', True, dict(mux, teleop_fresh=True), [], {}, []))
         self.assertIn('优先', manual_goal_block('odom', True, mux, [('external', 1)], {}, []))
         self.assertIn('空地', manual_goal_block('odom', True, mux, [], {},
                                                 [{'task_id': 'r', 'phase': 'PAUSED'}]))

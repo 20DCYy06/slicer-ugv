@@ -19,6 +19,30 @@ REGISTRATION_REASONS = {
     'RTK unavailable/stale': '等待新鲜固定解',
     'waiting_for_global_prediction_at_GNSS_stamp': '等待全局定位更新',
 }
+TASK_PHASES = {
+    'WAITING_NAVIGATION': '等待导航就绪',
+    'NAVIGATION_BUSY': '导航正在处理其他目标',
+    'WAITING_RTK': '等待有效 RTK',
+    'WAITING_GLOBAL': '等待全局定位与 TF',
+    'WAITING_ODOM': '等待本地里程计',
+    'WAITING_COSTMAP': '等待代价地图',
+    'WAITING_STOP': '确认停车',
+    'PLANNING_PREPARATION': '规划局部准备路线',
+    'PREPARING': '自动准备运动',
+    'CONFIRMING_REGISTRATION': '确认配准',
+    'SWITCHING_NAVIGATION': '切换 map 导航',
+    'STOPPING': '正在停车',
+    'PAUSING': '正在暂停',
+    'PAUSED': '已暂停',
+    'CANCELING': '正在取消',
+    'BLOCKED': '任务受阻',
+    'FAILED': '任务失败',
+    'NAVIGATING': '导航中',
+    'VERIFYING': '停车及地理到点复核',
+    'STARTING': '启动导航',
+    'READY': '等待接续目标',
+    'IDLE': '等待任务',
+}
 NAV_STATUS_AGE = 1.5
 
 
@@ -75,6 +99,12 @@ class Dashboard:
         # A callback may publish a receive-clock sample after the UI tick took its timestamp.
         return sample[1] if sample and now - sample[0] <= age else None
 
+    def local_target(self):
+        # Written when the desktop launches the client and cleared when it exits.
+        with self._lock:
+            sample = self._samples.get('wgs84')
+        return sample[1] if sample is not None else None
+
     def latest_quality(self, now):
         with self._lock:
             samples = [self._samples[key] for key in ('quality', 'gnss') if key in self._samples]
@@ -111,15 +141,39 @@ class Dashboard:
             mux_label = '已放行', 'good'
         else:
             mux_label = '等待状态', 'neutral'
+        runtime = self.recent('runtime', now) or {}
+        task = active_task(self, now)
+        if runtime.get('busy'):
+            phase, task_reason = runtime.get('phase'), runtime.get('reason')
+        elif task:
+            phase = task.get('runtime_phase') or task.get('phase')
+            task_reason = task.get('last_error') or task.get('reason')
+        elif any(state in ACTIVE_ACTION_STATES
+                 for _, state in self.recent('action', now, NAV_STATUS_AGE) or ()):
+            phase, task_reason = 'NAVIGATING', None
+        elif self.local_target() is not None:
+            phase, task_reason = 'READY', None
+        elif runtime.get('phase') in ('BLOCKED', 'FAILED', 'STARTING'):
+            phase, task_reason = runtime['phase'], runtime.get('reason')
+        elif self.recent('wgs84_failure', now, 30.):
+            phase, task_reason = 'FAILED', None
+        else:
+            phase, task_reason = 'IDLE', None
+        task_phase = TASK_PHASES.get(phase, phase or '等待任务')
+        if task_reason and task_reason != phase:
+            task_phase += ' · ' + REGISTRATION_REASONS.get(task_reason, str(task_reason))
+        metrics = []
+        if runtime.get('busy') or (phase in ('BLOCKED', 'FAILED') and runtime.get('phase') == phase):
+            for key, title, precision in (('distance_m', '路程', 1), ('span_m', '展开', 1),
+                                           ('rmse_m', '残差', 2)):
+                value = runtime.get(key)
+                if isinstance(value, (float, int)) and math.isfinite(value):
+                    metrics.append(f'{title} {value:.{precision}f} m')
         reason = geo.get('reason')
         registration = REGISTRATION_STATES.get(state, '等待配准状态')
         if state == 'collecting':
             count = as_count(geo.get('registration_samples')) or 0
-            movement = self.recent('registration_motion', now) or {}
-            action = '等待 Fixed'
-            if usable:
-                action = (f'直行配准中 · 已移动 {movement.get("distance", 0.):.1f}m'
-                          if movement.get('moving') else '静止采样中')
+            action = '配对样本' if usable else '等待 Fixed'
             registration += f' · {action} · {count} 个样本'
         elif state == 'ready' and not nav:
             registration += ' · 等待 map 导航'
@@ -136,8 +190,8 @@ class Dashboard:
             'collecting': state == 'collecting',
             'usable': usable,
             'registration': registration,
-            'progress': 4 if nav else 3 if state in ('ready', 'collecting', 'degraded')
-            else 2 if usable else 1 if lidar and lio else 0,
+            'task_phase': '任务阶段：' + task_phase,
+            'task_metrics': ' · '.join(metrics),
             'lidar': ('就绪', 'good') if lidar else ('等待数据', 'neutral'),
             'lio': ('就绪', 'good') if lio else ('等待数据', 'neutral'),
             'driver': ('就绪', 'good') if driver is True else
@@ -156,7 +210,39 @@ def task_in_progress(value):
     return bool(value and value.get('task_id') and value.get('phase') not in ENDED_TASK_STATES)
 
 
-def manual_goal_block(frame, driver, mux, statuses, geographic, tasks, desktop_goals=()):
+def active_task(board, now):
+    for protocol in ('v1', 'v2'):
+        value = board.recent(protocol, now)
+        if task_in_progress(value):
+            return value
+    return None
+
+
+def task_destination(board, now):
+    task = active_task(board, now)
+    if task:
+        point = task.get('final_goal') or task.get('target')
+        if isinstance(point, dict):
+            point = {'latitude': point.get('latitude', point.get('lat')),
+                     'longitude': point.get('longitude', point.get('lon'))}
+            text = coordinates(point)
+            if text != '—':
+                return text
+    point = board.local_target()
+    if point is not None:
+        return coordinates(point)
+    runtime = board.recent('runtime', now) or {}
+    point = runtime.get('target')
+    if runtime.get('busy') and isinstance(point, dict):
+        text = coordinates(point)
+        if text != '—':
+            return text
+    return None
+
+
+def manual_goal_block(frame, driver, mux, statuses, geographic, tasks, desktop_goals=(), runtime=None):
+    if runtime and runtime.get('busy'):
+        return '正在自动准备地理航行，等待配准或模式切换结束'
     if frame not in ('odom', 'map') or statuses is None:
         return '等待当前导航坐标系和 move_base 状态'
     if any(status in ACTIVE_ACTION_STATES and goal not in desktop_goals for goal, status in statuses):
@@ -167,6 +253,8 @@ def manual_goal_block(frame, driver, mux, statuses, geographic, tasks, desktop_g
         return '底盘未就绪'
     if not mux or mux.get('manual_hold') is not False or mux.get('emergency_stop_latched') is not False:
         return 'Mux 保持停车或急停锁存，请查看右栏 Mux 状态'
+    if mux.get('teleop_fresh') is True or mux.get('selected_source') == 'mission':
+        return '其他速度控制源正在接管'
     if geographic and geographic.get('state') == 'collecting':
         return '正在地理配准，等待配准动作结束'
     if frame == 'map' and (not geographic or geographic.get('state') != 'ready'
