@@ -56,6 +56,7 @@ class Observer:
         self.lock = Lock()
         self.goal_id = None
         self.goal_sent = 0.
+        self.desktop_goals = {}
         self.manual_target = None
         self.manual_feedback = None
         self.pending_goal = None
@@ -71,7 +72,7 @@ class Observer:
             ('/scan', LaserScan, lambda m: self.sensor('lidar', m)),
             ('/lio/odom', Odometry, lambda m: self.sensor('lio', m)),
             ('/odom', Odometry, self.local_odom),
-            ('/wheel/odom', Odometry, lambda m: self.sensor('wheel_odom', m)),
+            ('/wheel/odom', Odometry, self.wheel_odom),
             ('/global/odom', Odometry, self.global_odom),
             ('/slicer_c30d_driver/ready', Bool, lambda m: self.board.record('driver', m.data)),
             ('/cup_nav/manual_state', String, self.mux),
@@ -111,6 +112,19 @@ class Observer:
     def sensor(self, key, message):
         if recent_stamp(message.header.stamp.to_sec(), 2.5):
             self.board.record(key, True)
+
+    def wheel_odom(self, message):
+        stamp = message.header.stamp.to_sec()
+        age = rospy.Time.now().to_sec() - stamp
+        if stamp <= 0 or not -.15 <= age <= 1.:
+            return
+        speed = message.twist.twist
+        self.board.record('wheel_odom', True)
+        header = getattr(message, '_connection_header', None) or {}
+        if header.get('callerid') == '/slicer_c30d_driver':
+            self.board.record('wheel_still', finite(speed.linear.x, speed.angular.z)
+                              and abs(speed.linear.x) <= .02 and abs(speed.angular.z) <= .02,
+                              time.monotonic() - max(0., age))
 
     def local_odom(self, message):
         if not recent_stamp(message.header.stamp.to_sec(), 1.):
@@ -171,19 +185,23 @@ class Observer:
         if stamp <= 0 or not -.15 <= age <= NAV_STATUS_AGE:
             return
         items = [(item.goal_id.id, item.status) for item in message.status_list]
+        reported = dict(items)
         now = time.monotonic()
         with self.lock:
-            if header is not self.action_connection:
+            reconnected = header is not self.action_connection
+            if reconnected:
                 # rospy shares the header dictionary among messages on one TCPROS connection.
                 self.action_connection = header
                 self.board.record('configured_frame', None, now)
                 self._cancel_pending_goal_locked('导航已重新连接，请重新点选')
             self.board.record('action', items, now - max(0., age))
+            self.desktop_goals = {
+                goal: sent for goal, sent in self.desktop_goals.items()
+                if reported.get(goal) in ACTIVE_ACTION_STATES
+                or (not reconnected and goal not in reported and now - sent <= 2.)
+            }
             if self.goal_id is not None:
-                status = next((code for goal, code in items if goal == self.goal_id), None)
-                if status is not None and status not in ACTIVE_ACTION_STATES:
-                    self.goal_id = None
-                elif status is None and now - self.goal_sent > 2.:
+                if self.goal_id not in self.desktop_goals:
                     self.goal_id = None
             if self.pending_goal is not None and age <= GOAL_STATUS_AGE:
                 pending, deadline = self.pending_goal
@@ -198,7 +216,7 @@ class Observer:
         p = pose.pose.position
         if pose.header.frame_id in ('odom', 'map') and finite(p.x, p.y, p.z) and message.goal_id.id:
             with self.lock:
-                self.action_goals[message.goal_id.id] = pose
+                self.action_goals[message.goal_id.id] = pose, time.monotonic()
                 if len(self.action_goals) > 32:
                     self.action_goals.pop(next(iter(self.action_goals)))
 
@@ -314,7 +332,12 @@ class Observer:
         reason = manual_goal_block(frame, self.board.recent('driver', now, NAV_STATUS_AGE),
                                    self.board.recent('mux', now, NAV_STATUS_AGE), status, geo,
                                    [self.board.recent(key, now) for key in ('v1', 'v2')],
-                                   self.goal_id is not None)
+                                   self.desktop_goals)
+        if reason is None:
+            reported = dict(status)
+            if any(now - seen <= GOAL_STATUS_AGE and goal not in reported and goal not in self.desktop_goals
+                   for goal, (_, seen) in self.action_goals.items()):
+                reason = 'move_base 有其他控制端的目标，当前目标优先'
         configured = self.board.recent('configured_frame', now, NAV_STATUS_AGE)
         if reason is None and (message.header.frame_id != frame or configured != frame):
             reason = '导航坐标系尚未确认或已切换，请重新点选'
@@ -337,6 +360,7 @@ class Observer:
         request.goal.target_pose.header.stamp = request.header.stamp
         self.goal_pub.publish(request)
         self.goal_id, self.goal_sent = request.goal_id.id, now
+        self.desktop_goals[self.goal_id] = now
         p = message.pose.position
         point = self.point(frame, p.x, p.y, p.z)
         geographic = self.wgs84(point, now)
@@ -355,7 +379,7 @@ class Observer:
                     self.manual_target = point, geographic
                 return coordinates(geographic) if geographic else '待配准或等待 TF'
             active = [item for item, code in statuses or () if code in ACTIVE_ACTION_STATES]
-            message = next((self.action_goals[item] for item in active if item in self.action_goals), None)
+            message = next((self.action_goals[item][0] for item in active if item in self.action_goals), None)
         if message is not None:
             p = message.pose.position
             geographic = self.wgs84(self.point(message.header.frame_id, p.x, p.y, p.z), now)

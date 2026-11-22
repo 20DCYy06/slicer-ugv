@@ -162,7 +162,8 @@ class WorkflowPanelTests(unittest.TestCase):
     def test_held_grasp_button_switches_to_release_and_parking_control_is_absent(self):
         self.controller.states['vision'] = ('green', '抓取完成', True)
         self.panel.refresh()
-        self.assertTrue(self.panel.buttons['vision'].text().startswith('6. 释放'))
+        self.assertEqual(list(self.panel.buttons)[:4], ['sensors', 'driver', 'vision', 'odom'])
+        self.assertTrue(self.panel.buttons['vision'].text().startswith('3. 释放'))
         self.assertNotIn('解除停车', [button.text() for button in
                                        self.panel.findChildren(QtWidgets.QPushButton)])
 

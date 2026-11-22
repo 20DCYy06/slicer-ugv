@@ -13,7 +13,7 @@ import time
 from PyQt5 import QtCore, QtTest, QtWidgets
 import rospy
 import tf2_ros
-from actionlib_msgs.msg import GoalStatus, GoalStatusArray
+from actionlib_msgs.msg import GoalID, GoalStatus, GoalStatusArray
 from diagnostic_msgs.msg import DiagnosticArray, DiagnosticStatus, KeyValue
 from geometry_msgs.msg import PoseStamped, TransformStamped
 from move_base_msgs.msg import MoveBaseActionGoal
@@ -136,9 +136,9 @@ def main():
         choose = {action.text(): action for action in toolbar.actions()}
         position = QtCore.QPoint(panel.width() // 2, panel.height() // 2)
 
-        def click(tool):
+        def click(tool, at=position):
             choose[tool].trigger()
-            QtTest.QTest.mouseClick(panel, QtCore.Qt.LeftButton, QtCore.Qt.NoModifier, position)
+            QtTest.QTest.mouseClick(panel, QtCore.Qt.LeftButton, QtCore.Qt.NoModifier, at)
 
         with redirect_stdout(output):
             click('Waypoint 打点')
@@ -150,18 +150,39 @@ def main():
                  and observer.board.recent('action', time.monotonic(), 1.5) is not None)
             click('2D Nav Goal')
             wait(lambda: observer.pending_goal is not None)
+            first_pending = observer.pending_goal
+            click('2D Nav Goal', position - QtCore.QPoint(30, 0))
+            wait(lambda: observer.pending_goal is not None and observer.pending_goal is not first_pending)
+            latest_click = observer.pending_goal[0]
             assert not goals
             status_delay = 0.
             wait(lambda: len(goals) == 1)
             assert goals[0].goal.target_pose.header.frame_id == 'odom'
+            assert goals[0].goal.target_pose.pose.position == latest_click.pose.position
             assert dashboard.destination.value == '正在前往：待配准或等待 TF'
             active[:] = [GoalStatus(goal_id=goals[0].goal_id, status=GoalStatus.ACTIVE)]
             wait(lambda: observer.board.recent('action', time.monotonic())
                  == [(goals[0].goal_id.id, GoalStatus.ACTIVE)])
+            click('2D Nav Goal', position + QtCore.QPoint(50, 0))
+            wait(lambda: len(goals) == 2)
+            assert goals[1].goal_id.id != goals[0].goal_id.id
+            assert goals[1].goal.target_pose.pose.position != goals[0].goal.target_pose.pose.position
+            active[0].status = GoalStatus.PREEMPTED
+            active.append(GoalStatus(goal_id=goals[1].goal_id, status=GoalStatus.ACTIVE))
+            foreign = MoveBaseActionGoal(goal_id=GoalID(id='external-goal'), goal=goals[1].goal)
+            observer.action_goal(foreign)
             click('2D Nav Goal')
-            wait(lambda: '当前目标优先' in output.getvalue())
-            assert len(goals) == 1
-            active[0].status = GoalStatus.SUCCEEDED
+            wait(lambda: output.getvalue().count('当前目标优先') == 1)
+            assert len(goals) == 2
+            active.append(GoalStatus(goal_id=GoalID(id='external-goal'), status=GoalStatus.ACTIVE))
+            wait(lambda: (observer.board.recent('action', time.monotonic()) or [None])[-1]
+                 == ('external-goal', GoalStatus.ACTIVE))
+            assert observer.goal_id == goals[1].goal_id.id
+            click('2D Nav Goal')
+            wait(lambda: output.getvalue().count('当前目标优先') == 2)
+            assert len(goals) == 2
+            active[1].status = GoalStatus.SUCCEEDED
+            active.pop()
             rospy.set_param('/ugv/move_base/global_costmap/global_frame', 'map')
             wait(lambda: observer.board.recent('configured_frame', time.monotonic()) == 'map')
             assert manager.getFixedFrame() == 'odom'
@@ -171,22 +192,22 @@ def main():
             click('Waypoint 打点')
             wait(lambda: len(clicks) == 2 and re.search(
                 r'经纬度：3[01]\.\d{7}, 121\.\d{7}\n', output.getvalue()))
-            assert clicks[1].header.frame_id == 'map' and len(goals) == 1
+            assert clicks[1].header.frame_id == 'map' and len(goals) == 2
             observer.set_calibration_active(True)
             click('2D Nav Goal')
             wait(lambda: '正在地理配准' in output.getvalue())
-            assert len(goals) == 1
+            assert len(goals) == 2
             observer.set_calibration_active(False)
             held = True
             wait(lambda: (observer.board.recent('mux', time.monotonic()) or {}).get('manual_hold') is True)
             click('2D Nav Goal')
             wait(lambda: 'Mux 保持停车' in output.getvalue())
-            assert len(goals) == 1
+            assert len(goals) == 2
             held = False
             wait(lambda: (observer.board.recent('mux', time.monotonic()) or {}).get('manual_hold') is False)
             click('2D Nav Goal')
-            wait(lambda: len(goals) == 2)
-            assert goals[1].goal.target_pose.header.frame_id == 'map'
+            wait(lambda: len(goals) == 3)
+            assert goals[2].goal.target_pose.header.frame_id == 'map'
             wait(lambda: dashboard.destination.value == '正在前往：31.2000000, 121.5000000')
             assert ' X:' not in output.getvalue()
             target_row = dashboard.destination.geometry()
@@ -195,13 +216,13 @@ def main():
             assert dashboard.destination.geometry() == target_row
             assert not dashboard.feedback.wordWrap() and dashboard.feedback.toolTip()
             assert dashboard.destination.text() == dashboard.destination.value
-            active[:] = [GoalStatus(goal_id=goals[1].goal_id, status=GoalStatus.SUCCEEDED)]
+            active[:] = [GoalStatus(goal_id=goals[2].goal_id, status=GoalStatus.SUCCEEDED)]
             wait(lambda: dashboard.destination.value == '正在前往：待命')
             status_delay = 2.
             wait(lambda: observer.board.recent('action', time.monotonic(), 1.5) is None)
             click('2D Nav Goal')
             wait(lambda: '等待当前导航坐标系和 move_base 状态' in output.getvalue())
-            assert len(goals) == 2
+            assert len(goals) == 3
         print('RTK_DESKTOP_GUI_PASS split odom map waypoint coordinates manual goal isolation')
     except AssertionError:
         print(output.getvalue(), file=sys.stderr)

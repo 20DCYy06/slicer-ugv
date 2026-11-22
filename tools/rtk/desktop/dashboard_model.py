@@ -156,11 +156,11 @@ def task_in_progress(value):
     return bool(value and value.get('task_id') and value.get('phase') not in ENDED_TASK_STATES)
 
 
-def manual_goal_block(frame, driver, mux, statuses, geographic, tasks, local_pending=False):
+def manual_goal_block(frame, driver, mux, statuses, geographic, tasks, desktop_goals=()):
     if frame not in ('odom', 'map') or statuses is None:
         return '等待当前导航坐标系和 move_base 状态'
-    if local_pending or any(status in ACTIVE_ACTION_STATES for _, status in statuses):
-        return 'move_base 已有目标，当前目标优先'
+    if any(status in ACTIVE_ACTION_STATES and goal not in desktop_goals for goal, status in statuses):
+        return 'move_base 有其他控制端的目标，当前目标优先'
     if any(task_in_progress(task) for task in tasks):
         return '空地任务正在执行或等待恢复'
     if driver is not True:

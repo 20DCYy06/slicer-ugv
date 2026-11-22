@@ -11,7 +11,7 @@ import time
 from dashboard_model import ACTIVE_ACTION_STATES, task_in_progress
 from workflow_discovery import Graph, NAV_ACTION
 
-STEPS = ('sensors', 'driver', 'odom', 'calibrate', 'map', 'vision', 'air')
+STEPS = ('sensors', 'driver', 'vision', 'odom', 'calibrate', 'map', 'air')
 STOP_ORDER = ('startup_release', 'release', 'calibrate', 'map', 'odom', 'vision', 'air', 'driver', 'sensors')
 NODE_GROUPS = {
     'sensors': {'/geographic', '/cup_gnss', '/slicer_cloud_to_scan', '/slicer_ekf'},
@@ -23,6 +23,9 @@ SERIAL_GROUP = Path(__file__).resolve().parents[2] / 'manual' / 'serial_group.sh
 FIELD_NAVIGATION = (Path(__file__).resolve().parents[3] / 'src' / 'ugv_bringup' /
                     'launch' / 'slicer_field_navigation.launch')
 VISUAL_GRASP = Path(__file__).resolve().parents[3] / 'src/slicer_visual_grasp/run.sh'
+DRIVER_COMMAND = ('roslaunch', 'ugv_bringup', 'slicer_body_driver.launch')
+# The process runner escalates shutdown at 32 s. Allow another ROS graph poll.
+HANDOFF_TIMEOUT = 35.
 AIR_PEER_TOPICS = {'v1': '/uav/test', 'v2': '/air_ground/v2/uav_state'}
 GRASP_STATES = {'idle', 'busy', 'held', 'recovery', 'error'}
 
@@ -110,6 +113,8 @@ class Workflow:
         self.grasp_state = 'idle'
         self.grasp_command = None
         self.grasp_recovery = False
+        self.grasp_handoff = None
+        self.handoff_deadline = 0.
         self.owned = {}
         self.started = {}
         self.stopping = set()
@@ -157,7 +162,8 @@ class Workflow:
 
     @property
     def nav_present(self):
-        return bool(self.present('odom') or self.present('map') or self.graph.processes.get('nav')
+        return bool('odom' in self.owned or 'map' in self.owned
+                    or self.present('odom') or self.present('map') or self.graph.processes.get('nav')
                     or {NAV_ACTION, '/slicer_nav_arc_guard', '/slicer_velocity_mux'} & self.graph.nodes
                     or self.graph.publishers.get('/cmd_vel'))
 
@@ -221,13 +227,22 @@ class Workflow:
                 result[key] = ('yellow', '切换中', False)
             elif key == 'calibrate' and (self.calibrating or self.present(key)):
                 result[key] = ('yellow', '配准中', False)
+            elif key == 'driver' and self.grasp_handoff is not None:
+                text = '正在恢复驱动' if self.grasp_handoff == 'to_driver' else '串口交给视觉抓取'
+                result[key] = ('yellow', text, False)
+            elif key == 'vision' and self.grasp_handoff in ('to_grasp', 'to_driver'):
+                text = '等待底盘驱动释放串口' if self.grasp_handoff == 'to_grasp' else '正在交还底盘驱动'
+                result[key] = ('yellow', text, False)
             elif key == 'vision' and owned:
                 color, status = {
-                    'idle': ('red', '待抓取'), 'busy': ('yellow', '释放中' if self.grasp_command == 'release' else '抓取中'),
+                    'idle': ('red', '待抓取'), 'starting': ('yellow', '正在启动抓取'),
+                    'busy': ('yellow', '释放中' if self.grasp_command == 'release' else '抓取中'),
                     'held': ('green', '抓取完成'), 'recovery': ('yellow', '需释放'), 'error': ('red', '抓取失败 · 重试'),
                 }[self.grasp_state]
-                result[key] = (color, status, self.grasp_state != 'busy' and not self.stopping_all)
-            elif key == 'vision' and not external and (self.vision_driver_busy or self.nav_present):
+                result[key] = (color, status, self.grasp_state not in ('starting', 'busy')
+                               and not self.stopping_all)
+            elif key == 'vision' and not external and (
+                    self.nav_present or self.vision_driver_busy and 'driver' not in self.owned):
                 result[key] = ('yellow', '请先停止导航和底盘', not self.stopping_all)
             elif key == 'vision' and not external and self.grasp_recovery:
                 result[key] = ('yellow', '需释放', not self.stopping_all)
@@ -242,7 +257,7 @@ class Workflow:
         return result
 
     def _grasp_click(self):
-        if self.grasp_state == 'busy':
+        if self.grasp_state in ('starting', 'busy'):
             return
         if self.vision_driver_busy or self.nav_present:
             self.report('请先停止导航和底盘驱动，再操作视觉抓取。')
@@ -255,6 +270,65 @@ class Workflow:
         else:
             self.grasp_state = 'busy'
             self.grasp_command = command
+
+    def _start_grasp(self):
+        argv = (str(VISUAL_GRASP), '--headless')
+        if not self.grasp_recovery:
+            argv += ('--pick-on-start',)
+        if not self._start('vision', argv):
+            return False
+        self.grasp_state = 'starting'
+        self.grasp_command = 'recover' if self.grasp_recovery else 'pick'
+        return True
+
+    def _request_grasp(self):
+        if self.nav_present or self.switching or self.calibrating:
+            self.report('请先停止导航，再操作视觉抓取。')
+        elif 'driver' in self.owned:
+            now = self.clock()
+            if not (self.graph.online and 'driver' not in self.stopping
+                    and self.board.recent('driver', now, 1.) is True
+                    and self.board.recent('wheel_still', now, 1.) is True):
+                self.report('等待底盘驱动就绪并确认车辆停稳。')
+                return
+            self._set_grasp_handoff('to_grasp')
+            self._signal_stop('driver')
+        elif self.vision_driver_busy:
+            self.report('请先停止导航和底盘驱动，再操作视觉抓取。')
+        else:
+            self._start_grasp()
+
+    def _set_grasp_handoff(self, phase):
+        self.grasp_handoff = phase
+        self.handoff_deadline = self.clock() + HANDOFF_TIMEOUT
+
+    def _advance_grasp_handoff(self, fresh_graph):
+        phase = self.grasp_handoff
+        if phase not in ('to_grasp', 'to_driver'):
+            return
+        if self.clock() > self.handoff_deadline:
+            if phase == 'to_grasp':
+                self._set_grasp_handoff('to_driver')
+                self.report('等待串口超时，已取消抓取，等待恢复底盘驱动。')
+            else:
+                self.grasp_handoff = None
+                self.report('恢复底盘驱动超时，请检查串口占用后重新启动第 2 步。')
+            return
+        if not fresh_graph or not self.graph.online:
+            return
+        if self.nav_present:
+            if phase == 'to_grasp':
+                self._set_grasp_handoff('to_driver')
+                self.report('检测到导航启动，已取消抓取。停止导航后将恢复底盘驱动。')
+            return
+        if self.vision_driver_busy or self.present('vision') or 'vision' in self.owned:
+            return
+        if phase == 'to_grasp':
+            self._set_grasp_handoff('grasp' if self._start_grasp() else 'to_driver')
+        else:
+            self.grasp_handoff = None
+            if self._start('driver', DRIVER_COMMAND):
+                self.report('底盘串口已交还，等待驱动就绪。')
 
     def _grasp_log(self, lines, running):
         for line in lines:
@@ -338,6 +412,7 @@ class Workflow:
     def stop_all(self):
         if self.stopping_all:
             return
+        self.grasp_handoff = None
         if self.idle and not self.switching:
             self.report('本面板没有可停止的进程。外部流程请在原终端停止。')
             return
@@ -422,6 +497,8 @@ class Workflow:
             return
         if process_groups is not None:
             self.graph.processes = process_groups
+        if key == 'vision' and self.grasp_handoff in ('to_grasp', 'to_driver'):
+            return
         if key in self.owned and key != 'calibrate':
             if key == 'vision':
                 self._grasp_click()
@@ -434,6 +511,13 @@ class Workflow:
             return
         if not self.graph.online and key != 'vision':
             self.report('等待全局 ROS Master。')
+            return
+        if key in ('driver', 'odom', 'map') and (
+                self.grasp_handoff or self.present('vision') or 'vision' in self.owned):
+            self.report('等待视觉抓取结束并交还底盘串口。')
+            return
+        if key == 'vision':
+            self._request_grasp()
             return
         if key == 'calibrate':
             return self._calibrate(confirmed)
@@ -449,32 +533,21 @@ class Workflow:
         if key == 'driver' and self.graph.publishers.get('/wheel/odom'):
             self.report('已有轮速里程计发布源，请先检查底盘驱动。')
             return
-        if key == 'driver' and (self.present('vision') or 'vision' in self.owned):
-            self.report('请先结束视觉抓取，再启动底盘驱动。')
-            return
-        if key == 'vision' and (self.vision_driver_busy or self.nav_present):
-            self.report('请先停止导航和底盘驱动，再操作视觉抓取。')
-            return
         home = Path(self.env.get('HOME', str(Path.home())))
         gnss = self.env.get('SLICER_GNSS_CONFIG') or str(home / '.config/slicer/gnss.yaml')
         commands = {
             'sensors': ('roslaunch', 'ugv_bringup', 'slicer_field_sensors.launch', f'config_file:={gnss}'),
-            'driver': ('roslaunch', 'ugv_bringup', 'slicer_body_driver.launch'),
+            'driver': DRIVER_COMMAND,
             'odom': ('roslaunch', str(FIELD_NAVIGATION), 'geographic:=false'),
-            'vision': (str(VISUAL_GRASP), '--headless', '--pick-on-start'),
             'air': ('roslaunch', 'ugv_bringup', 'slicer_air_ground.launch'),
         }
-        if key == 'vision' and self.grasp_recovery:
-            commands[key] = (str(VISUAL_GRASP), '--headless')
         if key == 'air' and mode == 'v2':
             ip = self.env.get('SLICER_UAV_IP')
             commands[key] = ('roslaunch', 'ag_ugv_task', 'ugv.launch', 'monitor_only:=false',
                              f'start_fkie:={str(bool(ip)).lower()}')
             if ip:
                 commands[key] += (f'uav_ip:={ip}',)
-        if self._start(key, commands[key]) and key == 'vision':
-            self.grasp_state = 'busy'
-            self.grasp_command = 'recover' if self.grasp_recovery else 'pick'
+        self._start(key, commands[key])
 
     def _calibrate(self, confirmed):
         if self.calibrating or self.ready('calibrate') or self.present('calibrate'):
@@ -519,7 +592,7 @@ class Workflow:
         if self.switching:
             return
         if not self.ready('calibrate'):
-            self.report('请先完成第 4 步地理配准。')
+            self.report('请先完成第 5 步地理配准。')
             return
         if not (self.ready('sensors') and self.ready('driver')):
             self.report('切换前请等待定位与底盘就绪。')
@@ -563,9 +636,15 @@ class Workflow:
             self.report(f'{key} 已退出')
         elif not stopping:
             self.report(f'{key} 退出（状态 {status}），请查看 ROS 日志。')
+        if key == 'driver':
+            for sample in ('driver', 'wheel_odom', 'wheel_still'):
+                self.board.record(sample, None, self.clock())
         if key == 'vision':
-            self.grasp_recovery = self.grasp_state in ('busy', 'held', 'recovery')
+            if self.grasp_state != 'starting':
+                self.grasp_recovery = self.grasp_state in ('busy', 'held', 'recovery')
             self.grasp_command = None
+            if self.grasp_handoff == 'grasp' and not self.grasp_recovery:
+                self._set_grasp_handoff('to_driver')
         if key in ('odom', 'map'):
             self.startup_release_key = None
             self.release_interrupted = False
@@ -617,5 +696,7 @@ class Workflow:
             self._advance_stop()
         elif self.switching:
             self._advance_map()
+        elif self.grasp_handoff is not None:
+            self._advance_grasp_handoff(fresh_graph=graph is not None)
         else:
             self._release_startup_hold()

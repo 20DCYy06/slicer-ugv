@@ -74,3 +74,11 @@ class DashboardTests(unittest.TestCase):
                                                 [{'task_id': 'r', 'phase': 'PAUSED'}]))
         self.assertIn('保持', manual_goal_block('odom', True, {'manual_hold': True}, [], {}, []))
         self.assertIn('配准', manual_goal_block('map', True, mux, [], {'state': 'invalid'}, []))
+
+    def test_new_goal_may_replace_all_in_flight_goals_from_this_desktop(self):
+        mux = {'manual_hold': False, 'emergency_stop_latched': False}
+        own = {'desktop-old', 'desktop-new'}
+        statuses = [('desktop-old', 6), ('desktop-new', 0)]
+        self.assertIsNone(manual_goal_block('odom', True, mux, statuses, {}, [], own))
+        self.assertIn('优先', manual_goal_block(
+            'odom', True, mux, statuses + [('air-ground', 1)], {}, [], own))

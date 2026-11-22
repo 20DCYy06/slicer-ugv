@@ -8,6 +8,17 @@ import sys
 
 
 def run(runtime, pick_on_start):
+    try:
+        _run_session(runtime, pick_on_start)
+    except Exception as exc:
+        logging.getLogger('visual_grasp').exception('后台抓取意外退出')
+        print('[ERROR]', exc, file=sys.stderr)
+        state = 'recovery' if runtime.needs_release else 'error'
+        print('GRASP_STATE ' + state, flush=True)
+        raise SystemExit(1) from exc
+
+
+def _run_session(runtime, pick_on_start):
     logger = logging.getLogger('visual_grasp')
     stopping = False
     camera_started = False

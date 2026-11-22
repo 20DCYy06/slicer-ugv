@@ -8,10 +8,10 @@ from dashboard_model import StableStatus
 STEPS = {
     'sensors': '1. 启动定位与传感器',
     'driver': '2. 启动底盘驱动',
-    'odom': '3. 启动起步导航 (odom)',
-    'calibrate': '4. 地理配准 (直行 2.5 m)',
-    'map': '5. 切换正式导航 (map)',
-    'vision': '6. 移动并抓取',
+    'vision': '3. 移动并抓取',
+    'odom': '4. 启动起步导航 (odom)',
+    'calibrate': '5. 地理配准 (直行 2.5 m)',
+    'map': '6. 切换正式导航 (map)',
     'air': '7. 飞机通信节点',
 }
 STATUS = {'red': '未启动', 'yellow': '进行中', 'green': '已就绪'}
@@ -224,7 +224,7 @@ class WorkflowPanel(QtWidgets.QWidget):
                 button.style().polish(button)
             suffix = suffix or ('未完成' if key == 'calibrate' and color == 'red' else STATUS[color])
             tail = ' · ' + suffix
-            title = ('6. 释放' if key == 'vision' and suffix in ('抓取完成', '需释放', '释放中')
+            title = ('3. 释放' if key == 'vision' and suffix in ('抓取完成', '需释放', '释放中')
                      else STEPS[key])
             text = title + tail
             metrics = button.fontMetrics()

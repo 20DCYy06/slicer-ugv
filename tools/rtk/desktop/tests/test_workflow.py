@@ -304,6 +304,75 @@ class WorkflowTests(unittest.TestCase):
         self.workflow.click('vision')
         self.assertEqual(self.starts[-1][0], 'vision')
 
+    def test_grasp_hands_off_owned_stopped_driver_and_restores_it_after_release(self):
+        self.workflow.click('driver')
+        old_driver = self.starts[-1][3]
+        self.graph.nodes.add('/slicer_c30d_driver')
+        self.graph.publishers['/wheel/odom'] = {'/slicer_c30d_driver'}
+        self.sample(driver=True, wheel_still=False)
+        self.refresh()
+        self.workflow.click('vision')
+        self.assertFalse(old_driver.stopped)
+        self.sample(wheel_still=True)
+        self.workflow.click('vision')
+        self.assertTrue(old_driver.stopped)
+        self.assertEqual([key for key, *_ in self.starts], ['driver'])
+        old_driver.status = 0
+        self.refresh()
+        self.assertEqual([key for key, *_ in self.starts], ['driver'])
+        self.graph.nodes.discard('/slicer_c30d_driver')
+        self.graph.publishers.clear()
+        self.refresh()
+        self.assertEqual([key for key, *_ in self.starts], ['driver', 'vision'])
+        grasp = self.starts[-1][3]
+        grasp.log_lines = ['GRASP_STATE held']
+        self.refresh()
+        self.workflow.click('odom')
+        self.assertEqual(len(self.starts), 2)
+        self.workflow.click('vision')
+        self.assertEqual(grasp.sent, ['release'])
+        grasp.log_lines = ['GRASP_STATE idle']
+        self.refresh()
+        self.assertTrue(grasp.stopped)
+        self.assertEqual(len(self.starts), 2)
+        grasp.status = 0
+        self.refresh()
+        self.assertEqual([key for key, *_ in self.starts], ['driver', 'vision', 'driver'])
+        self.assertEqual(self.color('driver'), 'yellow')
+
+    def test_startup_failure_before_worker_reports_state_restores_driver(self):
+        self.workflow.click('driver')
+        driver = self.starts[-1][3]
+        self.sample(driver=True, wheel_still=True)
+        self.workflow.click('vision')
+        driver.status = 0
+        self.refresh()
+        self.starts[-1][3].status = 127
+        self.refresh()
+        self.assertEqual([key for key, *_ in self.starts], ['driver', 'vision', 'driver'])
+
+    def test_grasp_cannot_stop_driver_while_owned_navigation_is_starting(self):
+        self.workflow.click('driver')
+        driver = self.starts[-1][3]
+        self.graph.nodes.add('/geographic')
+        self.sample(driver=True, wheel_still=True, lidar=True, odom=(0., 0.))
+        self.workflow.click('odom')
+        self.assertEqual([key for key, *_ in self.starts], ['driver', 'odom'])
+        self.workflow.click('vision')
+        self.assertFalse(driver.stopped)
+        self.assertIn('请先停止导航', self.workflow.messages[-1])
+
+    def test_stop_all_cancels_driver_handoff_before_launching_grasp(self):
+        self.workflow.click('driver')
+        driver = self.starts[-1][3]
+        self.sample(driver=True, wheel_still=True)
+        self.workflow.click('vision')
+        self.assertTrue(driver.stopped)
+        self.workflow.stop_all()
+        driver.status = 0
+        self.refresh()
+        self.assertEqual([key for key, *_ in self.starts], ['driver'])
+
     def test_air_selection_optional_and_external_executor_exclusion(self):
         self.assertEqual(self.color('air'), 'red')
         self.workflow.click('air', mode='v2')

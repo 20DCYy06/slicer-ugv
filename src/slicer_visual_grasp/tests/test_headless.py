@@ -22,7 +22,10 @@ from airgrip import keyboard
 class Camera:
     def __init__(self, *args): pass
     def start(self): print('CAMERA_STARTED', flush=True)
-    def close(self): print('CAMERA_CLOSED', flush=True)
+    def close(self):
+        if os.environ.get('VISUAL_GRASP_PROBE_FAIL_CLOSE'):
+            raise OSError('mock camera close failure')
+        print('CAMERA_CLOSED', flush=True)
 
 class Servo:
     def __init__(self, *args): pass
@@ -59,7 +62,7 @@ app.main()
 
 class HeadlessTests(unittest.TestCase):
     @contextmanager
-    def session(self, *args, cfg=None, slow_pick=False):
+    def session(self, *args, cfg=None, slow_pick=False, fail_close=False):
         with tempfile.TemporaryDirectory() as folder:
             if cfg is None:
                 cfg = Path(folder) / 'config.json'
@@ -67,6 +70,8 @@ class HeadlessTests(unittest.TestCase):
             env = dict(os.environ)
             if slow_pick:
                 env['VISUAL_GRASP_PROBE_SLOW_PICK'] = '1'
+            if fail_close:
+                env['VISUAL_GRASP_PROBE_FAIL_CLOSE'] = '1'
             with subprocess.Popen(
                 [sys.executable, '-s', '-c', PROBE, '--config', str(cfg),
                  '--headless', *args], stdin=subprocess.PIPE,
@@ -114,6 +119,14 @@ class HeadlessTests(unittest.TestCase):
             self.assertNotIn(b'CAMERA_STARTED\n', buffer)
             self.assertNotIn(b'GRASP_STATE held\n', buffer)
             self.assertEqual(buffer.count(b'GRASP_STATE busy\n'), 1)
+
+    def test_fatal_exit_while_holding_reports_recovery(self):
+        with self.session('--pick-on-start', fail_close=True) as (process, buffer, read_until):
+            read_until(b'GRASP_STATE held\n')
+            process.send_signal(signal.SIGINT)
+            read_until(b'GRASP_STATE recovery\n')
+            self.assertEqual(process.wait(timeout=3.), 1)
+            self.assertNotIn(b'GRASP_STATE error\n', buffer)
 
     def test_interrupted_pick_restarts_in_recovery_and_lifts_recorded_travel(self):
         for interruption in (signal.SIGINT, None):
