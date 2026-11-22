@@ -73,6 +73,7 @@ PY
 [[ "$(git -C "$repo" rev-parse --show-toplevel)" == "$repo" &&
    "$(git -C "$repo" rev-parse --verify HEAD)" == "$manifest_sha" ]] ||
     fail 'vehicle checkout commit does not match release manifest'
+git -C "$repo" diff --quiet HEAD -- || fail 'selected release has modified tracked files'
 
 export SLICER_RELEASE_ID="$release_id" SLICER_RELEASE_WS="$release"
 export SLICER_NATIVE_WS="$release" SLICER_NO_RTK_RUNTIME="$release/runtime/no_rtk"

@@ -10,6 +10,12 @@ state="$runtime"
 if [[ -n ${SLICER_STATE_DIR:-} ]]; then state="$SLICER_STATE_DIR/no_rtk"; fi
 logs="${SLICER_LOGS_DIR:-$workspace/logs}/no_rtk"
 
+if [[ "$mode" != help && "$mode" != -h && "$mode" != --help &&
+      "$repo" != "$workspace/src/slicer-ugv" ]]; then
+    printf 'The entrypoint checkout must be %s/src/slicer-ugv.\n' "$workspace" >&2
+    exit 2
+fi
+
 case "$mode" in
     -h|--help|help)
         echo "Usage: $0 {build|check|nav [--background] [launch arguments]|stop|rviz|goal|patrol|record|diagnose|reset-map|goal-ui}"

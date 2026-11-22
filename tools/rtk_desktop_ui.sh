@@ -12,6 +12,10 @@ fi
 
 repo=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
 workspace=$(realpath -m -- "${SLICER_NATIVE_WS:-${repo%/src/slicer-ugv}}")
+if [[ "$repo" != "$workspace/src/slicer-ugv" ]]; then
+  printf 'The entrypoint checkout must be %s/src/slicer-ugv.\n' "$workspace" >&2
+  exit 2
+fi
 setup="$workspace/install/setup.bash"
 if [[ ! -r "$setup" ]]; then
   printf 'No installed ROS overlay at %s. Run tools/build_native.sh for this workspace.\n' "$workspace" >&2
