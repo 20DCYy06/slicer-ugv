@@ -22,7 +22,7 @@ from rviz import bindings as rviz
 from dashboard_model import Dashboard, StableStatus, split_screen
 from ros_observer import Observer
 from workflow import OwnedProcess, Workflow
-from workflow_discovery import discover, get_master_uri, master_local, process_snapshot, vision_has_camera
+from workflow_discovery import Graph, discover, get_master_uri, master_local, process_snapshot, vision_has_camera
 from workflow_panel import WorkflowPanel
 
 
@@ -42,6 +42,10 @@ COLORS = {
     'bad': '#ff8585', 'neutral': '#a3b6c7',
 }
 WINDOW_FLAGS = QtCore.Qt.Window | QtCore.Qt.FramelessWindowHint
+DISPLAY_INTERVAL_MS = 250
+WORKFLOW_INTERVAL_MS = 150
+PROBE_INTERVAL_S = .9
+LOG_INTERVAL_S = .5
 
 
 class ReadoutLine(QtWidgets.QLabel):
@@ -54,20 +58,34 @@ class ReadoutLine(QtWidgets.QLabel):
         self.setSizePolicy(QtWidgets.QSizePolicy.Ignored, QtWidgets.QSizePolicy.Fixed)
 
     def set_value(self, value):
+        if value == self.value:
+            return
         self.value = value
-        rendered = self.fontMetrics().elidedText(value, QtCore.Qt.ElideRight, self.width())
+        self.setAccessibleName(value)
+        self.update_text()
+
+    def set_color(self, color):
+        style = 'color: ' + COLORS[color]
+        if style != self.styleSheet():
+            self.setStyleSheet(style)
+
+    def update_text(self):
+        rendered = self.fontMetrics().elidedText(self.value, QtCore.Qt.ElideRight, self.width())
         if rendered != self.text():
             self.setText(rendered)
-        self.setToolTip(value if rendered != value else '')
-        self.setAccessibleName(value)
+        tooltip = self.value if rendered != self.value else ''
+        if tooltip != self.toolTip():
+            self.setToolTip(tooltip)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        self.set_value(self.value)
+        self.update_text()
 
 
 class Readouts(QtWidgets.QWidget):
-    def __init__(self, workflow=None, cancel_pending_goal=None):
+    closing = QtCore.pyqtSignal()
+
+    def __init__(self, workflow=None, cancel_pending_goal=None, submit_process_scan=None):
         super().__init__(flags=WINDOW_FLAGS | QtCore.Qt.WindowStaysOnTopHint)
         self.setObjectName('Dashboard')
         self.setWindowTitle('RTK 实时状态')
@@ -104,7 +122,8 @@ class Readouts(QtWidgets.QWidget):
 
         self.feedback = ReadoutLine(muted=True)
         outer.addWidget(self.feedback)
-        self.workflow = WorkflowPanel(workflow, cancel_pending_goal) if workflow is not None else None
+        self.workflow = (WorkflowPanel(workflow, cancel_pending_goal, submit_process_scan)
+                         if workflow is not None else None)
         if self.workflow is not None:
             outer.addWidget(self.workflow)
 
@@ -136,7 +155,11 @@ class Readouts(QtWidgets.QWidget):
             weight = QtGui.QFont.Bold if readout in (self.rtk, self.destination) else QtGui.QFont.Normal
             readout.setFont(QtGui.QFont(family, point_size, weight))
             readout.setFixedHeight(readout.fontMetrics().height() + 2)
-            readout.set_value(readout.value)
+            readout.update_text()
+
+    def closeEvent(self, event):
+        super().closeEvent(event)
+        self.closing.emit()
 
     def refresh(self, view, now=None):
         now = time.monotonic() if now is None else now
@@ -144,7 +167,7 @@ class Readouts(QtWidgets.QWidget):
         fix = stable.update('fix', view['fix_color'], now)
         if fix == view['fix_color']:
             self.rtk.set_value(view['rtk'])
-            self.rtk.setStyleSheet('color: ' + COLORS[fix])
+            self.rtk.set_color(fix)
         status = ('新鲜 RTK 可用' if view['usable'] else '等待新鲜 RTK') + '  |  ' + view['frame']
         if view['degraded']:
             status += '  |  配准降级'
@@ -158,7 +181,7 @@ class Readouts(QtWidgets.QWidget):
                          or key == 'mux' and value[1] in ('bad', 'caution'))
             message, color = stable.update(key, value, now, immediate)
             widget.set_value(f'{title}　{message}')
-            widget.setStyleSheet('color: ' + COLORS[color])
+            widget.set_color(color)
         self.destination.set_value(view['destination'])
         own_available = not view['own'].endswith('—')
         if stable.update('own_available', own_available, now) == own_available:
@@ -169,9 +192,12 @@ class Readouts(QtWidgets.QWidget):
 
 
 class DesktopRviz(rviz.VisualizationFrame):
+    closing = QtCore.pyqtSignal()
+
     def closeEvent(self, event):
         # Geometry and Fixed Frame are session state. Keep the preset reusable.
         event.accept()
+        self.closing.emit()
 
 
 def make_rviz(config_path, app):
@@ -224,11 +250,13 @@ def make_rviz(config_path, app):
         current = tools.getCurrentTool()
         for tool, button in buttons:
             if current == tool:
+                if button.isChecked():
+                    break
                 button.setChecked(True)
                 break
 
     refresh_tools.timeout.connect(mark_current_tool)
-    refresh_tools.start(120)
+    refresh_tools.start(DISPLAY_INTERVAL_MS)
     select(move_tool)
     return window, manager
 
@@ -305,12 +333,16 @@ def run_desktop():
     app = QtWidgets.QApplication(sys.argv[:1])
     board = Dashboard()
     observer = Observer(board)
-    workflow = Workflow(board, local_scan=process_snapshot)
-    dashboard = Readouts(workflow, observer.cancel_pending_goal)
+    workflow = Workflow(board)
+    executor = ThreadPoolExecutor(max_workers=2)
+    dashboard = Readouts(workflow, observer.cancel_pending_goal, lambda: executor.submit(process_snapshot))
     frame, manager = make_rviz(Path(__file__).with_name('rtk_desktop.rviz'), app)
-    executor = ThreadPoolExecutor(max_workers=1)
+    frame.closing.connect(app.quit)
+    dashboard.closing.connect(app.quit)
+    dashboard.workflow.calibration_active.connect(observer.set_calibration_active)
     probe = executor.submit(desktop_probe)
-    next_probe = 0.
+    next_probe = time.monotonic() + PROBE_INTERVAL_S
+    next_logs = 0.
     placed_vision = None
 
     def tile():
@@ -330,15 +362,22 @@ def run_desktop():
     for sig in (signal.SIGINT, signal.SIGTERM):
         signal.signal(sig, lambda *_: app.quit())
 
-    def refresh():
-        nonlocal probe, next_probe, placed_vision
-        if rospy.is_shutdown() or not frame.isVisible() or not dashboard.isVisible():
+    def service_workflow():
+        nonlocal probe, next_probe, next_logs, placed_vision
+        if rospy.is_shutdown():
             app.quit()
             return
         now = time.monotonic()
+        read_logs = now >= next_logs
+        if read_logs:
+            next_logs = now + LOG_INTERVAL_S
         if probe is not None and probe.done():
-            graph, visual, camera_open = probe.result()
-            workflow.update(graph, vision=camera_open)
+            try:
+                graph, visual, camera_open = probe.result()
+            except Exception as error:
+                workflow.report(f'桌面状态读取失败，将重试。{error}')
+                graph, visual, camera_open = Graph(), None, False
+            workflow.update(graph, vision=camera_open, read_logs=read_logs)
             visual_id = visual[0] if visual is not None else None
             if visual is not None and visual_id != placed_vision:
                 _, natural_width, natural_height = visual
@@ -349,14 +388,16 @@ def run_desktop():
                     height = min(natural_height, max(220, area.height() - 84))
                     preview.setGeometry(area.x() + 12, area.y() + 52, width, height)
                     frame.lower()
-                    preview.requestActivate()
                     dashboard.raise_()
             placed_vision, probe = visual_id, None
         else:
-            workflow.update()
+            workflow.update(read_logs=read_logs)
         if probe is None and now >= next_probe:
             probe = executor.submit(desktop_probe)
-            next_probe = now + .55
+            next_probe = now + PROBE_INTERVAL_S
+
+    def refresh_display():
+        now = time.monotonic()
         view = observer.view(now)
         # RViz and the goal dispatcher use the same observed planner frame.
         frame_id = board.planner_frame(now)
@@ -364,21 +405,27 @@ def run_desktop():
             manager.setFixedFrame(frame_id)
         dashboard.refresh(view, now)
 
-    timer = QtCore.QTimer()
-    timer.timeout.connect(refresh)
-    timer.start(150)
+    workflow_timer = QtCore.QTimer(interval=WORKFLOW_INTERVAL_MS)
+    workflow_timer.timeout.connect(service_workflow)
+    workflow_timer.start()
+    display_timer = QtCore.QTimer(interval=DISPLAY_INTERVAL_MS)
+    display_timer.timeout.connect(refresh_display)
+    display_timer.start()
     try:
         return app.exec_()
     finally:
-        timer.stop()
+        display_timer.stop()
+        workflow_timer.stop()
+        dashboard.workflow.cancel_pending()
+        manager.stopUpdate()
+        frame.hide()
+        dashboard.hide()
         observer.cancel_pending_goal()
         workflow.stop_all()
         while not workflow.idle:
             workflow.update()
             time.sleep(.1)
         executor.shutdown()
-        manager.stopUpdate()
-        frame.hide()
         sip.delete(frame)
         dashboard.close()
         rospy.signal_shutdown('RTK desktop closed')

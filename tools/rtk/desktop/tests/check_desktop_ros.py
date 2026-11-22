@@ -169,6 +169,11 @@ def main():
             wait(lambda: len(clicks) == 2 and re.search(
                 r'经纬度：3[01]\.\d{7}, 121\.\d{7}\n', output.getvalue()))
             assert clicks[1].header.frame_id == 'map' and len(goals) == 1
+            observer.set_calibration_active(True)
+            click('2D Nav Goal')
+            wait(lambda: '正在地理配准' in output.getvalue())
+            assert len(goals) == 1
+            observer.set_calibration_active(False)
             held = True
             wait(lambda: (observer.board.recent('mux', time.monotonic()) or {}).get('manual_hold') is True)
             click('2D Nav Goal')

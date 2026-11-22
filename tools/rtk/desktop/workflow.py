@@ -91,7 +91,7 @@ class OwnedProcess:
 
 
 class Workflow:
-    def __init__(self, board, spawn=OwnedProcess, env=None, clock=time.monotonic, local_scan=None):
+    def __init__(self, board, spawn=OwnedProcess, env=None, clock=time.monotonic):
         self.board = board
         self.spawn = spawn
         self.env = dict(os.environ if env is None else env)
@@ -100,7 +100,6 @@ class Workflow:
         if self.env.get('DISPLAY'):
             self.env['VISUAL_GRASP_DISPLAY'] = self.env['DISPLAY']
         self.clock = clock
-        self.local_scan = local_scan
         self.graph = Graph()
         self.vision = False
         self.owned = {}
@@ -335,11 +334,11 @@ class Workflow:
         else:
             self._move_control(action, action)
 
-    def click(self, key, mode='v1', confirmed=False):
+    def click(self, key, mode='v1', confirmed=False, process_groups=None):
         if self.stopping_all or key in self.stopping:
             return
-        if self.local_scan is not None:
-            self.graph.processes = self.local_scan()
+        if process_groups is not None:
+            self.graph.processes = process_groups
         if key in self.owned and key != 'calibrate':
             self.stop(key)
             return
@@ -490,7 +489,7 @@ class Workflow:
             if target in self.owned:
                 self._signal_stop(target)
 
-    def update(self, graph=None, vision=None):
+    def update(self, graph=None, vision=None, read_logs=True):
         if graph is not None:
             self.graph = graph
         if vision is not None:
@@ -499,13 +498,13 @@ class Workflow:
             if key in AUX and self.clock() - self.started[key] > 12. and key not in self.stopping:
                 self.report(f'{key} 操作超时，请检查 ROS Master 和 Mux。')
                 self._signal_stop(key)
-            lines = proc.lines()
-            concise = [line for line in lines if any(
-                token in line for token in ('ERROR', 'FATAL', 'RLException', 'PermissionError',
-                                            'Traceback', '相机', '[READY]', 'control:', '"reason":'))]
-            if concise:
-                self.report(concise[-1][:210])
             status = proc.poll()
+            if read_logs or status is not None:
+                concise = [line for line in proc.lines() if any(
+                    token in line for token in ('ERROR', 'FATAL', 'RLException', 'PermissionError',
+                                                'Traceback', '相机', '[READY]', 'control:', '"reason":'))]
+                if concise:
+                    self.report(concise[-1][:210])
             if status is not None:
                 del self.owned[key]
                 del self.started[key]

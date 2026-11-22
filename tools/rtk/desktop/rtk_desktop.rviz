@@ -68,7 +68,7 @@ Visualization Manager:
     Background Color: 22; 33; 45
     Default Light: true
     Fixed Frame: odom
-    Frame Rate: 25
+    Frame Rate: 15
   Name: root
   Tools:
     - Class: rviz/MoveCamera

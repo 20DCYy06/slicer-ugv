@@ -241,10 +241,16 @@ class WorkflowTests(unittest.TestCase):
         self.assertTrue(navigation.stopped)
 
     def test_new_external_local_process_discovered_again_at_click(self):
-        self.workflow.local_scan = lambda: {'vision': {820}}
-        self.workflow.click('vision')
+        self.workflow.click('vision', process_groups={'vision': {820}})
         self.assertEqual(self.starts, [])
         self.assertIn('外部终端', self.workflow.messages[-1])
+
+    def test_fresh_external_navigation_blocks_individual_driver_stop(self):
+        self.workflow.click('driver')
+        driver = self.starts[-1][3]
+        self.workflow.click('driver', process_groups={'nav': {820}, 'odom': {820}})
+        self.assertFalse(driver.stopped)
+        self.assertIn('请先停止导航', self.workflow.messages[-1])
 
     def test_visual_environment_and_owned_stop(self):
         self.workflow.click('vision')

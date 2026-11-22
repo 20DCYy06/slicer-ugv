@@ -58,6 +58,7 @@ class Observer:
         self.manual_target = None
         self.manual_feedback = None
         self.pending_goal = None
+        self.calibration_active = False
         self.action_connection = None
         self.action_goals = {}
         self.goal_pub = rospy.Publisher(ACTION + '/goal', MoveBaseActionGoal, queue_size=1)
@@ -264,6 +265,12 @@ class Observer:
         with self.lock:
             self._cancel_pending_goal_locked('已取消等待发送的目标')
 
+    def set_calibration_active(self, active):
+        with self.lock:
+            self.calibration_active = active
+            if active:
+                self._cancel_pending_goal_locked('正在地理配准，等待配准动作结束')
+
     def manual_goal(self, message):
         if not recent_stamp(message.header.stamp.to_sec(), 1.):
             return
@@ -275,6 +282,9 @@ class Observer:
             self._dispatch_goal_locked(message, time.monotonic(), may_wait=True)
 
     def _dispatch_goal_locked(self, message, now, may_wait=False):
+        if self.calibration_active:
+            self._goal_blocked_locked('正在地理配准，等待配准动作结束', now)
+            return
         frame = self.board.planner_frame(now)
         status = self.board.recent('action', now, NAV_STATUS_AGE)
         geo = self.board.recent('geographic', now, NAV_STATUS_AGE)

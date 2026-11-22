@@ -43,10 +43,19 @@ STYLES = """
 
 
 class WorkflowPanel(QtWidgets.QWidget):
-    def __init__(self, controller, cancel_pending_goal=None):
+    calibration_active = QtCore.pyqtSignal(bool)
+
+    def __init__(self, controller, cancel_pending_goal=None, submit_process_scan=None):
         super().__init__(objectName='WorkflowPanel')
         self.controller = controller
         self.cancel_pending_goal = cancel_pending_goal
+        self.submit_process_scan = submit_process_scan
+        self.scan = None
+        self.pending_step = None
+        self.confirmation = None
+        self.calibration_blocked = False
+        self.scan_timer = QtCore.QTimer(self, interval=40)
+        self.scan_timer.timeout.connect(self.finish_scan)
         self.stable = StableStatus()
         self.setStyleSheet(STYLES)
         self.setFont(QtGui.QFont('Noto Sans CJK SC', 10))
@@ -108,23 +117,97 @@ class WorkflowPanel(QtWidgets.QWidget):
     def click(self, key):
         if self.cancel_pending_goal is not None:
             self.cancel_pending_goal()
-        options = {'mode': self.air_mode.currentData()}
-        result = self.controller.click(key, confirmed=False, **options)
-        if result == 'confirm':
-            answer = QtWidgets.QMessageBox.question(
-                self, '确认地理配准', '小车将在配准时直行约 2.5 m。确认前方空旷且可以急停后开始。',
-                QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No, QtWidgets.QMessageBox.No)
-            if answer == QtWidgets.QMessageBox.Yes:
-                self.controller.click(key, confirmed=True, **options)
+        if self.pending_step is not None and key == self.pending_step[0]:
+            return
+        if key == 'calibrate' and self.confirmation is not None:
+            self.confirmation.raise_()
+            self.confirmation.activateWindow()
+            return
+        if self.confirmation is not None or key in self.controller.owned:
+            self.cancel_pending()
+        self.request_step(key, self.air_mode.currentData(), confirmed=False)
+
+    def request_step(self, key, mode, confirmed):
+        owner = self.controller.owned.get(key)
+        if self.submit_process_scan is None or (owner is not None and key not in ('sensors', 'driver')):
+            self.run_step(key, mode, confirmed)
+            return
+        if self.pending_step is not None or self.scan is not None and not self.scan.done():
+            self.controller.report('正在检查本机进程，请稍候。')
+        else:
+            self.scan = self.submit_process_scan()
+            self.pending_step = key, mode, confirmed, owner, time.monotonic() + 2.
+            self.scan_timer.start()
         self.refresh()
 
+    def finish_scan(self):
+        if self.pending_step is None:
+            return
+        key, mode, confirmed, owner, deadline = self.pending_step
+        if time.monotonic() > deadline:
+            self.cancel_pending()
+            self.controller.report('本机进程检查超时，请重新点击。')
+        elif not self.scan.done():
+            return
+        else:
+            scan, self.scan = self.scan, None
+            self.pending_step = None
+            self.scan_timer.stop()
+            try:
+                groups = scan.result()
+            except Exception as error:
+                self.controller.report(f'无法检查本机进程，请重新点击。{error}')
+            else:
+                if self.controller.owned.get(key) is not owner:
+                    self.controller.report('步骤状态已变化，请重新点击。')
+                else:
+                    self.run_step(key, mode, confirmed, process_groups=groups)
+        self.refresh()
+
+    def run_step(self, key, mode, confirmed, **kwargs):
+        if confirmed and self.cancel_pending_goal is not None:
+            self.cancel_pending_goal()
+        result = self.controller.click(key, mode=mode, confirmed=confirmed, **kwargs)
+        if result == 'confirm' and not confirmed:
+            box = QtWidgets.QMessageBox(
+                QtWidgets.QMessageBox.Question, '确认地理配准',
+                '小车将在配准时直行约 2.5 m。确认前方空旷且可以急停后开始。',
+                QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No, self)
+            box.setWindowFlag(QtCore.Qt.WindowStaysOnTopHint)
+            box.setWindowModality(QtCore.Qt.NonModal)
+            box.setAttribute(QtCore.Qt.WA_DeleteOnClose)
+            box.setDefaultButton(QtWidgets.QMessageBox.No)
+            box.finished.connect(lambda answer: self.finish_confirmation(box, mode, answer))
+            self.confirmation = box
+            box.show()
+        self.refresh()
+
+    def finish_confirmation(self, box, mode, answer):
+        if self.confirmation is box:
+            self.confirmation = None
+            if answer == QtWidgets.QMessageBox.Yes:
+                self.request_step('calibrate', mode, confirmed=True)
+            else:
+                self.refresh()
+
+    def cancel_pending(self):
+        self.scan_timer.stop()
+        self.pending_step = None
+        if self.scan is not None:
+            self.scan.cancel()
+        if self.confirmation is not None:
+            box, self.confirmation = self.confirmation, None
+            box.close()
+
     def stop_all(self):
+        self.cancel_pending()
         if self.cancel_pending_goal is not None:
             self.cancel_pending_goal()
         self.controller.stop_all()
         self.refresh()
 
     def parking_clicked(self):
+        self.cancel_pending()
         if self.cancel_pending_goal is not None:
             self.cancel_pending_goal()
         self.controller.control(self.parking_action)
@@ -134,10 +217,18 @@ class WorkflowPanel(QtWidgets.QWidget):
         immediate = now is None
         now = time.monotonic() if now is None else now
         states = self.controller.states
+        pending_key = self.pending_step[0] if self.pending_step is not None else None
+        calibration_blocked = (pending_key == 'calibrate' or self.confirmation is not None
+                               or self.controller.calibrating)
+        if calibration_blocked != self.calibration_blocked:
+            self.calibration_blocked = calibration_blocked
+            self.calibration_active.emit(calibration_blocked)
         for key, button in self.buttons.items():
             raw_color, raw_suffix, clickable = states[key]
             color, suffix = self.stable.update(key, (raw_color, raw_suffix), now,
                                                immediate=immediate or not clickable)
+            if key == pending_key:
+                color, suffix = 'yellow', '检查中'
             if button.property('stage') != color:
                 button.setProperty('stage', color)
                 button.style().unpolish(button)
@@ -147,11 +238,15 @@ class WorkflowPanel(QtWidgets.QWidget):
             text = STEPS[key] + tail
             metrics = button.fontMetrics()
             room = button.width() - metrics.horizontalAdvance(tail) - 15
-            button.setText(metrics.elidedText(STEPS[key], QtCore.Qt.ElideRight, max(0, room)) + tail)
-            button.setToolTip(text)
-            button.setAccessibleName(text)
-            button.setEnabled(clickable)
-        self.air_mode.setEnabled(states['air'][0] == 'red' and states['air'][2])
+            rendered = metrics.elidedText(STEPS[key], QtCore.Qt.ElideRight, max(0, room)) + tail
+            if button.text() != rendered:
+                button.setText(rendered)
+            if button.toolTip() != text:
+                button.setToolTip(text)
+                button.setAccessibleName(text)
+            if button.isEnabled() != clickable:
+                button.setEnabled(clickable)
+        self.air_mode.setEnabled(pending_key != 'air' and states['air'][0] == 'red' and states['air'][2])
         parked = self.controller.mux.get('manual_hold')
         self.parking_action = 'hold' if parked is False else 'release'
         self.parking.setText('保持停车' if self.parking_action == 'hold' else '解除停车')
