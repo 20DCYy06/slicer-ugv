@@ -26,10 +26,10 @@ STYLES = """
 #WorkflowPanel QPushButton[stage="green"] { background: #194737; border-color: #357d64; }
 #WorkflowPanel QPushButton:hover, #WorkflowPanel QPushButton:focus { border-color: #a5d6eb; }
 #WorkflowPanel QPushButton:disabled { color: #b2bfca; }
-#WorkflowPanel QCheckBox { color: #e9f3fc; spacing: 4px; }
-#WorkflowPanel QCheckBox:disabled { color: #9bb0c0; }
 #WorkflowPanel QComboBox { color: #e9f3fc; background: #243a4b; }
 #WorkflowPanel QComboBox QAbstractItemView { color: #e9f3fc; background: #243a4b; }
+#WorkflowPanel QPushButton#stop_all { background: #61303b; border-color: #ad5f70; }
+#WorkflowPanel QPushButton#stop_all:hover, #WorkflowPanel QPushButton#stop_all:focus { border-color: #ffd0d9; }
 #WorkflowPanel QPlainTextEdit {
     color: #b2c7d8;
     background: #172534;
@@ -62,24 +62,20 @@ class WorkflowPanel(QtWidgets.QWidget):
             button.setSizePolicy(QtWidgets.QSizePolicy.Ignored, QtWidgets.QSizePolicy.Fixed)
             button.clicked.connect(lambda _checked=False, item=key: self.click(item))
             self.buttons[key] = button
-            layout.addWidget(button)
+            if key != 'air':
+                layout.addWidget(button)
 
         options = QtWidgets.QHBoxLayout()
-        options.setSpacing(6)
-        self.air_enabled = QtWidgets.QCheckBox('启用通信')
+        options.setSpacing(4)
         self.air_mode = QtWidgets.QComboBox()
         self.air_mode.addItem('V1', 'v1')
         self.air_mode.addItem('V2', 'v2')
+        self.air_mode.setFixedHeight(23)
         self.air_mode.setAccessibleName('空地协同协议')
-        self.air_monitor = QtWidgets.QCheckBox('仅观测')
-        self.air_monitor.setChecked(True)
-        options.addWidget(self.air_enabled)
+        self.air_mode.setToolTip('选择飞机端使用的通信协议，再点击飞机通信节点')
+        options.addWidget(self.buttons['air'], 1)
         options.addWidget(self.air_mode)
-        options.addWidget(self.air_monitor)
-        options.addStretch()
         layout.addLayout(options)
-        self.air_enabled.toggled.connect(self.toggle_air)
-        self.air_mode.currentIndexChanged.connect(self.refresh)
 
         actions = QtWidgets.QHBoxLayout()
         actions.setSpacing(4)
@@ -87,7 +83,7 @@ class WorkflowPanel(QtWidgets.QWidget):
         self.parking.setFixedHeight(23)
         self.parking.clicked.connect(self.parking_clicked)
         actions.addWidget(self.parking)
-        self.stop_button = QtWidgets.QPushButton('一键全部停止')
+        self.stop_button = QtWidgets.QPushButton('一键全部停止', objectName='stop_all')
         self.stop_button.setFixedHeight(23)
         self.stop_button.setToolTip('依次关闭本面板启动的进程')
         self.stop_button.clicked.connect(self.stop_all)
@@ -96,17 +92,15 @@ class WorkflowPanel(QtWidgets.QWidget):
         self.log = QtWidgets.QPlainTextEdit(readOnly=True)
         self.log.setAccessibleName('运行日志摘要')
         self.log.setFont(QtGui.QFont('Noto Sans CJK SC', 9))
-        self.log.setFixedHeight(49)
+        self.log.setFixedHeight(64)
         self.log.setSizePolicy(QtWidgets.QSizePolicy.Ignored, QtWidgets.QSizePolicy.Fixed)
-        self.log.setLineWrapMode(QtWidgets.QPlainTextEdit.NoWrap)
-        self.log.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
-        self.log.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
+        self.log.setLineWrapMode(QtWidgets.QPlainTextEdit.WidgetWidth)
         self.log.setPlaceholderText('等待操作')
         layout.addWidget(self.log)
         self.refresh()
 
     def click(self, key):
-        options = {'mode': self.air_mode.currentData(), 'monitor': self.air_monitor.isChecked()}
+        options = {'mode': self.air_mode.currentData()}
         result = self.controller.click(key, confirmed=False, **options)
         if result == 'confirm':
             answer = QtWidgets.QMessageBox.question(
@@ -116,23 +110,18 @@ class WorkflowPanel(QtWidgets.QWidget):
                 self.controller.click(key, confirmed=True, **options)
         self.refresh()
 
-    def toggle_air(self, enabled):
-        if not enabled:
-            self.controller.stop('air')
-        self.refresh()
-
     def stop_all(self):
         self.controller.stop_all()
         self.refresh()
 
     def parking_clicked(self):
-        action = 'release' if self.controller.mux.get('manual_hold') is True else 'hold'
-        self.controller.control(action)
+        self.controller.control(self.parking_action)
         self.refresh()
 
     def refresh(self):
+        states = self.controller.states
         for key, button in self.buttons.items():
-            color, suffix, clickable = self.controller.states.get(key, ('red', '', False))
+            color, suffix, clickable = states[key]
             if button.property('stage') != color:
                 button.setProperty('stage', color)
                 button.style().unpolish(button)
@@ -145,18 +134,17 @@ class WorkflowPanel(QtWidgets.QWidget):
             button.setText(metrics.elidedText(STEPS[key], QtCore.Qt.ElideRight, max(0, room)) + tail)
             button.setToolTip(text)
             button.setAccessibleName(text)
-            button.setEnabled(clickable and (key != 'air' or self.air_enabled.isChecked() or color != 'red'))
-        air_idle = self.controller.states.get('air', ('red', '', False))[0] == 'red'
-        self.air_mode.setEnabled(self.air_enabled.isChecked() and air_idle)
-        self.air_monitor.setEnabled(self.air_mode.isEnabled() and self.air_mode.currentData() == 'v2')
+            button.setEnabled(clickable)
+        self.air_mode.setEnabled(states['air'][0] == 'red' and states['air'][2])
         parked = self.controller.mux.get('manual_hold')
-        self.parking.setText('保持停车' if parked is False else '解除停车')
-        self.parking.setEnabled(parked in (True, False))
+        self.parking_action = 'hold' if parked is False else 'release'
+        self.parking.setText('保持停车' if self.parking_action == 'hold' else '解除停车')
         messages = list(self.controller.messages)[-3:]
         text = '\n'.join(str(line).strip().replace('\n', ' ') for line in messages)
         if self.log.toPlainText() != text:
             self.log.setPlainText(text)
             self.log.setToolTip(text)
+            self.log.moveCursor(QtGui.QTextCursor.End)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)

@@ -37,7 +37,7 @@ class WorkflowPanelTests(unittest.TestCase):
     def test_step_button_clicks_refresh_and_show_external_ownership(self):
         for key in ('sensors', 'driver', 'odom', 'calibrate', 'map', 'vision'):
             self.click(self.panel.buttons[key])
-            self.controller.click.assert_called_with(key, mode='v1', monitor=True, confirmed=False)
+            self.controller.click.assert_called_with(key, mode='v1', confirmed=False)
         item = self.panel.buttons['sensors']
         self.assertEqual(item.property('stage'), 'red')
         self.controller.states['sensors'] = ('yellow', '启动中', False)
@@ -49,21 +49,20 @@ class WorkflowPanelTests(unittest.TestCase):
         self.assertEqual(item.property('stage'), 'green')
         self.assertIn('外部运行中', item.text())
 
-    def test_air_is_optional_and_v2_mode_is_forwarded(self):
+    def test_air_starts_with_one_click_and_v2_mode_is_forwarded(self):
         air = self.panel.buttons['air']
-        self.assertFalse(air.isEnabled())
-        self.panel.air_enabled.setChecked(True)
-        self.panel.air_mode.setCurrentIndex(1)
-        self.assertTrue(self.panel.air_monitor.isEnabled())
-        self.panel.air_monitor.setChecked(False)
+        self.assertTrue(air.isEnabled())
+        self.assertEqual(self.panel.findChildren(QtWidgets.QCheckBox), [])
         self.click(air)
-        self.controller.click.assert_called_once_with('air', mode='v2', monitor=False, confirmed=False)
-        self.panel.air_enabled.setChecked(False)
-        self.controller.stop.assert_called_once_with('air')
-        self.assertFalse(air.isEnabled())
+        self.controller.click.assert_called_once_with('air', mode='v1', confirmed=False)
+        self.controller.click.reset_mock()
+        self.panel.air_mode.setCurrentIndex(1)
+        self.click(air)
+        self.controller.click.assert_called_once_with('air', mode='v2', confirmed=False)
         self.controller.states['air'] = ('green', '外部运行中', True)
         self.panel.refresh()
         self.assertTrue(air.isEnabled())
+        self.assertFalse(self.panel.air_mode.isEnabled())
         self.assertEqual(air.property('stage'), 'green')
 
     def test_motion_confirmation_and_stop_all(self):
@@ -73,7 +72,7 @@ class WorkflowPanelTests(unittest.TestCase):
         self.assertEqual(self.controller.click.call_count, 1)
         with patch.object(QtWidgets.QMessageBox, 'question', return_value=QtWidgets.QMessageBox.Yes):
             self.click(self.panel.buttons['calibrate'])
-        self.controller.click.assert_called_with('calibrate', mode='v1', monitor=True, confirmed=True)
+        self.controller.click.assert_called_with('calibrate', mode='v1', confirmed=True)
         self.click(self.panel.stop_button)
         self.controller.stop_all.assert_called_once_with()
 
@@ -85,7 +84,9 @@ class WorkflowPanelTests(unittest.TestCase):
         self.assertLessEqual(self.panel.sizeHint().height(), 310)
 
     def test_parking_control_tracks_mux_and_passes_explicit_action(self):
-        self.assertFalse(self.panel.parking.isEnabled())
+        self.assertTrue(self.panel.parking.isEnabled())
+        self.click(self.panel.parking)
+        self.controller.control.assert_called_with('release')
         self.controller.mux = {'manual_hold': True}
         self.panel.refresh()
         self.click(self.panel.parking)

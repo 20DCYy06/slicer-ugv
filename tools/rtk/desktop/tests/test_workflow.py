@@ -2,10 +2,11 @@
 from pathlib import Path
 import sys
 import unittest
+from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from dashboard_model import Dashboard
-from workflow import Workflow
+from workflow import OwnedProcess, Workflow
 from workflow_discovery import Graph
 
 
@@ -22,6 +23,20 @@ class Process:
 
     def lines(self):
         return []
+
+
+class OwnedProcessTests(unittest.TestCase):
+    def test_stop_tracks_group_after_serial_wrapper_exits(self):
+        child = OwnedProcess.__new__(OwnedProcess)
+        child.process = Mock(pid=2345)
+        child.process.poll.return_value = -15
+        child.stop_at = 1.
+        child.signal_stage = 1
+        with patch('workflow.time.monotonic', return_value=28.), patch('workflow.os.killpg') as kill:
+            self.assertIsNone(child.poll())
+            kill.assert_called_once_with(2345, 0)
+            kill.side_effect = ProcessLookupError
+            self.assertEqual(child.poll(), -15)
 
 
 class WorkflowTests(unittest.TestCase):
@@ -91,8 +106,9 @@ class WorkflowTests(unittest.TestCase):
 
     def test_external_ready_and_stale_owner_both_block_duplicate(self):
         self.prerequisites()
+        expected = {'sensors': '已就绪', 'driver': '已完成', 'odom': '已就绪'}
         for key in ('sensors', 'driver', 'odom'):
-            self.assertEqual(self.workflow.states[key][:2], ('green', '外部运行中'))
+            self.assertEqual(self.workflow.states[key][:2], ('green', expected[key]))
             self.workflow.click(key)
         self.assertEqual(self.starts, [])
         self.clock += 10.
@@ -100,6 +116,28 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(self.color('odom'), 'yellow')
         self.workflow.click('odom')
         self.assertEqual(self.starts, [])
+
+    def test_partial_external_sensor_stack_reports_missing_data_and_allows_retry_after_exit(self):
+        self.graph.nodes.add('/slicer_ekf')
+        self.refresh()
+        self.assertEqual(self.workflow.states['sensors'][:2], ('yellow', '等待雷达扫描'))
+        self.workflow.click('sensors')
+        self.assertEqual(self.starts, [])
+        self.assertIn('等待雷达扫描', self.workflow.messages[-1])
+        self.graph.nodes.clear()
+        self.refresh()
+        self.assertEqual(self.starts, [])
+        self.workflow.click('sensors')
+        self.assertEqual([key for key, *_ in self.starts], ['sensors'])
+
+    def test_odom_reports_missing_local_odometry_and_unexpected_exit_can_retry(self):
+        self.workflow.click('odom')
+        self.assertEqual(self.workflow.states['odom'][:2], ('yellow', '等待本地里程计'))
+        self.starts[-1][3].status = 0
+        self.refresh()
+        self.assertEqual(self.workflow.states['odom'][:2], ('red', '进程已退出'))
+        self.workflow.click('odom')
+        self.assertEqual([key for key, *_ in self.starts], ['odom', 'odom'])
 
     def test_calibration_release_then_initialize_then_restore_hold(self):
         self.prerequisites(fixed=False)
@@ -166,6 +204,19 @@ class WorkflowTests(unittest.TestCase):
         self.refresh()
         self.assertEqual([step for step, *_ in self.starts], ['map'])
 
+    def test_stop_all_cancels_pending_map_even_when_no_process_is_owned(self):
+        self.prerequisites()
+        self.graph.frame = None
+        self.graph.nodes.discard('/ugv/move_base')
+        self.graph.subscribers.clear()
+        self.sample(geographic={'state': 'ready', 'registered': True})
+        self.refresh()
+        self.workflow.click('map')
+        self.assertTrue(self.workflow.switching)
+        self.workflow.stop_all()
+        self.refresh()
+        self.assertEqual(self.starts, [])
+
     def test_calibration_can_retry_when_manager_remains_collecting_but_worker_exited(self):
         self.prerequisites()
         self.sample(geographic={'state': 'collecting'})
@@ -209,9 +260,19 @@ class WorkflowTests(unittest.TestCase):
         self.workflow.click('vision')
         self.assertTrue(proc.stopped)
 
+    def test_vision_camera_ready_reports_serial_owner_until_driver_exits(self):
+        self.graph.publishers['/wheel/odom'] = {'/slicer_c30d_driver'}
+        self.workflow.click('vision')
+        self.assertIn('底盘串口', self.workflow.messages[-1])
+        self.refresh(vision=True)
+        self.assertEqual(self.workflow.states['vision'][:2], ('yellow', '底盘串口占用'))
+        self.graph.publishers.clear()
+        self.refresh(vision=True)
+        self.assertEqual(self.workflow.states['vision'][:2], ('green', '相机就绪'))
+
     def test_air_selection_optional_and_external_executor_exclusion(self):
         self.assertEqual(self.color('air'), 'red')
-        self.workflow.click('air', mode='v2', monitor=False)
+        self.workflow.click('air', mode='v2')
         self.assertIn('monitor_only:=false', self.starts[-1][1])
         self.assertIn('start_fkie:=false', self.starts[-1][1])
         self.graph.air_mode = 'v2'
@@ -226,6 +287,13 @@ class WorkflowTests(unittest.TestCase):
         self.refresh()
         self.workflow.click('air', mode='v2')
         self.assertEqual(len(self.starts), 1)
+
+    def test_parking_and_stop_all_provide_feedback_without_starting_nodes(self):
+        self.workflow.control('release')
+        self.assertIn('等待 Mux', self.workflow.messages[-1])
+        self.workflow.stop_all()
+        self.assertIn('本面板没有', self.workflow.messages[-1])
+        self.assertEqual(self.starts, [])
 
     def test_stop_all_signals_only_owned_groups_in_order(self):
         self.workflow.click('sensors')

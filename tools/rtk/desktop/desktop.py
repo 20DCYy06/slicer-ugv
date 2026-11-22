@@ -66,7 +66,12 @@ class Readouts(QtWidgets.QWidget):
         self.status = label('', True)
         outer.addWidget(self.status)
         self.sections = QtWidgets.QStackedWidget()
-        outer.addWidget(self.sections, 1)
+        readouts = QtWidgets.QScrollArea(widgetResizable=True)
+        readouts.setFrameShape(QtWidgets.QFrame.NoFrame)
+        readouts.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Ignored)
+        readouts.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
+        readouts.setWidget(self.sections)
+        outer.addWidget(readouts, 1)
 
         self.prep = QtWidgets.QFrame(objectName='Readouts')
         prep = QtWidgets.QVBoxLayout(self.prep)

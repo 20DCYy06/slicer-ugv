@@ -19,10 +19,17 @@ NODE_GROUPS = {
 }
 AUX = ('release', 'hold', 'switch_hold', 'calibration_hold', 'stop_nav_hold')
 CONTROL = ('rosrun', 'ugv_slicer_control', 'control.py')
+SERIAL_GROUP = Path(__file__).resolve().parents[2] / 'manual' / 'serial_group.sh'
 
 
 class OwnedProcess:
     def __init__(self, key, argv, env):
+        if key in ('sensors', 'driver'):
+            # The setuid sg helper strips the loader path; restore it for the ROS binaries.
+            if 'LD_LIBRARY_PATH' in env:
+                argv = ('env', f'LD_LIBRARY_PATH={env["LD_LIBRARY_PATH"]}', *argv)
+            argv = ('bash', '-c', 'source "$1" && shift && run_serial_tool "$@"',
+                    'rtk-desktop', str(SERIAL_GROUP), *argv)
         log_dir = Path(env.get('ROS_HOME') or Path.home() / '.ros') / 'log'
         log_dir.mkdir(parents=True, exist_ok=True)
         with tempfile.NamedTemporaryFile(prefix=f'rtk-desktop-{key}-', suffix='.log',
@@ -40,25 +47,30 @@ class OwnedProcess:
         try:
             os.killpg(self.process.pid, sig)
         except ProcessLookupError:
-            pass
+            return False
+        return True
 
     def stop(self):
-        if self.stop_at is None and self.process.poll() is None:
+        if self.stop_at is None:
             self.stop_at = time.monotonic()
             self._signal(signal.SIGINT)
 
     def poll(self):
         status = self.process.poll()
-        if status is None and self.stop_at is not None:
-            elapsed = time.monotonic() - self.stop_at
-            # Allow roslaunch and Tk to finish their own shutdown handlers.
-            if elapsed > 32. and self.signal_stage == 1:
-                self.signal_stage = 2
-                self._signal(signal.SIGKILL)
-            elif elapsed > 25. and self.signal_stage == 0:
-                self.signal_stage = 1
-                self._signal(signal.SIGTERM)
-        return status
+        if self.stop_at is None:
+            return status
+        # sg may exit on SIGTERM before its child finishes closing the serial port.
+        if status is not None and (self.signal_stage == 2 or not self._signal(0)):
+            return status
+        elapsed = time.monotonic() - self.stop_at
+        # Allow roslaunch and Tk to finish their own shutdown handlers.
+        if elapsed > 32. and self.signal_stage == 1:
+            self.signal_stage = 2
+            self._signal(signal.SIGKILL)
+        elif elapsed > 25. and self.signal_stage == 0:
+            self.signal_stage = 1
+            self._signal(signal.SIGTERM)
+        return None
 
     def lines(self):
         try:
@@ -92,6 +104,7 @@ class Workflow:
         self.owned = {}
         self.started = {}
         self.stopping = set()
+        self.exited = {}
         self.messages = deque(maxlen=3)
         self.switching = False
         self.switch_deadline = 0.
@@ -136,6 +149,11 @@ class Workflow:
                     or {NAV_ACTION, '/slicer_nav_arc_guard', '/slicer_velocity_mux'} & self.graph.nodes
                     or self.graph.publishers.get('/cmd_vel'))
 
+    @property
+    def vision_driver_busy(self):
+        return ('driver' in self.owned or self.present('driver') or self.ready('driver')
+                or bool(self.graph.publishers.get('/wheel/odom')))
+
     def ready(self, key):
         if key == 'vision':
             return bool(self.vision)
@@ -159,6 +177,19 @@ class Workflow:
             modes = (self.graph.air_mode or '').split('+')
             return any(self.recent(mode) is not None for mode in modes)
 
+    def _waiting_status(self, key):
+        if key == 'sensors':
+            return '等待雷达扫描' if not self.recent('lidar') else '等待定位数据'
+        if key == 'driver':
+            return '等待底盘遥测'
+        if key in ('odom', 'map') and self.recent('odom') is None:
+            return '等待本地里程计'
+        if key == 'vision':
+            return '等待相机画面'
+        if key == 'air':
+            return '等待通信状态'
+        return '等待就绪'
+
     @property
     def states(self):
         result = {}
@@ -171,21 +202,27 @@ class Workflow:
                 result[key] = ('yellow', '切换中', False)
             elif key == 'calibrate' and (self.calibrating or self.present(key)):
                 result[key] = ('yellow', '配准中', False)
+            elif key == 'vision' and self.vision and self.vision_driver_busy:
+                result[key] = ('yellow', '底盘串口占用', not self.stopping_all)
             elif self.ready(key):
-                status = '外部运行中' if external else {'calibrate': '已配准', 'air': '通信运行中'}.get(key, '已就绪')
+                status = {'driver': '已完成', 'calibrate': '已配准',
+                          'vision': '相机就绪', 'air': '通信运行中'}.get(key, '已就绪')
                 result[key] = ('green', status, key != 'calibrate' and not self.stopping_all)
             elif owned or external:
-                result[key] = ('yellow', '等待外部状态' if external else '等待就绪', not self.stopping_all)
+                result[key] = ('yellow', self._waiting_status(key), not self.stopping_all)
             else:
-                result[key] = ('red', '', not self.stopping_all)
+                result[key] = ('red', self.exited.get(key, ''), not self.stopping_all)
         return result
 
     def _start(self, key, argv):
         try:
             self.owned[key] = self.spawn(key, argv, self.env)
         except (OSError, ValueError) as error:
+            if key in STEPS:
+                self.exited[key] = '启动失败'
             self.report(f'{key} 启动失败 · {error}')
             return False
+        self.exited.pop(key, None)
         self.started[key] = self.clock()
         self.report(shlex.join(argv))
         return True
@@ -225,8 +262,12 @@ class Workflow:
     def stop_all(self):
         if self.stopping_all:
             return
+        if self.idle and not self.switching:
+            self.report('本面板没有可停止的进程。外部流程请在原终端停止。')
+            return
         self.switching = False
         self.stopping_all = True
+        self.report('正在停止本面板启动的流程。')
         self._advance_stop()
 
     def _advance_stop(self):
@@ -244,6 +285,7 @@ class Workflow:
                 self._signal_stop(key)
                 return
         self.stopping_all = False
+        self.report('本面板启动的流程已停止。')
 
     @property
     def idle(self):
@@ -259,10 +301,21 @@ class Workflow:
                 and self.mux.get('teleop_fresh') is False
                 and self.mux.get('emergency_stop_latched') is False)
 
-    def _calibration_valid(self):
-        return (self.ready('sensors') and self.ready('driver') and self.ready('odom') and self._nav_idle()
-                and self._safe_to_move() and self.recent('odom_still') is True
-                and bool(self.geo) and not self.present('calibrate'))
+    def _calibration_block(self):
+        for key, title in (('sensors', '定位与传感器'), ('driver', '底盘驱动'), ('odom', '起步导航 (odom)')):
+            if not self.ready(key):
+                return f'请先等待{title}就绪。'
+        if not self._nav_idle():
+            return '请先结束运行中的导航或空地任务。'
+        if not self._safe_to_move():
+            return '请检查 Mux 状态、急停与手动控制。'
+        if self.recent('odom_still') is not True:
+            return '请确认车辆停稳，并等待本地里程计。'
+        if not self.geo:
+            return '等待地理配准节点发布状态。'
+        if self.present('calibrate'):
+            return '当前已有配准进程。'
+        return None
 
     def _move_control(self, key, action):
         if '/ugv/control' in self.graph.nodes and not any(item in self.owned for item in AUX):
@@ -273,14 +326,14 @@ class Workflow:
     def control(self, action):
         if self.stopping_all or self.calibrating or self.switching or any(key in self.owned for key in AUX):
             self.report('等待当前流程结束后再操作停车状态。')
+        elif self.mux.get('manual_hold') not in (True, False):
+            self.report('等待 Mux 状态。')
         elif action == 'release' and not (self._safe_to_move() and self._nav_idle() and self.ready('driver')):
             self.report('底盘、导航或停车保护尚未就绪。')
-        elif self.mux:
-            self._move_control(action, action)
         else:
-            self.report('等待 Mux 状态。')
+            self._move_control(action, action)
 
-    def click(self, key, mode='v1', monitor=True, confirmed=False):
+    def click(self, key, mode='v1', confirmed=False):
         if self.stopping_all or key in self.stopping:
             return
         if self.local_scan is not None:
@@ -289,7 +342,8 @@ class Workflow:
             self.stop(key)
             return
         if self.present(key) and key != 'calibrate':
-            self.report('该节点由外部终端启动，请在原终端停止。')
+            pending = '' if self.ready(key) else self._waiting_status(key) + '。'
+            self.report(pending + '该步骤由外部终端启动。需要重启时请先在原终端停止。')
             return
         if not self.graph.online and key != 'vision':
             self.report('等待全局 ROS Master。')
@@ -322,12 +376,12 @@ class Workflow:
         }
         if key == 'air' and mode == 'v2':
             ip = self.env.get('SLICER_UAV_IP')
-            commands[key] = ('roslaunch', 'ag_ugv_task', 'ugv.launch',
-                             f'monitor_only:={str(monitor).lower()}', f'start_fkie:={str(bool(ip)).lower()}')
+            commands[key] = ('roslaunch', 'ag_ugv_task', 'ugv.launch', 'monitor_only:=false',
+                             f'start_fkie:={str(bool(ip)).lower()}')
             if ip:
                 commands[key] += (f'uav_ip:={ip}',)
-        if self._start(key, commands[key]) and key == 'vision' and (self.ready('driver') or self.present('driver')):
-            self.report('视觉窗口可预览。抓取动作需要底盘串口，请先停车并关闭底盘驱动。')
+        if self._start(key, commands[key]) and key == 'vision' and self.vision_driver_busy:
+            self.report('底盘串口被占用。请停车，停止导航和底盘驱动后，再在视觉窗口移动并抓取。')
 
     def _calibrate(self, confirmed):
         if self.calibrating or self.ready('calibrate') or self.present('calibrate'):
@@ -336,8 +390,12 @@ class Workflow:
         if not self.board.view(self.clock())['usable']:
             self.report('请等待新鲜 RTK FIXED（gga_quality=4）。')
             return
-        if not self._calibration_valid() or any(key in self.owned for key in AUX):
-            self.report('请先启动定位、底盘和 odom 导航，确认无任务、急停或手动控制。')
+        block = self._calibration_block()
+        if block:
+            self.report(block)
+            return
+        if any(key in self.owned for key in AUX):
+            self.report('请先等待停车状态操作结束。')
             return
         if not confirmed:
             return 'confirm'
@@ -348,7 +406,7 @@ class Workflow:
             self._start_registration()
 
     def _start_registration(self):
-        if (self._calibration_valid() and self.mux.get('manual_hold') is False
+        if (self._calibration_block() is None and self.mux.get('manual_hold') is False
                 and self.board.view(self.clock())['usable']):
             self.calibration_started = self._start(
                 'calibrate', ('rosrun', 'ugv_navigation', 'geographic.py', 'initialize', '--distance', '2.5'))
@@ -367,8 +425,11 @@ class Workflow:
     def _map(self):
         if self.switching:
             return
-        if not (self.ready('calibrate') and self.ready('sensors') and self.ready('driver')):
-            self.report('请先完成配准，并保持定位与底盘运行。')
+        if not self.ready('calibrate'):
+            self.report('请先完成第 4 步地理配准。')
+            return
+        if not (self.ready('sensors') and self.ready('driver')):
+            self.report('切换前请等待定位与底盘就绪。')
             return
         if self.nav_present and 'odom' not in self.owned:
             self.report('odom 导航由外部终端启动。请在原终端停掉导航，保留定位和底盘。')
@@ -398,10 +459,13 @@ class Workflow:
             else:
                 self.report('定位、底盘或配准状态变化，暂停切换。')
 
-    def _exit(self, key, status):
+    def _exit(self, key, status, log):
         stopping = key in self.stopping
         self.stopping.discard(key)
-        if status == 0:
+        if not stopping and key in STEPS and (key != 'calibrate' or status != 0):
+            self.exited[key] = '进程已退出' if status == 0 else '运行失败'
+            self.report(f'{key} 已退出（状态 {status}）' + (f' · {log}' if log else ''))
+        elif status == 0:
             self.report(f'{key} 已退出')
         elif not stopping:
             self.report(f'{key} 退出（状态 {status}），请查看 ROS 日志。')
@@ -435,14 +499,15 @@ class Workflow:
                 self._signal_stop(key)
             lines = proc.lines()
             concise = [line for line in lines if any(
-                token in line for token in ('ERROR', 'FATAL', 'Traceback', '相机', '[READY]', 'control:', '"reason":'))]
+                token in line for token in ('ERROR', 'FATAL', 'RLException', 'PermissionError',
+                                            'Traceback', '相机', '[READY]', 'control:', '"reason":'))]
             if concise:
                 self.report(concise[-1][:210])
             status = proc.poll()
             if status is not None:
                 del self.owned[key]
                 del self.started[key]
-                self._exit(key, status)
+                self._exit(key, status, getattr(proc, 'log', None))
         if self.stopping_all:
             self._advance_stop()
         elif self.switching:
