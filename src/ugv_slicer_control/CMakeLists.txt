@@ -7,20 +7,23 @@ catkin_install_python(PROGRAMS scripts/velocity_mux.py scripts/arc_velocity_guar
   scripts/c30d_driver_node.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION})
 install(FILES scripts/control_core.py scripts/slicer_manual.py scripts/navigation_core.py
-  scripts/c30d_link.py scripts/chassis_core.py scripts/serial_transport.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION})
 # catkin's devel entry-point wrappers must find the same sibling modules.
-foreach(module control_core slicer_manual navigation_core c30d_link chassis_core serial_transport)
+foreach(module control_core slicer_manual navigation_core)
   configure_file(scripts/${module}.py ${CATKIN_DEVEL_PREFIX}/${CATKIN_PACKAGE_BIN_DESTINATION}/${module}.py COPYONLY)
 endforeach()
-set(C30D_HARDWARE "${CMAKE_CURRENT_SOURCE_DIR}/../../Hardware")
-foreach(module chassis_recovery chassis_commands)
-  configure_file("${C30D_HARDWARE}/Host/${module}.py"
+include(../../cmake/SlicerHardware.cmake)
+foreach(module c30d_link chassis_core serial_transport)
+  set(hardware_module "${SLICER_HARDWARE_ROOT}/Host/rtk/${module}.py")
+  configure_file("${hardware_module}"
     "${CATKIN_DEVEL_PREFIX}/${CATKIN_PACKAGE_BIN_DESTINATION}/${module}.py" COPYONLY)
-  install(FILES "${C30D_HARDWARE}/Host/${module}.py" DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION})
+  install(FILES "${hardware_module}" DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION})
 endforeach()
-install(FILES "${C30D_HARDWARE}/Host/chassis_commands.py" DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}/c30d_tools/Host)
-install(FILES "${C30D_HARDWARE}/Unlock/unlock.py" DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}/c30d_tools/Unlock)
+set(c30d_tools "${CATKIN_PACKAGE_BIN_DESTINATION}/c30d_tools")
+foreach(module chassis_recovery chassis_commands)
+  install(FILES "${SLICER_HARDWARE_ROOT}/Host/${module}.py" DESTINATION "${c30d_tools}/Host")
+endforeach()
+install(FILES "${SLICER_HARDWARE_ROOT}/Unlock/unlock.py" DESTINATION "${c30d_tools}/Unlock")
 install(FILES SOURCES.json DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION})
 if(CATKIN_ENABLE_TESTING)
   find_package(rostest REQUIRED)

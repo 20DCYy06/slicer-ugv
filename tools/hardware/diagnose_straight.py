@@ -4,8 +4,13 @@ import argparse,json,math,os,select,signal,struct,sys,termios,time,tty
 from datetime import datetime,timezone
 from pathlib import Path
 sys.dont_write_bytecode=True
-sys.path.insert(0,str(Path(__file__).resolve().parents[2]/'Hardware/Host'))
-from chassis import load_config,device,CONFIG
+TOOLS = Path(__file__).resolve().parents[1]
+sys.path.append(str(TOOLS))
+from hardware_path import hardware_config, hardware_root
+
+HARDWARE = hardware_root(TOOLS.parent)
+sys.path.insert(0, str(HARDWARE / 'Host'))
+from chassis import load_config,device
 from transport import Link
 from protocol import Parser
 import yaml
@@ -75,17 +80,17 @@ def analyze(records,cfg,firmware):
 
 def main():
     p=argparse.ArgumentParser(description=__doc__)
-    p.add_argument('--config',default=str(CONFIG));p.add_argument('--duration',type=float,default=120.)
+    p.add_argument('--config',default=str(hardware_config(HARDWARE)));p.add_argument('--duration',type=float,default=120.)
     p.add_argument('--phase',choices=list(PHASES.values()),default='still')
     a=p.parse_args()
     if not math.isfinite(a.duration) or a.duration<=0:p.error('duration必须为正数')
-    root=Path(__file__).resolve().parents[2];cfg=load_config(a.config)
+    cfg=load_config(a.config)
     # 诊断日志记录实际已验证安装的版本，避免v1.1刷写后仍标记v1.0极性。
-    install_path=root/'Hardware/last_install.json'
+    install_path=HARDWARE / 'last_install.json'
     install=json.loads(install_path.read_text()) if install_path.exists() else {}
     version=install.get('version','v1.0')
-    firmware_path=(root/'Hardware/Firmware'/version/'src/config.yaml').resolve()
-    firmware_path.relative_to((root/'Hardware/Firmware').resolve())
+    firmware_path=(HARDWARE / 'Firmware'/version/'src/config.yaml').resolve()
+    firmware_path.relative_to((HARDWARE / 'Firmware').resolve())
     firmware=yaml.safe_load(firmware_path.read_text())
     port,expected=device(cfg);link=None;old=None;records=[];phase=a.phase;segment=0;code=0
     folder=Path(__file__).resolve().parent/'logs';folder.mkdir(exist_ok=True)

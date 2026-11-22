@@ -6,7 +6,12 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[3] / 'Hardware/Host'))
+TOOLS = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(TOOLS))
+from hardware_path import hardware_root
+
+HARDWARE = hardware_root(TOOLS.parent)
+sys.path.insert(0, str(HARDWARE / 'Host'))
 from chassis_commands import CommandServer, call_owner
 from chassis_recovery import LinkRecovery
 
@@ -40,7 +45,7 @@ class ChassisCommandTests(unittest.TestCase):
 
     def test_driver_spawns_real_unlock_cli_against_simulated_mcu(self):
         serial = 'auto-test-' + str(os.getpid())
-        script = Path(__file__).resolve().parents[3] / 'Hardware/Unlock/unlock.py'
+        script = HARDWARE / 'Unlock/unlock.py'
         recovery = LinkRecovery()
         car = Mock(nonce=123)
         server = CommandServer(serial, recovery).start(script)

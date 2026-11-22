@@ -79,7 +79,7 @@ roslaunch ugv_bringup slicer_field_sensors.launch config_file:="$HOME/.config/sl
 # 底盘终端
 roslaunch ugv_bringup slicer_body_driver.launch
 # 导航终端
-roslaunch ugv_bringup slicer_field_navigation.launch geographic:=false
+roslaunch ugv_bringup slicer_navigation_runtime.launch
 ```
 
 在外部 `gnss.yaml` 中设置本轮的串口、差分服务和凭据路径。操作终端先检查底盘已连接、Mux 仍保持停车，GNSS 显示 `gga_quality=4` 和 `fresh_rtk_usable=true`：
@@ -89,17 +89,12 @@ rosrun cup_gnss gnss_status.py --once --json
 rosrun ugv_slicer_control control.py state
 ```
 
-**配准。** Motor ON 后由现场操作员执行。`initialize` 会向前走约 2.5 m，结束后回到 hold。
+**自动准备。** 在现场负责人确认运行条件后发送首个合法 WGS84 目标。共享导航根据现有 RTK 状态执行有界 odom 准备，停稳并完成全局定位后自动接续原目标。用 `rostopic echo /geographic/navigation_runtime` 观察进度和阻塞原因。原直行初始化保留在导航诊断。
 
 ```bash
-RUN="evidence/air-ground-$(date +%Y%m%d-%H%M%S)"
+RUN="$HOME/workspace/slicer/data/air-ground-$(date +%Y%m%d-%H%M%S)"
 mkdir -p "$RUN"
-rosrun ugv_slicer_control control.py release &&
-  rosrun ugv_navigation geographic.py initialize --distance 2.5 --output "$RUN/alignment.json"
-rosrun ugv_slicer_control control.py hold
 ```
-
-看到 `registration.success=true` 后，在导航终端按 Ctrl-C，再在同一终端执行 `roslaunch ugv_bringup slicer_field_navigation.launch` 切到 map 导航。保持定位和底盘运行。另开终端可用 `rviz -d "$(rospack find ugv_bringup)/rviz/outdoor_navigation.rviz"` 查看 map 路径。
 
 **已有目标时直接复用。** `geographic.py capture` 保存的是 WGS84 坐标，新配准会按当前 `map` 原点重新换算。可以先把车搬到测试起点，放稳后启动定位、完成配准，再直接预览并发送旧 `mark.json`。目标和路线要在当前地图范围内，全局代价地图在新原点的东西、南北方向各覆盖约 ±20 m。
 
@@ -113,7 +108,7 @@ printf '目标文件：%s/%s/mark.json\n' "$PWD" "$RUN"
 
 也可以用独立 RTK 测量设备提前测地面标记，使用 WGS84 和一致的差分基准。把天线测量中心的地面投影对准标记，记录 Fixed 时的纬经度。飞机端可以用 `ag set --latitude "$LAT" --longitude "$LON"` 提交预先测得的点。
 
-在测试起点停车后预览返回路径。`MARK` 填本次采点或历史采点的实际文件路径。
+在具有有效配准时，可在测试起点停车后预览路径。`MARK` 填本次采点或历史采点的实际文件路径。
 
 ```bash
 MARK="$RUN/mark.json"
@@ -126,15 +121,10 @@ rosrun ugv_navigation geographic.py plan --target-file "$MARK" --output "$RUN/pl
 
 ```bash
 python3 tools/rtk/collect_odom_test.py --navigation --duration 600 \
-  --output "evidence/air-ground-record-$(date +%Y%m%d-%H%M%S)"
+  --output "$HOME/workspace/slicer/data/air-ground-record-$(date +%Y%m%d-%H%M%S)"
 ```
 
-飞机保持静止，在飞机端执行 `ag status` 确认有新鲜状态且 `startup_checked=true`。小车操作员解除初始 hold 后，飞机端发出单终点任务：
-
-```bash
-# 小车操作终端
-rosrun ugv_slicer_control control.py release
-```
+飞机保持静止，在飞机端执行 `ag status` 确认有新鲜状态且 `startup_checked=true`。确认场地和车辆就绪后，飞机端发出单终点任务：
 
 ```bash
 # 飞机端：用刚复制过来的真实采点文件
@@ -146,4 +136,4 @@ ag status
 
 有余量再发一组新短路线，等车开始导航后，在飞机端分次执行 `ag pause`（等 `PAUSED` 且车停稳）→ `ag resume`（观察继续行驶）→ `ag cancel`（等 `CANCELED` 且停稳）。测试期间由飞机发任务；别在小车上同时用 `goal.py send` 向同一导航节点发令。
 
-**收尾。** 异常时现场急停或人工接管。正常结束后小车操作员执行 `rosrun ugv_slicer_control control.py hold`，确认停稳，再关闭任务、录包和导航终端。收车时关 Motor，再关闭底盘和定位。留存 `alignment.json`、`mark.json`、`plan.json` 与录包目录。
+**收尾。** 异常时现场急停或人工接管。正常结束后小车操作员执行 `rosrun ugv_slicer_control control.py hold`，确认停稳，再关闭任务、录包和导航终端。收车时关 Motor，再关闭底盘和定位。留存自动准备状态、`mark.json`、测试生成的 `plan.json` 与录包目录。

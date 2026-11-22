@@ -9,8 +9,12 @@ import tempfile
 import unittest
 from pathlib import Path
 import yaml
-ROOT=Path(__file__).resolve().parents[2];SCRIPTS=ROOT/'src/ugv_slicer_control/scripts'
-sys.path.insert(0,str(SCRIPTS));import c30d_link
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / 'tools'))
+from hardware_path import hardware_root
+
+sys.path.insert(0, str(hardware_root(ROOT) / 'Host/rtk'))
+import c30d_link
 class MigrationTests(unittest.TestCase):
     def test_new_board_identity_signs_and_geometry(self):
         c=yaml.safe_load((ROOT/'src/ugv_bringup/config/slicer_driver_body_speed.yaml').read_text())

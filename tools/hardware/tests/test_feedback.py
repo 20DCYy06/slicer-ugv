@@ -1,12 +1,11 @@
 import sys,unittest,struct
 from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
-from diagnose_straight import analyze,decode,delta32,ReadOnlyLink,load_config
+from diagnose_straight import analyze,decode,delta32,ReadOnlyLink,load_config,HARDWARE
 import yaml
 class FeedbackTests(unittest.TestCase):
     def config(self):
-        r=Path(__file__).resolve().parents[3]
-        return load_config(),yaml.safe_load((r/'Hardware/Firmware/v1.0/src/config.yaml').read_text())
+        return load_config(),yaml.safe_load((HARDWARE / 'Firmware/v1.0/src/config.yaml').read_text())
     def test_decoder(self):
         p=bytearray(64);struct.pack_into('<4BI',p,0,1,7,0xea,0,40000)
         struct.pack_into('<4h',p,16,80,-80,80,-80);struct.pack_into('<h',p,50,500)

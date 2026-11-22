@@ -1,7 +1,7 @@
 <launch>
   <arg name="workspace2_root" default="$(eval optenv('WORKSPACE2_ROOT', find('slicer_navigation_without_mapping') + '/../..'))" />
-  <arg name="host_config" default="$(arg workspace2_root)/Hardware/config.yaml" />
   <arg name="runtime_root" default="$(eval optenv('SLICER_NO_RTK_RUNTIME', arg('workspace2_root') + '/runtime/no_rtk'))" />
+  <arg name="host_config" default="$(arg runtime_root)/config/c30d_host.yaml" />
   <arg name="start_sensors" default="true" />
   <arg name="start_control" default="true" />
   <arg name="control_mock" default="false" />

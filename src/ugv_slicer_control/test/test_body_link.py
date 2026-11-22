@@ -12,7 +12,11 @@ import unittest
 from unittest.mock import patch
 
 
-SCRIPTS = Path(__file__).resolve().parents[1] / 'scripts'
+REPOSITORY = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(REPOSITORY / 'tools'))
+from hardware_path import hardware_root
+
+RTK_HOST = hardware_root(REPOSITORY) / 'Host/rtk'
 CONFIG = dict(serial_port='/TEST_ONLY_BODY', usb_vid=0x1a86, usb_pid=0x55d4,
               serial_number='TEST_ONLY', baud=115200, counts_per_revolution=60000,
               max_wheel_mm_s=600, control_mode='body_speed')
@@ -34,8 +38,8 @@ class BodyLinkTests(unittest.TestCase):
         self.addCleanup(stack.close)
         old_path = list(sys.path)
         stack.callback(lambda: sys.path.__setitem__(slice(None), old_path))
-        sys.path.insert(0, str(SCRIPTS))
-        spec = importlib.util.spec_from_file_location('body_link_under_test', SCRIPTS / 'c30d_link.py')
+        sys.path.insert(0, str(RTK_HOST))
+        spec = importlib.util.spec_from_file_location('body_link_under_test', RTK_HOST / 'c30d_link.py')
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         clock, links = [10.], []

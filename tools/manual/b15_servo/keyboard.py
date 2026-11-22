@@ -13,7 +13,12 @@ import time
 import tty
 
 HERE=Path(__file__).resolve().parent
-sys.path.insert(0,str(HERE.parents[2]/'Hardware/Host'))
+TOOLS = HERE.parents[1]
+sys.path.append(str(TOOLS))
+from hardware_path import hardware_config, hardware_root
+
+HARDWARE = hardware_root(TOOLS.parent)
+sys.path.insert(0, str(HARDWARE / 'Host'))
 from protocol import packet,Parser
 from c30d_servo import Servo
 
@@ -44,7 +49,7 @@ def main():
         print('OFFLINE_PASS：A/D映射、停止、SLC2帧；未打开串口')
         return
     if args.run and not sys.stdin.isatty():raise RuntimeError('请在交互式SSH终端运行')
-    servo=Servo();old=None;fd=None
+    servo=Servo(hardware_config(HARDWARE));old=None;fd=None
     def interrupted(*a):raise KeyboardInterrupt()
     for sig in [signal.SIGINT,signal.SIGTERM,signal.SIGHUP]:signal.signal(sig,interrupted)
     try:

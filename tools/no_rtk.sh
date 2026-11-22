@@ -1,16 +1,20 @@
 #!/usr/bin/env bash
 set -eo pipefail
 
-repo=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+repo=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
 mode=${1:-help}
 if [[ $# -gt 0 ]]; then shift; fi
-default_workspace="$HOME/slicer_noetic_dev"
-active_workspace="$HOME/slicer_noetic_current"
-if [[ "$mode" != build && ( -L "$active_workspace" || -d "$active_workspace" ) ]]; then
-    default_workspace="$active_workspace"
+workspace=$(realpath -m -- "${SLICER_NATIVE_WS:-${repo%/src/slicer-ugv}}")
+runtime="${SLICER_NO_RTK_RUNTIME:-$workspace/runtime/no_rtk}"
+state="$runtime"
+if [[ -n ${SLICER_STATE_DIR:-} ]]; then state="$SLICER_STATE_DIR/no_rtk"; fi
+logs="${SLICER_LOGS_DIR:-$workspace/logs}/no_rtk"
+
+if [[ "$mode" != help && "$mode" != -h && "$mode" != --help &&
+      "$repo" != "$workspace/src/slicer-ugv" ]]; then
+    printf 'The entrypoint checkout must be %s/src/slicer-ugv.\n' "$workspace" >&2
+    exit 2
 fi
-workspace=$(realpath -m -- "${SLICER_NATIVE_WS:-$default_workspace}")
-runtime="$workspace/runtime/no_rtk"
 
 case "$mode" in
     -h|--help|help)
@@ -22,25 +26,35 @@ case "$mode" in
     stop) ;;
     nav|rviz|goal|patrol|record|diagnose|reset-map|goal-ui)
         setup="$workspace/install/setup.bash"
-        if [[ ! -f "$setup" ]]; then setup="$workspace/devel/setup.bash"; fi
-        if [[ ! -f "$setup" ]]; then
-            echo "No Catkin overlay at $workspace. Build it with $0 build." >&2
+        if [[ ! -r "$setup" ]]; then
+            echo "No installed Catkin overlay at $workspace. Build it with $0 build." >&2
             exit 1
         fi
         arguments=("$@")
         set --
+        source /opt/ros/noetic/setup.bash
         source "$setup"
         set -- "${arguments[@]}"
-        export WORKSPACE2_ROOT="$repo"
-        export SLICER_NO_RTK_RUNTIME="${SLICER_NO_RTK_RUNTIME:-$runtime}"
+        navigation=$(rospack find slicer_navigation_without_mapping)
+        if [[ "$navigation" != "$workspace/install/share/slicer_navigation_without_mapping" ]]; then
+            echo "Wrong NoRTK overlay. Expected the installation in $workspace." >&2
+            exit 1
+        fi
+        export SLICER_NO_RTK_RUNTIME="$runtime"
+        export SLICER_RUNTIME_DIR="${SLICER_RUNTIME_DIR:-$workspace/runtime}"
+        export ROS_HOME="${ROS_HOME:-$workspace/logs/ros}"
+        waypoints="$state/waypoints.yaml"
+        case "$mode" in
+            nav|rviz|patrol|record)
+                mkdir -p "$state"
+                cp -n -- "$navigation/config/waypoints.yaml" "$waypoints"
+                ;;
+        esac
         export PYTHONDONTWRITEBYTECODE=1 PYTHONNOUSERSITE=1
         export OMP_NUM_THREADS="${OMP_NUM_THREADS:-1}" OPENBLAS_NUM_THREADS="${OPENBLAS_NUM_THREADS:-1}"
         ;;
     *) echo "Unknown NoRTK command: $mode" >&2; exit 2 ;;
 esac
-
-navigation="$repo/src/slicer_navigation_without_mapping"
-waypoints="$navigation/config/waypoints.yaml"
 
 use_local_desktop() {
     local desktop_runtime="/run/user/$UID"
@@ -80,7 +94,7 @@ case "$mode" in
         mode=foreground
         if [[ ${1:-} == --background ]]; then mode=background; shift; fi
         launch=("$navigation/launch/slicer_nav_without_mapping.launch"
-                "workspace2_root:=$repo" "runtime_root:=$SLICER_NO_RTK_RUNTIME")
+                "runtime_root:=$SLICER_NO_RTK_RUNTIME" "waypoint_file:=$waypoints")
         gui=auto
         for argument in "$@"; do
             if [[ "$argument" == gui:=* ]]; then gui=${argument#gui:=}; fi
@@ -186,7 +200,7 @@ PY
         ;;
 esac
 
-exec python3 - "$mode" "$runtime" "$@" <<'PY'
+exec python3 - "$mode" "$state" "$logs" "$@" <<'PY'
 import fcntl
 import os
 from pathlib import Path
@@ -195,7 +209,7 @@ import subprocess
 import sys
 import time
 
-mode, directory, *command = sys.argv[1:]
+mode, directory, logs, *command = sys.argv[1:]
 directory = Path(directory)
 pid_file = directory / 'roslaunch.pid'
 
@@ -246,7 +260,8 @@ with (directory / 'roslaunch.lock').open('a') as lock:
         pid_file.write_text(f'{pid} {start_time(pid)}\n')
         os.execvp(command[0], command)
     else:
-        log = directory / 'roslaunch.log'
+        log = Path(logs) / 'roslaunch.log'
+        log.parent.mkdir(parents=True, exist_ok=True)
         with log.open('ab') as stream:
             process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=stream,
                                        stderr=subprocess.STDOUT, start_new_session=True)

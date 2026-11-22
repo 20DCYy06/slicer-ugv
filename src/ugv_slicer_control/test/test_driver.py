@@ -539,10 +539,14 @@ class DriverTests(unittest.TestCase):
         provenance = run.params['~provenance']
         self.assertEqual(provenance['pwm_mapping'], 'continuous_open_loop_reference')
         self.assertNotIn('mcu_configuration', provenance)
-        for name in ('control_core.py', 'slicer_manual.py', 'c30d_driver_node.py', 'c30d_link.py'):
+        for name in ('control_core.py', 'slicer_manual.py', 'c30d_driver_node.py',
+                     'c30d_link.py', 'chassis_core.py', 'serial_transport.py'):
             entry = provenance['module_paths_sha256'][name]
-            self.assertEqual(Path(entry['path']).resolve(), SCRIPTS / name)
-            self.assertEqual(entry['sha256'], __import__('hashlib').sha256((SCRIPTS/name).read_bytes()).hexdigest())
+            expected_root = (run.driver.C30D_TOOLS / 'Host/rtk' if name in
+                             ('c30d_link.py', 'chassis_core.py', 'serial_transport.py') else SCRIPTS)
+            expected = expected_root / name
+            self.assertEqual(Path(entry['path']).resolve(), expected)
+            self.assertEqual(entry['sha256'], __import__('hashlib').sha256(expected.read_bytes()).hexdigest())
         self.assertTrue(any('provenance' in str(args[0]).lower() for args in run.info_logs))
 
     def test_effective_config_retains_loaded_values_and_final_tf_override(self):

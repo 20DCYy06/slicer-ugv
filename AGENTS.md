@@ -2,9 +2,10 @@
 
 - 接手先读 [HANDOFF.md](HANDOFF.md) 和相关任务交接，再核对真实检出、分支、HEAD、远端、已有修改与实际部署。聊天中的分支名、旧 SHA 和计划都以当前仓库与现场证据复核。
 - `main` 是稳定集成主线。独立新目标默认从最新 `origin/main` 开短期分支，一个分支对应一个可独立验收的目标，可跨 ROS 包。同一聊天窗口可以接续多个任务。续做同一目标沿用原分支，独立目标另开分支，依赖未合入工作时记录前置分支或 PR。
-- 常规建任务分支、保存阶段提交、更新交接由模型自行完成并简短告知。提交、推送、合入、部署和实车操作按已有授权执行。并行任务各用独立 worktree 或 checkout，以及独立构建、安装和生成配置目录。保留他人修改，车端运行与部署由明确的执行会话协调，启动前核对 overlay。
-- `ugv_bringup` 管运行入口和参数，`cup_gnss` 管定位接收与差分，`ugv_navigation` 管 RTK 配准和导航，`ugv_slicer_control` 管 RTK 控制。无 RTK 保留独立配置和 B 样条/TEB。通信包管传输与白名单，任务执行器管命令执行。正式视觉在 `slicer_visual_grasp`，独立遥控和执行机构在 `tools/manual`，底层硬件在 `Hardware`。
+- 常规建任务分支、保存阶段提交、更新交接由模型自行完成并简短告知。提交、推送、合入、部署和实车操作按已有授权执行。并行任务各用独立 worktree 或 checkout，以及独立构建、安装和生成配置目录。共同 Git 主检出为 `~/workspace/slicer/main/src/slicer-ugv`，任务 worktree 为 `dev/<任务>/src/slicer-ugv`。保留他人修改，车端运行与部署由明确的执行会话协调，启动前核对 overlay。
+- `ugv_bringup` 管运行入口和参数，`cup_gnss` 管定位接收与差分，`ugv_navigation` 管 RTK 配准和导航，`ugv_slicer_control` 管 RTK 控制。无 RTK 保留独立配置和 B 样条/TEB。通信包管传输与白名单，任务执行器管命令执行。正式视觉在 `slicer_visual_grasp`，独立遥控和执行机构在 `tools/manual`，底层硬件在工作区的 `deps/slicer_ugv_hardware`，四项外部依赖按 `dependencies.repos` 获取。
 - 局部 EKF 拥有 `odom → base_link`。RTK 全局 EKF 和无 RTK Gmapping 分别在各自模式拥有 `map → odom`。导航速度经过对应 Guard，Mux 独占 `/cmd_vel`。底盘串口单一占用，同一 Action 只选一个任务执行器。接口或所有权变动时核对调用方和操作手册。
 - 验证与改动相称。区分静态检查、构建、模拟或回放、真实设备和实车结果，注明版本与证据。离线测试使用独立 ROS Master 和模拟输入。现场负责人统一协调场地、急停与接管。
 - 每个实际任务维护一份 `docs/handoffs/<任务>.md`。阶段成果、暂停或换窗口、交付前及时更新并提交。记录目标、状态、关键改动、验证证据、未完成事项和下一步，小修改续写已有文件。合入后更新共同状态和必要索引，结束原任务分支的开发，独立新任务重新开分支。
 - 根交接仅维护共同状态与最多三项下一步。交付写明入口、参数、观测和回退。凭据留在外部受保护配置，源码仅记配置位置。日志、录包和缓存另存。
+- 正式入口用 `~/workspace/slicer/run` 选择 `current` 对应的发布。发布、开发构建、现场状态和采集数据各自保存。录包和采集放在 `data/`，发布核验、切换及回退见 [维护说明](docs/MAINTENANCE.md)。同一 Catkin 工作区只使用一套空地消息和任务包。

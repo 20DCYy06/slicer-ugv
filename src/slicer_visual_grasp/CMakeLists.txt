@@ -15,17 +15,18 @@ install(DIRECTORY config tests
 )
 
 # Install the same serial implementations and defaults used by the manual tools.
+include(../../cmake/SlicerHardware.cmake)
 set(workspace_root "${CMAKE_CURRENT_SOURCE_DIR}/../..")
 set(support "${CATKIN_PACKAGE_SHARE_DESTINATION}/support")
 install(FILES
-  "${workspace_root}/Hardware/Host/c30d_servo.py"
-  "${workspace_root}/Hardware/Host/chassis.py"
-  "${workspace_root}/Hardware/Host/protocol.py"
-  "${workspace_root}/Hardware/Host/transport.py"
+  "${SLICER_HARDWARE_ROOT}/Host/c30d_servo.py"
+  "${SLICER_HARDWARE_ROOT}/Host/chassis.py"
+  "${SLICER_HARDWARE_ROOT}/Host/protocol.py"
+  "${SLICER_HARDWARE_ROOT}/Host/transport.py"
   DESTINATION "${support}/Hardware/Host"
 )
-install(FILES "${workspace_root}/Hardware/config.yaml"
-  DESTINATION "${support}/Hardware"
+install(FILES "${SLICER_HARDWARE_CONFIG}"
+  DESTINATION "${support}/Hardware" RENAME config.yaml
 )
 install(FILES "${workspace_root}/tools/manual/serial_group.sh"
   DESTINATION "${support}/tools/manual"

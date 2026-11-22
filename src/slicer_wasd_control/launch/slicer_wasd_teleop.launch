@@ -4,7 +4,7 @@
   <arg name="workspace2_root" default="$(eval optenv('WORKSPACE2_ROOT', find('slicer_wasd_control') + '/../..'))"/>
   <arg name="runtime_root" default="$(eval optenv('SLICER_NO_RTK_RUNTIME', arg('workspace2_root') + '/runtime/no_rtk'))"/>
   <arg name="config" default="$(arg runtime_root)/config/control.yaml"/>
-  <arg name="host_config" default="$(arg workspace2_root)/Hardware/config.yaml"/>
+  <arg name="host_config" default="$(arg runtime_root)/config/c30d_host.yaml"/>
   <node pkg="slicer_wasd_control" type="velocity_mux.py" name="slicer_velocity_mux" output="screen" required="true">
     <param name="config_file" value="$(arg config)"/>
   </node>

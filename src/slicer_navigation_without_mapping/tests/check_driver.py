@@ -6,7 +6,11 @@ from unittest.mock import patch
 import yaml
 ROOT=Path(__file__).resolve().parents[3];SCRIPTS=ROOT/'src/slicer_wasd_control/scripts'
 WORKSPACE=Path(os.environ.get('WORKSPACE2_ROOT') or ROOT)
-sys.path.insert(0,str(SCRIPTS));sys.path.insert(0,str(WORKSPACE/'Hardware/Host'))
+sys.path[:0] = [str(SCRIPTS), str(ROOT / 'tools')]
+from hardware_path import hardware_root
+
+HARDWARE = hardware_root(WORKSPACE)
+sys.path.insert(0, str(HARDWARE / 'Host'))
 from driver_core import Session,Odometry,EncoderTap
 from chassis import Chassis
 from protocol import packet,Parser
@@ -27,7 +31,7 @@ class DriverChecks(unittest.TestCase):
         import importlib.util
         spec=importlib.util.spec_from_file_location('workspace2_driver',SCRIPTS/'c30d_driver_node.py')
         module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
-        self.assertEqual(module.workspace,WORKSPACE)
+        self.assertEqual(module.C30D_TOOLS, HARDWARE)
     def test_required_fuser_runtime_tool_is_available(self):
         import shutil,subprocess
         self.assertIsNotNone(shutil.which('fuser'),'需要安装 psmisc')
@@ -150,7 +154,7 @@ class DriverChecks(unittest.TestCase):
         expected_yaw_rate=2*math.pi*.065*.1/(.179+.13)/.1
         self.assertAlmostEqual(result[4],expected_yaw_rate)
     def test_new_board_identity_and_verified_polarities(self):
-        c=yaml.safe_load((WORKSPACE/'Hardware/config.yaml').read_text())
+        c=yaml.safe_load((HARDWARE / 'config.yaml').read_text())
         self.assertEqual((c['serial']['port'],c['serial']['serial_number']),('/dev/c30d','5CF0016377'))
         self.assertEqual(c['serial']['encoder_signs'],[-1,1,1,-1])
         self.assertEqual(c['serial']['pwm_signs'],[-1,1,-1,-1])

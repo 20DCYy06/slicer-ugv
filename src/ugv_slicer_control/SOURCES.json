@@ -43,25 +43,28 @@
         "file": "scripts/c30d_driver_node.py",
         "source": "review_packages/slicer_ugv_review_2026-10-23/teammate_workspace_reference/catkin_ws/src/Slicer_wasd_control/scripts/c30d_driver_node.py",
         "source_sha256": "6eb45d4a7ef5fab1f9e8aff50cd140cfd641c1936bd9adcf57032697a26187e1",
-        "sha256": "3d1d569145540ebea5e26334e36a75b45c97a8f1aed3b395667657df0fabeaf1",
+        "sha256": "9fde0d61163ea9ae24a46c6c28f684572dd35eeea089df193889f6b7101b8b08",
         "adaptation": "Explicit PWM default or opt-in MCU wheel-speed protocol; configure before speed, no nonzero protocol mixing or automatic fallback; zero on loss/fault/timeout/reversal, observation-independent close; retain instance diagnostics and odometry. Actual MCU loop is unverified. 2026-10-25: explicit opt-in body_speed / 0x16 with independent 0x93 IMU feedback, existing owner and wheel odometry retained; no PWM/wheel fallback."
       },
       {
-        "file": "scripts/c30d_link.py",
+        "file": "Host/rtk/c30d_link.py",
+        "repository": "https://github.com/20DCYy06/slicer_ugv_hardware",
         "source": "review_packages/slicer_ugv_review_2026-10-23/teammate_workspace_reference/catkin_ws/src/Slicer_wasd_control/scripts/c30d_link.py",
         "source_sha256": "c30ab873e9719de0b92f0ad180f177722079aa6c1fe12dcdec94648b37bbf20d",
-        "sha256": "6f63a54d787ba6ecf29fb335181202bdebd94679db7a26257877ebb4d2846295",
+        "sha256": "05a53e612d51162645f684cd4d8ecf45b092618e639c9c700eb1010410100944",
         "adaptation": "Retain existing SLC2 protocol; require integer wheel speeds and new configured telemetry after nonce ACK; observe configuration signs/ACK and individual transmissions without changing wire format. 2026-10-25: explicit opt-in body_speed / 0x16 with independent 0x93 IMU feedback, existing owner and wheel odometry retained; no PWM/wheel fallback."
       },
       {
-        "file": "scripts/chassis_core.py",
+        "file": "Host/rtk/chassis_core.py",
+        "repository": "https://github.com/20DCYy06/slicer_ugv_hardware",
         "source": "review_packages/slicer_ugv_review_2026-10-23/teammate_workspace_reference/catkin_ws/src/Slicer_wasd_control/scripts/chassis_core.py",
         "source_sha256": "117bbed73a7566b94ef6817e0aaa54e4e762feda63226514343479739f528620",
         "sha256": "117bbed73a7566b94ef6817e0aaa54e4e762feda63226514343479739f528620",
         "adaptation": "Verbatim protocol/parser/odometry dependency."
       },
       {
-        "file": "scripts/serial_transport.py",
+        "file": "Host/rtk/serial_transport.py",
+        "repository": "https://github.com/20DCYy06/slicer_ugv_hardware",
         "source": "review_packages/slicer_ugv_review_2026-10-23/teammate_workspace_reference/catkin_ws/src/Slicer_wasd_control/scripts/serial_transport.py",
         "source_sha256": "2f613825beb1310991b325470202d3e52f948fc22fe8580ff230642ce45bfb6d",
         "sha256": "7fa308c567d200412390d163c5462eedd328ef25ce119f9e2702ce09ad1bc015",

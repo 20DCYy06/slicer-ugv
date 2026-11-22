@@ -1,0 +1,17 @@
+repositories:
+  src/third_party/fast_lio:
+    type: git
+    url: https://github.com/20DCYy06/FAST_LIO.git
+    version: 88c50b57dd931566c547ad1f3a932b792c6d6aea
+  src/third_party/livox_ros_driver2:
+    type: git
+    url: https://github.com/20DCYy06/livox_ros_driver2.git
+    version: 470b3988996cd060bf5e4b67b3e834967a56e403
+  deps/slicer_ugv_hardware:
+    type: git
+    url: https://github.com/20DCYy06/slicer_ugv_hardware.git
+    version: a377b45c48c4be91add25b73eacedabdb8c264de
+  deps/Livox-SDK2:
+    type: git
+    url: https://github.com/Livox-SDK/Livox-SDK2.git
+    version: c0796f04c143143899c87a773d9f6b7136453c0b
