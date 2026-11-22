@@ -31,7 +31,14 @@
 | 正式视觉 | 候选安装的正式视觉 `--check` 通过。用安装模块和现场相机配置取到 640×480 帧，YUYV 30 fps。正式入口无参数预览在本机 X11 打开相机，退出后释放设备。见 `vision-check.txt`、`vision-camera.txt`、`vision-preview.txt`。 真正抓取工件和完整释放流程待测，空载吸放见组合手柄结果。 |
 | GNSS 与自动配准未就绪 | 当天无差分账号，使用受保护的串口验收配置关闭 NTRIP，保持原现场文件与定位门槛。GNSS 串口、NMEA、GGA 和状态反馈正常。采样时 GGA q=0、`fix_valid=false`，地理状态 `raw_quality_not_fixed`，未建立配准。见 `gnss-status.txt`、`rtk-geographic-cli.txt`。首 WGS84 自动配准、全局纠偏、地理到点与复核及飞机联调待验收。 |
 
-## 归档和回退
+## 验收后的归档
+
+车端旧源码、历史工作树和 v1.7 安装已统一移入
+`~/workspace/slicer/archive/legacy-vehicle/`。已结束的任务工作区位于
+`archive/completed-dev/`。当前发布仍为 RC1。以下回退记录反映首次切换时的状态，
+历史复现前先查阅本机归档目录下的说明并恢复原路径。
+
+## 首次切换的回退记录
 
 `~/workspace/slicer/START_HERE.md` 是车端操作表。旧源码 `~/slicer-ugv` 原地标为
 LEGACY，已有未提交文件、活动终端及引用其 Git 公共目录的历史工作树。旧 v1.7 安装原地
