@@ -12,14 +12,14 @@ SCRIPT = Path(__file__).resolve()
 REPO = SCRIPT.parents[3]
 TOOLS = SCRIPT.parent if (SCRIPT.parent / 'hardware_path.py').is_file() else REPO / 'tools'
 sys.path.insert(0, str(TOOLS))
-from hardware_path import hardware_root
+from hardware_path import hardware_config, hardware_root
 BRINGUP_CONFIG = REPO / 'src/ugv_bringup/config'
 if not BRINGUP_CONFIG.is_dir():
     BRINGUP_CONFIG = Path(__file__).resolve().parents[2] / 'share/ugv_bringup/config'
 CONFIG_ROOT = BRINGUP_CONFIG / 'no_rtk'
 
 
-def generate(root, output, workspace2=None, hardware=None):
+def generate(root, output, workspace2=None, hardware=None, host_config=None):
     root=Path(root);output=Path(output);g=output/'.generated';g.mkdir(parents=True,exist_ok=True)
     (output/'config').mkdir(exist_ok=True)
     c=yaml.safe_load((root/'slicer_config.yaml').read_text());s=c['sensors'];n=c['navigation'];v=c['chassis']
@@ -55,7 +55,7 @@ def generate(root, output, workspace2=None, hardware=None):
     save('slam.yaml',slam)
     # Snapshot the selected host configuration alongside this runtime's ROS parameters.
     repository = workspace2 or os.environ.get('WORKSPACE2_ROOT') or REPO
-    host_yaml = (hardware_root(repository, hardware) / 'config.yaml').read_bytes()
+    host_yaml = hardware_config(hardware_root(repository, hardware), host_config).read_bytes()
     host = yaml.safe_load(host_yaml)
     (output / 'config/c30d_host.yaml').write_bytes(host_yaml)
     drive=yaml.safe_load((BRINGUP_CONFIG/'slicer_driver_body_speed.yaml').read_text())
@@ -80,5 +80,6 @@ if __name__=='__main__':
     parser.add_argument('--output', type=Path, required=True, help='Generated runtime directory')
     parser.add_argument('--workspace2', type=Path, help='Vehicle checkout, or workspace with deps/')
     parser.add_argument('--hardware-root', type=Path, help='Hardware checkout containing config.yaml and Host/')
+    parser.add_argument('--hardware-config', type=Path, help='Site hardware configuration file')
     args = parser.parse_args()
-    generate(args.root, args.output, args.workspace2, args.hardware_root)
+    generate(args.root, args.output, args.workspace2, args.hardware_root, args.hardware_config)

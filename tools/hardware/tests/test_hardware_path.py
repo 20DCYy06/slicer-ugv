@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from hardware_path import hardware_root
+from hardware_path import hardware_config, hardware_root
 
 
 class HardwarePathTest(unittest.TestCase):
@@ -38,6 +38,22 @@ class HardwarePathTest(unittest.TestCase):
                 with self.assertRaisesRegex(FileNotFoundError, 'wrong'):
                     hardware_root(repo)
                 self.assertEqual(hardware_root(repo, legacy), legacy)
+
+    def test_selects_field_config_independently_of_source_tree(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            workspace = Path(temporary)
+            root = self.make_hardware(workspace / 'deps/slicer_ugv_hardware')
+            selected = workspace / 'site/c30d.yaml'
+            selected.parent.mkdir()
+            selected.touch()
+            default = root / 'config.yaml'
+            with patch.dict(os.environ, {'SLICER_HARDWARE_CONFIG': ''}):
+                self.assertEqual(hardware_config(root), default)
+            with patch.dict(os.environ, {'SLICER_HARDWARE_CONFIG': str(selected)}):
+                self.assertEqual(hardware_config(root), selected)
+                self.assertEqual(hardware_config(root, default), default)
+                with self.assertRaises(FileNotFoundError):
+                    hardware_config(root, selected.with_name('missing.yaml'))
 
 
 if __name__ == '__main__':

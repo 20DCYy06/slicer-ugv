@@ -10,19 +10,21 @@ import yaml
 
 REPOSITORY = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPOSITORY / 'tools'))
-from hardware_path import hardware_root
+from hardware_path import hardware_config, hardware_root
 SOURCE_CONFIG = REPOSITORY / 'src/ugv_bringup/config'
 RUNTIME_GENERATOR = (
     REPOSITORY / 'src/slicer_navigation_without_mapping/scripts/prepare_runtime.py'
 )
 
 
-def generate(config_dir, hardware=None):
+def generate(config_dir, hardware=None, host_config=None):
     hardware = hardware_root(REPOSITORY, hardware)
+    host_config = hardware_config(hardware, host_config)
     spec = importlib.util.spec_from_file_location('base_runtime', RUNTIME_GENERATOR)
     runtime = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(runtime)
-    navigation = runtime.generate(runtime.CONFIG_ROOT, config_dir / 'online_runtime', REPOSITORY, hardware)
+    navigation = runtime.generate(runtime.CONFIG_ROOT, config_dir / 'online_runtime',
+                                  REPOSITORY, hardware, host_config)
     # The RTK Guard caps the DWA output independently of the no-RTK template.
     field = yaml.safe_load((SOURCE_CONFIG / 'dwa_field.yaml').read_text())['DWAPlannerROS']
     guard_path = config_dir / 'online_runtime/config/slicer_config.yaml'
@@ -40,7 +42,7 @@ def generate(config_dir, hardware=None):
 
     driver_name = 'slicer_driver_body_speed.yaml'
     driver = yaml.safe_load((SOURCE_CONFIG / driver_name).read_text())
-    vehicle = yaml.safe_load((hardware / 'config.yaml').read_text())
+    vehicle = yaml.safe_load(host_config.read_text())
     serial = vehicle['serial']
     driver.update(
         serial_port=serial['port'],
@@ -61,8 +63,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--config-dir', type=Path, required=True, help='Generated config output')
     parser.add_argument('--hardware-root', type=Path, help='Hardware checkout containing config.yaml and Host/')
+    parser.add_argument('--hardware-config', type=Path, help='Site hardware configuration file')
     args = parser.parse_args()
-    generate(args.config_dir, args.hardware_root)
+    generate(args.config_dir, args.hardware_root, args.hardware_config)
 
 
 if __name__ == '__main__':

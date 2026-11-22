@@ -6,12 +6,14 @@ sys.dont_write_bytecode=True
 SCRIPT = Path(__file__).resolve()
 sys.path.insert(0, str(SCRIPT.parent))
 C30D_TOOLS = SCRIPT.parent / 'c30d_tools'
+DEFAULT_HOST_CONFIG = C30D_TOOLS / 'config.yaml'
 if not (C30D_TOOLS / 'Host').is_dir():
     repository = Path(os.environ.get('WORKSPACE2_ROOT') or SCRIPT.parents[3])
     sys.path.insert(1, str(repository / 'tools'))
-    from hardware_path import hardware_root
+    from hardware_path import hardware_config, hardware_root
 
     C30D_TOOLS = hardware_root(repository)
+    DEFAULT_HOST_CONFIG = hardware_config(C30D_TOOLS)
 sys.path.insert(1, str(C30D_TOOLS / 'Host'))
 
 from chassis import Chassis,load_config as load_host
@@ -26,7 +28,7 @@ from std_msgs.msg import Bool
 def main():
     rospy.init_node('slicer_c30d_driver')
     c=load_config(rospy.get_param('~config_file'))
-    host=copy.deepcopy(load_host(rospy.get_param('~host_config_file',str(C30D_TOOLS / 'config.yaml'))))
+    host=copy.deepcopy(load_host(rospy.get_param('~host_config_file',str(DEFAULT_HOST_CONFIG))))
     # 导航覆盖本会话的速度和输出上限，独立工具继续使用硬件配置。
     host['speed']['linear_max']=c['max_linear'];host['speed']['angular_max']=c['max_angular']
     if 'motor_output_limit_percent' in c:

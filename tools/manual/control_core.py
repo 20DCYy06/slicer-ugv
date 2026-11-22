@@ -3,10 +3,19 @@ import sys,math,struct,os,copy
 from pathlib import Path
 TOOLS = Path(__file__).resolve().parents[1]
 sys.path.append(str(TOOLS))
-from hardware_path import hardware_root
+from hardware_path import hardware_config, hardware_root
 
-sys.path.insert(0, str(hardware_root(TOOLS.parent) / 'Host'))
-from chassis import Gear,Slew,load_config,Chassis,CONFIG
+HARDWARE = hardware_root(TOOLS.parent)
+sys.path.insert(0, str(HARDWARE / 'Host'))
+from chassis import Chassis, Gear, Slew, load_config as load_host_config
+
+CONFIG = hardware_config(HARDWARE)
+
+
+def load_config(path=CONFIG):
+    return load_host_config(path)
+
+
 EVENT=struct.Struct('<IhBB')
 def keyboard_target(keys,gear):
     return (int('w' in keys)-int('s' in keys))*gear.v,(int('a' in keys)-int('d' in keys))*gear.w

@@ -25,8 +25,8 @@ install(FILES
   "${SLICER_HARDWARE_ROOT}/Host/transport.py"
   DESTINATION "${support}/Hardware/Host"
 )
-install(FILES "${SLICER_HARDWARE_ROOT}/config.yaml"
-  DESTINATION "${support}/Hardware"
+install(FILES "${SLICER_HARDWARE_CONFIG}"
+  DESTINATION "${support}/Hardware" RENAME config.yaml
 )
 install(FILES "${workspace_root}/tools/manual/serial_group.sh"
   DESTINATION "${support}/tools/manual"
