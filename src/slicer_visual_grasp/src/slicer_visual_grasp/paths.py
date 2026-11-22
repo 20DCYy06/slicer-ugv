@@ -11,15 +11,17 @@ DEFAULT_CONFIG = PACKAGE_ROOT / 'config/config.json'
 SUPPORT_ROOT = PACKAGE_ROOT / 'support'
 if SUPPORT_ROOT.is_dir():
     HARDWARE = SUPPORT_ROOT / 'Hardware'
+    HOST_CONFIG = HARDWARE / 'config.yaml'
 else:
     SUPPORT_ROOT = PACKAGE_ROOT.parents[1]
     sys.path.insert(0, str(SUPPORT_ROOT / 'tools'))
-    from hardware_path import hardware_root
+    from hardware_path import hardware_config, hardware_root
 
     HARDWARE = hardware_root(SUPPORT_ROOT)
+    HOST_CONFIG = hardware_config(HARDWARE)
 MANUAL = SUPPORT_ROOT / 'tools/manual'
 DEVICE_CONFIGS = {
-    'hardware_config': HARDWARE / 'config.yaml',
+    'hardware_config': HOST_CONFIG,
     'airgrip_config': MANUAL / 'airgrip/config.json',
     'servo_config': MANUAL / 'b15_servo/config.json',
 }

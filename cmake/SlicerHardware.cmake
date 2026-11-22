@@ -21,6 +21,18 @@ if(NOT EXISTS "${SLICER_HARDWARE_ROOT}/config.yaml" OR NOT IS_DIRECTORY "${SLICE
   message(FATAL_ERROR "Hardware config.yaml and Host/ required at ${SLICER_HARDWARE_ROOT}. Check the workspace dependency or SLICER_HARDWARE_ROOT.")
 endif()
 
+if(NOT SLICER_HARDWARE_CONFIG)
+  if(NOT "$ENV{SLICER_HARDWARE_CONFIG}" STREQUAL "")
+    set(SLICER_HARDWARE_CONFIG "$ENV{SLICER_HARDWARE_CONFIG}")
+  else()
+    set(SLICER_HARDWARE_CONFIG "${SLICER_HARDWARE_ROOT}/config.yaml")
+  endif()
+endif()
+get_filename_component(SLICER_HARDWARE_CONFIG "${SLICER_HARDWARE_CONFIG}" REALPATH)
+if(NOT EXISTS "${SLICER_HARDWARE_CONFIG}" OR IS_DIRECTORY "${SLICER_HARDWARE_CONFIG}")
+  message(FATAL_ERROR "Hardware configuration file required at ${SLICER_HARDWARE_CONFIG}.")
+endif()
+
 unset(_slicer_repository)
 unset(_slicer_parent)
 unset(_slicer_parent_name)

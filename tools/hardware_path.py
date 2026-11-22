@@ -18,3 +18,12 @@ def hardware_root(repository, explicit=None):
     if not (directory / 'config.yaml').is_file() or not (directory / 'Host').is_dir():
         raise FileNotFoundError(f'Hardware config.yaml and Host/ required at {directory}')
     return directory.resolve()
+
+
+def hardware_config(hardware, explicit=None):
+    """Use the selected site file or the paired hardware checkout's template."""
+    selected = explicit or os.environ.get('SLICER_HARDWARE_CONFIG') or Path(hardware) / 'config.yaml'
+    path = Path(selected).expanduser()
+    if not path.is_file():
+        raise FileNotFoundError(f'Hardware configuration file required at {path}')
+    return path.resolve()

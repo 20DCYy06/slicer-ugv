@@ -6,11 +6,11 @@ from pathlib import Path
 sys.dont_write_bytecode=True
 TOOLS = Path(__file__).resolve().parents[1]
 sys.path.append(str(TOOLS))
-from hardware_path import hardware_root
+from hardware_path import hardware_config, hardware_root
 
 HARDWARE = hardware_root(TOOLS.parent)
 sys.path.insert(0, str(HARDWARE / 'Host'))
-from chassis import load_config,device,CONFIG
+from chassis import load_config,device
 from transport import Link
 from protocol import Parser
 import yaml
@@ -80,7 +80,7 @@ def analyze(records,cfg,firmware):
 
 def main():
     p=argparse.ArgumentParser(description=__doc__)
-    p.add_argument('--config',default=str(CONFIG));p.add_argument('--duration',type=float,default=120.)
+    p.add_argument('--config',default=str(hardware_config(HARDWARE)));p.add_argument('--duration',type=float,default=120.)
     p.add_argument('--phase',choices=list(PHASES.values()),default='still')
     a=p.parse_args()
     if not math.isfinite(a.duration) or a.duration<=0:p.error('duration必须为正数')
