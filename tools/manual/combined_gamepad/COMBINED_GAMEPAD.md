@@ -23,4 +23,4 @@ run_gamepad.sh默认已统一到此融合程序；旧纯底盘使用`./tools/man
 按键边沿打印[BUTTON]标签，Y/A松开后应见当前引脚标签对应的 1500 us；X/B操作后应见[AIRGRIP_PUMP_ACK]设备确认。
 
 融合手柄专用速度配置：tools/manual/combined_gamepad/combined_hardware.yaml，speed.linear_max=1.0；每档 0.05 m/s，共 19 档。
-独立 WASD 和纯底盘手柄程序读取 `Hardware/config.yaml`。
+独立 WASD 和纯底盘手柄程序读取所选硬件仓的 `config.yaml`，或 `SLICER_HARDWARE_CONFIG` 指定的文件。
