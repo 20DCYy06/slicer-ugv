@@ -104,11 +104,19 @@ class Readouts(QtWidgets.QWidget):
         rows = QtWidgets.QVBoxLayout(page)
         self.destination = ReadoutLine()
         self.own = ReadoutLine()
+        self.antenna = ReadoutLine()
+        self.antenna.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
+        self.antenna.setContextMenuPolicy(QtCore.Qt.ActionsContextMenu)
+        self.copy_antenna = QtWidgets.QAction('复制 RTK 经纬度', self.antenna)
+        self.copy_antenna.setEnabled(False)
+        self.copy_antenna.triggered.connect(
+            lambda: QtWidgets.QApplication.clipboard().setText(self.antenna.value.partition('：')[2]))
+        self.antenna.addAction(self.copy_antenna)
         self.registration = ReadoutLine()
         self.task_phase = ReadoutLine()
         self.task_metrics = ReadoutLine(muted=True)
         self.task_metrics.hide()
-        for item in (self.destination, self.own, self.registration, self.task_phase, self.task_metrics):
+        for item in (self.destination, self.own, self.antenna, self.registration, self.task_phase, self.task_metrics):
             rows.addWidget(item)
         self.system = {}
         for name, title in (('lidar', 'MID360 扫描'), ('lio', 'LIO'), ('driver', '底盘驱动'), ('mux', 'Mux')):
@@ -144,7 +152,7 @@ class Readouts(QtWidgets.QWidget):
                 break
             rtk_size -= 1
         for readout in self.findChildren(ReadoutLine):
-            if readout in (self.destination, self.own):
+            if readout in (self.destination, self.own, self.antenna):
                 point_size = coordinate_size
             else:
                 point_size = rtk_size if readout is self.rtk else size
@@ -180,6 +188,8 @@ class Readouts(QtWidgets.QWidget):
         own_available = not view['own'].endswith('—')
         if stable.update('own_available', own_available, now) == own_available:
             self.own.set_value(view['own'])
+        self.antenna.set_value(view['antenna'])
+        self.copy_antenna.setEnabled(not view['antenna'].endswith('—'))
         self.feedback.set_value(view['feedback'])
         if self.workflow is not None:
             self.workflow.refresh(now)

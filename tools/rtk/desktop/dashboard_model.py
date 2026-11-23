@@ -44,6 +44,7 @@ TASK_PHASES = {
     'IDLE': '等待任务',
 }
 NAV_STATUS_AGE = 1.5
+FIX_POSITION_AGE = 2.5
 
 
 def as_count(value):
@@ -110,6 +111,9 @@ class Dashboard:
             samples = [self._samples[key] for key in ('quality', 'gnss') if key in self._samples]
         fresh = [sample for sample in samples if now - sample[0] <= 3.]
         return max(fresh, key=lambda sample: sample[0])[1] if fresh else {}
+
+    def fixed_position(self, now):
+        return self.recent('fixed_position', now, FIX_POSITION_AGE)
 
     def planner_frame(self, now):
         return self.recent('frame', now, 2.) or self.recent('configured_frame', now, 1.5)
@@ -199,6 +203,7 @@ class Dashboard:
             'mux': mux_label,
             'destination': '正在前往：' + (self.recent('destination', now) or '待命'),
             'own': '当前位置：' + coordinates(self.recent('own', now) or {}),
+            'antenna': 'RTK 天线：' + coordinates(self.fixed_position(now) or {}),
         }
 
 

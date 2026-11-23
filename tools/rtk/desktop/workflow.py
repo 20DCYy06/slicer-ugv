@@ -1,7 +1,6 @@
 """Orchestrate the existing launch files on the user's ROS master."""
 from collections import deque
 import json
-import math
 import os
 from pathlib import Path
 import shlex
@@ -182,8 +181,12 @@ class Workflow:
                 result[key] = ('yellow', '停止中', False)
             elif key == 'map' and self.switching:
                 result[key] = ('yellow', '切换中', False)
-            elif key == 'wgs84' and owned:
-                result[key] = ('yellow', '取消本地任务', not self.stopping_all)
+            elif key == 'wgs84':
+                if owned:
+                    result[key] = ('yellow', '取消本地任务', not self.stopping_all)
+                else:
+                    blocked = self._wgs84_block(self.board.fixed_position(self.clock()))
+                    result[key] = ('yellow', blocked, False) if blocked else ('green', '可发送', True)
             elif key == 'calibrate' and (self.calibrating or self.present(key)):
                 result[key] = ('yellow', '配准中', False)
             elif key == 'driver' and self.grasp_handoff in ('to_grasp', 'grasp', 'to_driver'):
@@ -464,10 +467,11 @@ class Workflow:
                 and items is not None and not any(state in ACTIVE_ACTION_STATES for _, state in items)
                 and not any(task_in_progress(self.recent(mode)) for mode in ('v1', 'v2')))
 
-    def _safe_to_move(self):
-        return (self.mux.get('manual_hold') in (True, False)
-                and self.mux.get('teleop_fresh') is False
-                and self.mux.get('emergency_stop_latched') is False)
+    def _safe_to_move(self, mux=None):
+        mux = self.mux if mux is None else mux
+        return (mux.get('manual_hold') in (True, False)
+                and mux.get('teleop_fresh') is False
+                and mux.get('emergency_stop_latched') is False)
 
     def _calibration_block(self):
         for key, title in (('sensors', '定位与传感器'), ('driver', '底盘驱动'), ('navigation', '导航')):
@@ -495,26 +499,45 @@ class Workflow:
                    if key in ('grasp_hold', 'calibration_hold') else CONTROL)
         return self._start(key, (*command, action, '--timeout', '4', *options))
 
-    def can_send_wgs84(self):
-        return (not self.stopping_all and not self.calibrating and not self.grasp_handoff
-                and not self.switching and not any(key in self.owned for key in AUX)
-                and not (self.present('vision') and 'vision' not in self.owned)
-                and self.grasp_state not in ('starting', 'busy')
-                and self.ready('driver') and self._nav_idle()
-                and (self._navigation_connected() if self.runtime else self.ready('map')))
+    def _wgs84_block(self, position):
+        if position is None:
+            return '等待 RTK Fixed'
+        if self.recent('driver') is not True or not self.ready('driver'):
+            return '等待底盘就绪'
+        if self.recent('odom') is None:
+            return '等待本地里程计'
+        mux = self.mux
+        if (not self._safe_to_move(mux) or mux.get('manual_hold') is not False
+                or mux.get('selected_source') == 'mission'):
+            return '等待 Mux 放行'
+        if (self.stopping_all or self.calibrating or self.grasp_handoff or self.switching
+                or any(key in self.owned for key in AUX)
+                or (self.present('vision') and 'vision' not in self.owned)
+                or self.grasp_state in ('starting', 'busy')):
+            return '等待当前流程结束'
+        connected = self._navigation_connected() if self.runtime else self.ready('map')
+        if not connected or not self._nav_idle():
+            return '等待导航空闲'
+        return None
 
-    def send_wgs84(self, latitude, longitude, altitude):
-        if not self.can_send_wgs84():
-            self.report('等待底盘和导航就绪，或先结束当前任务、配准和抓取。')
+    def can_send_wgs84(self):
+        return self._wgs84_block(self.board.fixed_position(self.clock())) is None
+
+    def send_wgs84(self, latitude, longitude):
+        position = self.board.fixed_position(self.clock())
+        blocked = self._wgs84_block(position)
+        if blocked:
+            self.report(blocked)
             return False
         try:
-            latitude, longitude, altitude = map(float, (latitude, longitude, altitude))
-        except (TypeError, ValueError):
-            self.report('请填写数值经纬度和椭球高。')
+            latitude, longitude = map(float, (latitude, longitude))
+        except (TypeError, ValueError, OverflowError):
+            self.report('请填写数值经纬度。')
             return False
-        if not (-90. <= latitude <= 90. and -180. <= longitude <= 180. and math.isfinite(altitude)):
-            self.report('请检查 WGS84 经纬度范围和椭球高。')
+        if not (-90. <= latitude <= 90. and -180. <= longitude <= 180.):
+            self.report('请检查 WGS84 经纬度范围。')
             return False
+        altitude = position['altitude']
         command = ('rosrun', 'ugv_navigation', 'geographic.py', 'send',
                    '--latitude', str(latitude), '--longitude', str(longitude),
                    '--altitude-ellipsoid', str(altitude))

@@ -11,7 +11,7 @@ STEPS = {
     'vision': '3. 移动并抓取',
     'navigation': '4. 启动导航',
     'air': '5. 飞机通信节点',
-    'wgs84': '发送 WGS84 目标',
+    'wgs84': 'WGS84 测试目标',
 }
 DIAGNOSTICS = {
     'calibrate': '直行配准诊断 (2.5 m)',
@@ -152,16 +152,16 @@ class WorkflowPanel(QtWidgets.QWidget):
             self.target_dialog.activateWindow()
             return
         dialog = QtWidgets.QDialog(self)
-        dialog.setWindowTitle('发送 WGS84 导航目标')
+        dialog.setWindowTitle('发送 WGS84 测试目标')
         dialog.setAttribute(QtCore.Qt.WA_DeleteOnClose)
         form = QtWidgets.QFormLayout(dialog)
         inputs = []
-        for label in ('纬度 (°)', '经度 (°)', '椭球高 (m)'):
+        for label in ('纬度 (°)', '经度 (°)'):
             entry = QtWidgets.QLineEdit()
             entry.setAccessibleName(label)
             form.addRow(label, entry)
             inputs.append(entry)
-        hint = QtWidgets.QLabel('提交后，车辆可能先执行自动配准准备运动。')
+        hint = QtWidgets.QLabel('采用当前 Fixed 定位的椭球高。车辆可能先执行自动配准准备运动。')
         form.addRow(hint)
         buttons = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel)
         buttons.button(QtWidgets.QDialogButtonBox.Ok).setText('发送任务')
@@ -304,6 +304,9 @@ class WorkflowPanel(QtWidgets.QWidget):
                 button.setAccessibleName(text)
             if button.isEnabled() != clickable:
                 button.setEnabled(clickable)
+        if self.target_dialog is not None:
+            buttons = self.target_dialog.findChild(QtWidgets.QDialogButtonBox)
+            buttons.button(QtWidgets.QDialogButtonBox.Ok).setEnabled(self.controller.can_send_wgs84())
         for key, action in self.diagnostics_actions.items():
             _, suffix, clickable = states[key]
             action.setText(DIAGNOSTICS[key] + (' · ' + suffix if suffix else ''))

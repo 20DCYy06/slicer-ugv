@@ -14,12 +14,13 @@ from diagnostic_msgs.msg import DiagnosticArray
 from geometry_msgs.msg import PointStamped, PoseStamped
 from move_base_msgs.msg import MoveBaseActionGoal
 from nav_msgs.msg import OccupancyGrid, Odometry
-from sensor_msgs.msg import LaserScan
+from sensor_msgs.msg import LaserScan, NavSatFix
 from std_msgs.msg import Bool, String
 from slicer_air_ground_msgs.msg import Command
 
 from geographic_core import enu_to_geodetic
-from dashboard_model import (ACTIVE_ACTION_STATES, NAV_STATUS_AGE, coordinates,
+from geographic_state import qualified_fix
+from dashboard_model import (ACTIVE_ACTION_STATES, FIX_POSITION_AGE, NAV_STATUS_AGE, coordinates,
                              manual_goal_block, task_destination)
 
 
@@ -29,6 +30,7 @@ GOAL_CLICK = 'manual_goal'
 WAYPOINT_CLICK = 'waypoint'
 GOAL_STATUS_AGE = .5
 GOAL_WAIT = .65
+FIX_BUFFER_SIZE = 64
 
 
 def finite(*values):
@@ -63,10 +65,16 @@ class Observer:
         self.calibration_active = False
         self.action_connection = None
         self.action_goals = {}
+        self.fixed_fixes = {}
+        self.fixed_qualities = {}
+        self.fixed_stamp_ns = 0
+        self.last_quality_stamp_ns = 0
+        self.fixed_session = None
         self.goal_pub = rospy.Publisher(ACTION + '/goal', MoveBaseActionGoal, queue_size=1)
         self.subscribers = []
         for topic, kind, callback in (
             ('/gnss/diagnostics', DiagnosticArray, self.diagnostics),
+            ('/gnss/fix', NavSatFix, self.gnss_fix),
             ('/gnss/fix_quality', DiagnosticArray, self.fix_quality),
             ('/geographic/status', String, self.geographic),
             ('/geographic/navigation_runtime', String, self.navigation_runtime),
@@ -98,12 +106,77 @@ class Observer:
                        for item in message.status if item.name == 'cup_gnss/receiver'), None)
         if values is not None:
             self.board.record(key, values)
+        return values
 
     def diagnostics(self, message):
         self.quality('gnss', message)
 
+    def gnss_fix(self, message):
+        self._gnss_observation(message, dict(frame=message.header.frame_id, status=message.status.status,
+                                           latitude=message.latitude, longitude=message.longitude,
+                                           altitude=message.altitude), quality=False)
+
     def fix_quality(self, message):
-        self.quality('quality', message)
+        values = self.quality('quality', message)
+        if values is not None:
+            self._gnss_observation(message, values, quality=True)
+
+    def _gnss_observation(self, message, values, *, quality):
+        timestamp = message.header.stamp
+        stamp_ns, stamp = timestamp.to_nsec(), timestamp.to_sec()
+        ros_now = rospy.Time.now().to_sec()
+        received = time.monotonic()
+        if stamp_ns <= 0 or not 0 <= ros_now-stamp <= FIX_POSITION_AGE:
+            return
+        header = getattr(message, '_connection_header', None) or {}
+        if not header.get('callerid') or header.get('latching', '0') != '0':
+            return
+        sample = dict(values, stamp_ns=stamp_ns, stamp=stamp, callerid=header['callerid'])
+        with self.lock:
+            if stamp_ns <= self.fixed_stamp_ns:
+                return
+            if quality and not self._store_fix_quality(sample):
+                return
+            if not quality:
+                self._store_fix_sample(self.fixed_fixes, stamp_ns, sample)
+            if stamp_ns not in self.fixed_fixes or stamp_ns not in self.fixed_qualities:
+                return
+            fix = self.fixed_fixes.pop(stamp_ns)
+            diag = self.fixed_qualities.pop(stamp_ns)
+            self.fixed_stamp_ns = stamp_ns
+            point = None
+            if fix['callerid'] == diag['callerid'] and not qualified_fix(fix, diag, ros_now, FIX_POSITION_AGE):
+                point = {key: fix[key] for key in ('latitude', 'longitude', 'altitude')}
+            self.board.record('fixed_position', point, received-(ros_now-stamp))
+
+    @staticmethod
+    def _store_fix_sample(samples, stamp, value):
+        samples[stamp] = value
+        if len(samples) > FIX_BUFFER_SIZE:
+            del samples[min(samples)]
+
+    def _store_fix_quality(self, sample):
+        stamp_ns = sample['stamp_ns']
+        session = sample.get('session')
+        if stamp_ns > self.last_quality_stamp_ns:
+            self.last_quality_stamp_ns = stamp_ns
+            if session != self.fixed_session:
+                # Prevent a late position from the previous session restoring the readout.
+                self.fixed_session = session
+                self.fixed_qualities.clear()
+                self.fixed_stamp_ns = stamp_ns - 1
+                self.board.record('fixed_position', None)
+        if session != self.fixed_session:
+            return False
+        usable = (session and str(sample.get('gga_quality')) == '4'
+                  and str(sample.get('fresh_rtk_usable')).lower() == 'true'
+                  and str(sample.get('fix_valid')).lower() == 'true')
+        if not usable:
+            self.fixed_stamp_ns = stamp_ns
+            self.board.record('fixed_position', None)
+            return False
+        self._store_fix_sample(self.fixed_qualities, stamp_ns, sample)
+        return True
 
     def geographic(self, message):
         value = json_sample(message, 'status_stamp')
