@@ -27,7 +27,7 @@ run_tests src/ag_uav_client/test test_protocol.py test_observation.py
 run_tests src/ag_ugv_task/test test_route.py
 run_tests src/ugv_slicer_control/test test_navigation_guard.py test_control.py \
     test_control_expected_hold.py
-run_tests src/cup_gnss/tests test_enu.py
+run_tests src/cup_gnss/tests test_core.py test_enu.py
 run_tests tools/rtk/desktop/tests test_dashboard.py test_workflow.py \
     test_workflow_discovery.py test_workflow_panel.py
 

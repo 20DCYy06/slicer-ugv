@@ -178,6 +178,41 @@ class ModelCase(unittest.TestCase):
         self.feed(gga(), receipt_mono=self.mono - 3)
         self.assertEqual(self.model.snapshot(self.mono)["message"], "source_record_too_old")
 
+    def test_identical_fixed_repeat_does_not_publish_or_refresh_correction_age(self):
+        self.fixed(diff="4.5")
+        raw = gga("120001.00", q=4, diff="4.5")
+        result = self.feed(raw, step=0.2)
+        self.assertEqual(result["raw"], raw)
+        self.assertFalse(result["publish_fix"])
+        state = self.model.snapshot(self.mono)
+        self.assertTrue(state["fix"]["valid"])
+        self.assertAlmostEqual(state["diagnostics"]["gga_age_s"], 0.2)
+        self.assertEqual(self.model.counts["duplicate_epochs"], 1)
+
+        self.feed(raw, step=0.4)
+        self.assertEqual(self.model.snapshot(self.mono)["message"], "differential_age_missing_or_stale")
+
+    def test_repeated_fixed_epoch_still_expires(self):
+        self.fixed()
+        raw = gga("120001.00", q=4, diff="1.0")
+        for _ in range(6):
+            self.assertFalse(self.feed(raw, step=0.5)["publish_fix"])
+        state = self.model.snapshot(self.mono)
+        self.assertFalse(state["fix"]["valid"])
+        self.assertEqual(state["message"], "gga_timeout")
+
+    def test_conflicting_repeat_stays_invalid_until_next_epoch(self):
+        for changed in (gga("120001.00", q=5, diff="1.0"), gga("120001.00", q=4, diff="9.0")):
+            with self.subTest(changed=changed):
+                self.setUp()
+                self.fixed()
+                self.assertTrue(self.feed(changed, step=0.1)["publish_fix"])
+                self.assertFalse(self.model.snapshot(self.mono)["fix"]["valid"])
+                self.feed(gga("120001.00", q=4, diff="1.0"), step=0.1)
+                self.assertFalse(self.model.snapshot(self.mono)["fix"]["valid"])
+                self.feed(gga("120002.00", q=4, diff="1.0"), step=0.1)
+                self.assertTrue(self.model.snapshot(self.mono)["fix"]["valid"])
+
     def test_duplicate_epoch_invalidates_even_if_new_quality_is_zero(self):
         self.fixed()
         result = self.feed(gga("120001.00", q=0, lat="", ns="", lon="", ew=""), step=0.1)

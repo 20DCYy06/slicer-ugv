@@ -206,19 +206,24 @@ class GnssModel:
             return result
         self.counts["gga_count"] += 1
         self.gga_times.append(rx_mono)
+        epoch = parsed["epoch"]
+        delta = None if epoch is None or self.last_epoch is None else (epoch - self.last_epoch) % 86400
+        if delta == 0 and self.latest_gga is not None and raw == self.latest_gga[0]["raw"]:
+            # The receiver can resend the same sentence. Report its raw traffic
+            # without publishing another fix or resetting either age.
+            self.counts["duplicate_epochs"] += 1
+            return result
         self.latest_gga_raw = parsed
         self.last_gga_receipt = (rx_mono, max(0.0, source_age))
-        epoch = parsed["epoch"]
         if epoch is None:
             self.latest_gga = None
             self.last_error = "invalid_gga_time" if parsed["quality"] in (1, 2, 3, 4, 5) else ""
             result["publish_fix"] = True
             return result
-        delta = None if self.last_epoch is None else (epoch - self.last_epoch) % 86400
         if delta is not None and (delta == 0 or delta >= 43200):
             self.counts["duplicate_epochs" if delta == 0 else "older_epochs"] += 1
-            # Even a repeated timestamp can report loss of fix or old correction
-            # age. It must never leave earlier coordinates published as valid.
+            # A changed duplicate or older sentence can report loss of fix
+            # or stale corrections. Invalidate the earlier candidate.
             self.latest_gga = None
             self.last_error = "duplicate_gga_epoch" if delta == 0 else "older_gga_epoch"
             result["publish_fix"] = True
