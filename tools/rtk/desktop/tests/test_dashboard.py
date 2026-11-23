@@ -90,6 +90,16 @@ class DashboardTests(unittest.TestCase):
         self.assertEqual(board.view(1.)['own'], '当前位置：20.0000000, 120.0000000')
         self.assertEqual(board.view(1.)['destination'], '正在前往：20.0000000, 120.0000000')
 
+    def test_fixed_antenna_readout_is_available_without_registration_and_expires(self):
+        board = Dashboard()
+        position = {'latitude': 20., 'longitude': 120., 'altitude': 18.}
+        board.record('fixed_position', position, 1.)
+        self.assertEqual(board.fixed_position(1.), position)
+        self.assertEqual(board.view(1.)['antenna'], 'RTK 天线：20.0000000, 120.0000000')
+        self.assertEqual(board.view(1.)['own'], '当前位置：—')
+        self.assertIsNone(board.fixed_position(3.51))
+        self.assertEqual(board.view(3.51)['antenna'], 'RTK 天线：—')
+
     def test_desktop_goal_respects_existing_owners_and_holds(self):
         mux = {'manual_hold': False, 'emergency_stop_latched': False}
         self.assertIsNone(manual_goal_block('odom', True, mux, [], {}, []))

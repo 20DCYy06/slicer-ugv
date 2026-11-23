@@ -18,6 +18,7 @@ from diagnostic_msgs.msg import DiagnosticArray, DiagnosticStatus, KeyValue
 from geometry_msgs.msg import PoseStamped, TransformStamped
 from move_base_msgs.msg import MoveBaseActionGoal
 from nav_msgs.msg import OccupancyGrid, Odometry
+from sensor_msgs.msg import NavSatFix, NavSatStatus
 from std_msgs.msg import Bool, String
 
 DIRECTORY = Path(__file__).resolve().parents[1]
@@ -50,6 +51,10 @@ def main():
     runtime_pub = rospy.Publisher('/geographic/navigation_runtime', String, queue_size=1)
     v2_pub = rospy.Publisher('/air_ground/v2/state', String, queue_size=1)
     gnss = rospy.Publisher('/gnss/diagnostics', DiagnosticArray, queue_size=1)
+    raw_fix = rospy.Publisher('/gnss/fix', NavSatFix, queue_size=1)
+    raw_quality = rospy.Publisher('/gnss/fix_quality', DiagnosticArray, queue_size=1)
+    gnss_pair = 'unmatched'
+    gnss_session = 'desktop-test'
     driver = rospy.Publisher('/slicer_c30d_driver/ready', Bool, queue_size=1)
     mux = rospy.Publisher('/cup_nav/manual_state', String, queue_size=1)
     odom = rospy.Publisher('/global/odom', Odometry, queue_size=1)
@@ -76,6 +81,20 @@ def main():
                 KeyValue('fresh_rtk_usable', 'true'),
             ]),
         ]))
+        if gnss_pair != 'silent':
+            fixed = gnss_pair != 'lost'
+            stamp = now - rospy.Duration(.01) if gnss_pair == 'unmatched' else now
+            raw_quality.publish(DiagnosticArray(header=dict_header(stamp), status=[
+                DiagnosticStatus(name='cup_gnss/receiver', values=[
+                    KeyValue('gga_quality', '4' if fixed else '5'),
+                    KeyValue('fresh_rtk_usable', 'true' if fixed else 'false'),
+                    KeyValue('fix_valid', 'true'), KeyValue('session', gnss_session),
+                ]),
+            ]))
+            if fixed:
+                raw_fix.publish(NavSatFix(header=dict_header(now, 'gnss_link'),
+                                          status=NavSatStatus(status=NavSatStatus.STATUS_GBAS_FIX),
+                                          latitude=31.21, longitude=121.51, altitude=18.))
         runtime_pub.publish(json.dumps(dict(runtime, stamp=now.to_sec())))
         v2_pub.publish(json.dumps(dict(route, updated_at=now.to_sec())))
         driver.publish(True)
@@ -131,6 +150,26 @@ def main():
              and observer.board.recent('action', time.monotonic(), .3) is not None
              and observer.board.recent('configured_frame', time.monotonic()) == 'odom'
              and observer.goal_pub.impl.has_connection('/ugv/move_base'))
+        assert observer.board.fixed_position(time.monotonic()) is None
+        gnss_pair = 'matched'
+        wait(lambda: dashboard.antenna.value == 'RTK 天线：31.2100000, 121.5100000')
+        assert observer.board.fixed_position(time.monotonic())['altitude'] == 18.
+        assert dashboard.own.value == '当前位置：—'
+        dashboard.antenna.actions()[0].trigger()
+        assert QtWidgets.QApplication.clipboard().text() == '31.2100000, 121.5100000'
+        gnss_pair = 'lost'
+        wait(lambda: dashboard.antenna.value == 'RTK 天线：—')
+        assert observer.board.fixed_position(time.monotonic()) is None
+        gnss_pair = 'matched'
+        wait(lambda: dashboard.antenna.value == 'RTK 天线：31.2100000, 121.5100000')
+        gnss_session = 'desktop-test-reconnected'
+        gnss_pair = 'unmatched'
+        wait(lambda: dashboard.antenna.value == 'RTK 天线：—')
+        gnss_pair = 'matched'
+        wait(lambda: dashboard.antenna.value == 'RTK 天线：31.2100000, 121.5100000')
+        gnss_pair = 'silent'
+        wait(lambda: dashboard.antenna.value == 'RTK 天线：—')
+        assert observer.board.fixed_position(time.monotonic()) is None
         readable = [dashboard.status, dashboard.registration,
                     *(row for _, row in dashboard.system.values())]
         assert all(row.font().pointSize() >= max(15, dashboard.rtk.font().pointSize() - 2)

@@ -79,7 +79,8 @@ class WorkflowTests(unittest.TestCase):
         self.sample(lidar=True, odom=(0., 0.), driver=True, action=[],
                     odom_still=True, geographic={'state': 'invalid'},
                     mux={'manual_hold': held, 'teleop_fresh': False, 'emergency_stop_latched': False},
-                    quality={'gga_quality': 4 if fixed else 5, 'fresh_rtk_usable': str(fixed).lower()})
+                    quality={'gga_quality': 4 if fixed else 5, 'fresh_rtk_usable': str(fixed).lower()},
+                    fixed_position={'latitude': 19., 'longitude': 119., 'altitude': 7.} if fixed else None)
         self.refresh()
 
     def color(self, key):
@@ -250,12 +251,64 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(self.color('calibrate'), 'red')
         self.assertEqual(self.workflow.click('calibrate'), 'confirm')
 
+    def test_wgs84_requires_fresh_paired_fixed_position_at_submission(self):
+        self.prerequisites(held=False)
+        self.sample(runtime={'phase': 'IDLE', 'busy': False})
+        self.assertTrue(self.workflow.states['wgs84'][2])
+
+        # A diagnostic can still say Fixed after the position pair has expired.
+        old_position = {'latitude': 19., 'longitude': 119., 'altitude': 7.}
+        self.board.record('fixed_position', old_position, self.clock - 3.)
+        self.assertFalse(self.workflow.states['wgs84'][2])
+        self.assertFalse(self.workflow.send_wgs84(20., 120.))
+        self.assertEqual(self.starts, [])
+
+        self.sample(fixed_position=dict(old_position, altitude=8.25))
+        self.assertTrue(self.workflow.send_wgs84('20.2', '120.8'))
+        self.assertEqual(self.starts[-1][1][-2:], ('--altitude-ellipsoid', '8.25'))
+
+    def test_wgs84_requires_ready_driver_local_odom_and_unowned_idle_control(self):
+        unsafe_states = (
+            {'driver': None, 'wheel_odom': True},
+            {'driver': False}, {'odom': None}, {'action': [('other', 1)]},
+            {'mux': {'manual_hold': True, 'teleop_fresh': False, 'emergency_stop_latched': False}},
+            {'mux': {'manual_hold': False, 'teleop_fresh': True, 'emergency_stop_latched': False}},
+            {'mux': {'manual_hold': False, 'teleop_fresh': False, 'emergency_stop_latched': True}},
+            {'mux': {'manual_hold': False, 'teleop_fresh': False, 'emergency_stop_latched': False,
+                     'selected_source': 'mission'}},
+            {'mux': None},
+        )
+        for unsafe in unsafe_states:
+            with self.subTest(unsafe=unsafe):
+                self.prerequisites(held=False)
+                self.sample(runtime={'phase': 'IDLE', 'busy': False}, **unsafe)
+                self.assertFalse(self.workflow.states['wgs84'][2])
+                self.assertFalse(self.workflow.send_wgs84(20., 120.))
+        self.assertEqual(self.starts, [])
+
+    def test_wgs84_rejects_malformed_or_out_of_range_coordinates(self):
+        self.prerequisites(held=False)
+        self.sample(runtime={'phase': 'IDLE', 'busy': False})
+        for lat, lon in (('', '120'), ('nan', '120'), ('20', 'inf'), ('91', '120'), ('20', '-181')):
+            with self.subTest(lat=lat, lon=lon):
+                self.assertFalse(self.workflow.send_wgs84(lat, lon))
+        self.assertEqual(self.starts, [])
+
+    def test_owned_wgs84_can_be_canceled_after_loss_of_fixed_position(self):
+        self.prerequisites(held=False)
+        self.sample(runtime={'phase': 'IDLE', 'busy': False})
+        self.assertTrue(self.workflow.send_wgs84(20., 120.))
+        self.sample(fixed_position=None)
+        self.assertEqual(self.workflow.states['wgs84'], ('yellow', '取消本地任务', True))
+        self.workflow.stop('wgs84')
+        self.assertTrue(self.starts[-1][3].stopped)
+
     def test_stop_all_cancels_local_wgs84_before_runtime(self):
         self.workflow.click('navigation')
         navigation = self.starts[-1][3]
         self.prerequisites(held=False)
         self.sample(runtime={'phase': 'IDLE', 'busy': False})
-        self.assertTrue(self.workflow.send_wgs84(20., 120., 7.))
+        self.assertTrue(self.workflow.send_wgs84(20., 120.))
         key, command, _, sender = self.starts[-1]
         self.assertEqual(key, 'wgs84')
         self.assertEqual(command, ('rosrun', 'ugv_navigation', 'geographic.py', 'send',
@@ -272,7 +325,7 @@ class WorkflowTests(unittest.TestCase):
         self.workflow.click('navigation')
         self.prerequisites(held=False)
         self.sample(runtime={'phase': 'IDLE', 'busy': False})
-        self.assertTrue(self.workflow.send_wgs84(20., 120., 7.))
+        self.assertTrue(self.workflow.send_wgs84(20., 120.))
         self.starts[-1][3].status = 1
         self.refresh()
         self.assertIsNone(self.board.local_target())
@@ -286,7 +339,7 @@ class WorkflowTests(unittest.TestCase):
         self.sample(runtime={'phase': 'IDLE', 'mode': 'map', 'busy': False},
                     geographic={'state': 'invalid', 'registered': False})
         self.assertFalse(self.workflow.ready('navigation'))
-        self.assertTrue(self.workflow.send_wgs84(20., 120., 7.))
+        self.assertTrue(self.workflow.send_wgs84(20., 120.))
         self.assertEqual([key for key, *_ in self.starts], ['navigation', 'wgs84'])
 
     def test_auto_preparation_blocks_grasp_and_local_wgs84(self):
@@ -296,7 +349,7 @@ class WorkflowTests(unittest.TestCase):
         self.sample(runtime={'phase': 'WAITING_RTK', 'busy': True})
         self.workflow.click('vision')
         self.assertFalse(self.starts[0][3].stopped)
-        self.assertFalse(self.workflow.send_wgs84(20., 120., 7.))
+        self.assertFalse(self.workflow.send_wgs84(20., 120.))
         self.assertEqual([key for key, *_ in self.starts], ['driver', 'navigation'])
 
     def test_new_external_local_process_discovered_again_at_click(self):

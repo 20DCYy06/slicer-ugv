@@ -29,6 +29,7 @@ class WorkflowPanelTests(unittest.TestCase):
         self.controller.owned = {}
         self.controller.calibrating = False
         self.controller.switching = False
+        self.controller.can_send_wgs84.return_value = True
         self.panel = WorkflowPanel(self.controller)
         self.panel.resize(260, self.panel.sizeHint().height())
         self.panel.show()
@@ -96,15 +97,34 @@ class WorkflowPanelTests(unittest.TestCase):
         self.click(self.panel.buttons['wgs84'])
         dialog = self.panel.target_dialog
         self.assertIsNotNone(dialog)
-        for item, value in zip(dialog.findChildren(QtWidgets.QLineEdit), ('20.2', '120.8', '7')):
+        inputs = dialog.findChildren(QtWidgets.QLineEdit)
+        self.assertEqual(len(inputs), 2)
+        self.assertIn('测试', dialog.windowTitle())
+        for item, value in zip(inputs, ('20.2', '120.8')):
             item.setText(value)
         self.click(dialog.findChild(QtWidgets.QDialogButtonBox).button(QtWidgets.QDialogButtonBox.Ok))
-        self.controller.send_wgs84.assert_called_once_with('20.2', '120.8', '7')
+        self.controller.send_wgs84.assert_called_once_with('20.2', '120.8')
         self.assertIsNone(self.panel.target_dialog)
         self.click(self.panel.buttons['wgs84'])
         self.click(self.panel.stop_button)
         self.assertIsNone(self.panel.target_dialog)
         self.assertEqual(self.controller.send_wgs84.call_count, 1)
+
+    def test_open_wgs84_form_disables_send_when_readiness_changes(self):
+        self.controller.can_send_wgs84.return_value = True
+        self.click(self.panel.buttons['wgs84'])
+        button = self.panel.target_dialog.findChild(QtWidgets.QDialogButtonBox).button(QtWidgets.QDialogButtonBox.Ok)
+        self.assertTrue(button.isEnabled())
+
+        self.controller.can_send_wgs84.return_value = False
+        self.panel.refresh()
+        self.assertFalse(button.isEnabled())
+        self.click(button)
+        self.controller.send_wgs84.assert_not_called()
+
+        self.controller.can_send_wgs84.return_value = True
+        self.panel.refresh()
+        self.assertTrue(button.isEnabled())
 
     def test_slow_process_scan_leaves_stop_responsive(self):
         future = Future()
