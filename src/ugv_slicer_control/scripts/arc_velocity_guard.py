@@ -18,6 +18,9 @@ from navigation_core import (body_twist_between, compensate_turn, guarded_forwar
                              parse_footprint, planner_limits, saturate_twist, slew_arc, swept_clear)
 
 
+SWEPT_STOP = 'swept footprint occupied/unknown/outside grid'
+
+
 def main():
     rospy.init_node('slicer_nav_arc_guard')
     p = rospy.get_param('~')
@@ -178,15 +181,17 @@ def main():
             horizon = max(p['compensation_horizon'],
                           abs(target[0])/brake_linear+p['command_timeout'],
                           abs(target[1])/limits['accel_angular']+p['command_timeout'])
-            if adaptive_forward_speed and not compensation_enabled and target[0] > 0.:
+            if (adaptive_forward_speed and not compensation_enabled
+                    and (swept_held or target[0] > 0. or (target[0] == 0. and previous[0] > 0.))):
                 guarded = guarded_forward_twist(pose, target, output, previous, observed,
                                                 footprint[0], grid, p['compensation_horizon'],
-                                                brake_linear, p['command_timeout'], dt, limits)
+                                                brake_linear, p['command_timeout'], dt, limits,
+                                                recovering=swept_held)
                 if guarded is not None:
                     return '', guarded if guarded != output else None
             elif all(swept_clear(pose, *command, footprint[0], grid, horizon) for command in (target, output)):
                 return '', None
-            return 'swept footprint occupied/unknown/outside grid', None
+            return SWEPT_STOP, None
         except (tf.Exception, ValueError, KeyError) as exc:
             return str(exc), None
 
@@ -202,7 +207,8 @@ def main():
         rospy.Subscriber('/geographic/registration_reverse', Twist, registration_command, queue_size=1)
         rospy.Subscriber(planner_ns + '/status', GoalStatusArray, move_base_status, queue_size=1)
     previous, previous_at, last_reason, last_note = (0., 0.), time.monotonic(), None, None
-    was_returning = False
+    was_returning = swept_held = False
+    period = 1. / p['publish_hz']
     try:
         while not rospy.is_shutdown():
             now = time.monotonic()
@@ -260,9 +266,13 @@ def main():
                         note = 'turn boost blocked by footprint; unboosted angular command retained'
                     else:
                         output, reason = (0., 0.), error
-                elif reduced is not None:
-                    output = reduced
-                    note = 'forward speed reduced within observed braking envelope'
+                    if error == SWEPT_STOP:
+                        swept_held = True
+                else:
+                    swept_held = False
+                    if reduced is not None:
+                        output = reduced
+                        note = 'forward speed reduced within observed braking envelope'
             msg = Twist()
             msg.linear.x, msg.angular.z = output
             pub.publish(msg)
@@ -277,7 +287,7 @@ def main():
             elif note:
                 rospy.loginfo_throttle(3., 'Navigation compensation: %s; input=%s output=%s', note, sample[1], output)
             previous, previous_at = output, now
-            time.sleep(1. / p['publish_hz'])
+            time.sleep(max(0., period - (time.monotonic() - now)))
     finally:
         pub.publish(Twist())
 

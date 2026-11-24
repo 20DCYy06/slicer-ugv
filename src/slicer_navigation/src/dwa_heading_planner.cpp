@@ -1,5 +1,6 @@
 #include <slicer_navigation/start_heading.h>
 
+#include <algorithm>
 #include <atomic>
 #include <cmath>
 #include <limits>
@@ -63,6 +64,8 @@ class HeadingDWAPlanner : public nav_core::BaseLocalPlanner {
       has_goal_ = true;
       plan_epoch_ = epoch;
       aimed_ = aligned_ = false;
+      last_drive_ = geometry_msgs::Twist();
+      last_forward_output_ = 0.;
     }
     if (!aimed_) start_path_ = plan;
     return true;
@@ -103,13 +106,8 @@ class HeadingDWAPlanner : public nav_core::BaseLocalPlanner {
       aimed_ = true;
     }
 
-    nav_msgs::Odometry::ConstPtr odom;
-    {
-      std::lock_guard<std::mutex> lock(odom_lock_);
-      odom = last_odom_;
-    }
-    const double age = odom ? (ros::Time::now() - odom->header.stamp).toSec() : -1.;
-    if (!odom || odom->header.stamp.isZero() || age < 0. || age > .5) {
+    const auto odom = freshOdometry();
+    if (!odom) {
       ROS_WARN_THROTTLE(2., "RTK start heading needs fresh odometry");
       return false;
     }
@@ -135,6 +133,13 @@ class HeadingDWAPlanner : public nav_core::BaseLocalPlanner {
   }
 
  private:
+  nav_msgs::Odometry::ConstPtr freshOdometry() {
+    std::lock_guard<std::mutex> lock(odom_lock_);
+    if (!last_odom_ || last_odom_->header.stamp.isZero()) return {};
+    const double age = (ros::Time::now() - last_odom_->header.stamp).toSec();
+    return age >= 0. && age <= .5 ? last_odom_ : nav_msgs::Odometry::ConstPtr{};
+  }
+
   double distanceToGoal(const geometry_msgs::PoseStamped& robot) const {
     auto target = goal_;
     if (target.header.frame_id != robot.header.frame_id) {
@@ -151,8 +156,33 @@ class HeadingDWAPlanner : public nav_core::BaseLocalPlanner {
   }
 
   bool cruise(geometry_msgs::Twist& command) {
-    if (!delegate_.computeVelocityCommands(command)) return false;
-    if (command.linear.x <= 0.) return true;
+    const bool planned = delegate_.computeVelocityCommands(command);
+    const auto now = ros::WallTime::now();
+    if (!planned) {
+      // Brake on the last arc through a local planning miss. Each command
+      // still goes through the Guard, and the bridge expires at zero speed.
+      if (last_drive_.linear.x <= 0.) return false;
+      constexpr double braking_rate = 1.0;
+      constexpr double maximum_duration = .8;
+      const double elapsed = (now - last_drive_at_).toSec();
+      const double initial_speed = std::min(last_drive_.linear.x, braking_rate * maximum_duration);
+      const double braking_speed = initial_speed - braking_rate * elapsed;
+      if (elapsed <= 0. || braking_speed <= 0.) return false;
+      const auto odom = freshOdometry();
+      if (!odom) return false;
+      const double measured = odom->twist.twist.linear.x;
+      if (!std::isfinite(measured)) return false;
+      const double speed = std::min({braking_speed, measured, last_forward_output_});
+      if (speed <= 0.) return false;
+      command = geometry_msgs::Twist();
+      command.linear.x = speed;
+      command.angular.z = last_drive_.angular.z * speed / last_drive_.linear.x;
+    }
+    if (command.linear.x <= 0.) {
+      last_drive_ = command;
+      last_forward_output_ = 0.;
+      return true;
+    }
     geometry_msgs::PoseStamped robot;
     if (!costmap_->getRobotPose(robot)) return false;
     const double distance = distanceToGoal(robot);
@@ -165,6 +195,13 @@ class HeadingDWAPlanner : public nav_core::BaseLocalPlanner {
     if (command.linear.x > cap) {
       command.angular.z *= cap / command.linear.x;
       command.linear.x = cap;
+    }
+    last_forward_output_ = command.linear.x;
+    if (planned) {
+      last_drive_ = command;
+      last_drive_at_ = now;
+    } else {
+      ROS_INFO_THROTTLE(1., "RTK DWA planning gap: braking on the last arc");
     }
     return true;
   }
@@ -193,6 +230,10 @@ class HeadingDWAPlanner : public nav_core::BaseLocalPlanner {
   tf2_ros::Buffer* tf_ = nullptr;
   costmap_2d::Costmap2DROS* costmap_ = nullptr;
   geometry_msgs::PoseStamped goal_;
+  geometry_msgs::Twist last_drive_;
+  ros::WallTime last_drive_at_;
+  double last_forward_output_ = 0.;
+
   std::vector<geometry_msgs::PoseStamped> start_path_;
   std::atomic<unsigned> goal_epoch_{0};
   unsigned plan_epoch_ = 0;

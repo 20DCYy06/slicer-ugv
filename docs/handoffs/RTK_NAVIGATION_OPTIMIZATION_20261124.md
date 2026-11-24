@@ -92,6 +92,13 @@ RTK DWA 的 Guard 使用实际局部代价图和车体足迹。配置模板中�
 - 隔离 6 m 开阔直线用 Mux 速度指令对比。0.05 → 0.78 m/s 用时从 2.59 s 降到 1.32 s，末段最后一次达到 0.78 m/s 到最后一次达到 0.05 m/s 用时从 3.29 s 降到 1.52 s，达到 0.78 m/s 的占比从 40% 升到 64%，总耗时从 10.90 s 降到 9.20 s。最终版用 150 ms 响应延迟、0.8 m/s² 模拟底盘响应时仍到点，距目标约 0.047 m。同一绕墙任务从 17.10 s 降到 15.40 s，模拟足迹与墙最近约 0.278 m。以相同延迟在终点前方 0.55 m 设墙，最终仍到点，模拟足迹最小净空约 0.394 m。
 - 独立安装、339 项离线回归、三项导航 launch 和 C++ 起步对向检查通过。证据见任务工作区 `logs/rtk-speed-response/`。这轮只执行静态、构建和隔离模拟，实际机械加减速及窄道速度待同路线实车复测。
 
+## 11 月 24 日巡航指令连续性
+
+- 07:26–07:28 现场已加载 1.00 m/s² 档，仍在行驶中遇到扫掠停车。一次转弧由 0.800 m/s 降到 0.775 m/s，约 0.34 s 后 Guard 置零。现场没有同步速度和栅格录包。证据见任务工作区 `logs/ros/log/679340f0-e81b-11f1-b0bf-3c6d661ed63d/rosout.log`。另在同一隔离绕墙场景中看到两帧 DWA 求解失败直接把原始和 Mux 速度从 0.70 m/s 降为零。
+- 普通 `odom`、正式 `map` 的 DWA 偶发求解空档使用最近有效的弧线逐帧减速，按 1.0 m/s² 降至零，最多 0.80 s，要求同一目标、未超时且有新鲜里程计。每帧仍经 Guard。新转弧不满足检查但上一弧线和实测速度均能安全制动时，Guard 沿上一弧线降速。正常切换至原地转向时先沿经检查的弧线减速。扫掠硬停后，当前请求和实测运动须重新通过检查才恢复。Guard 以单轮计算耗时修正 20 Hz 下发周期。
+- 有效零速、急停、超时及扫掠不安全时立即停车。目标切换重置局部减速状态。巡航限速和障碍制动模型使用原配置。
+- 验证记录位于候选工作区 `logs/rtk-control-continuity/`。独立构建、341 项离线测试和启用适应性 Guard 的 ROS 传输回归通过。最终绕墙场景中连续八帧求解失败，Mux 将 0.701 m/s 逐帧降至零，最大单帧降幅 0.051 m/s。该场景另外触发一次扫掠硬停，随后成功到点。普通 6 m 路线加入 150 ms 合成底盘延迟后成功到点，过程中无行进中途掉零。两个场景峰值均为 0.80 m/s。实车同路线复测待补。
+
 ## 开发、现场复测和回退
 
 首次构建按车端入口说明（`~/workspace/slicer/START_HERE.md`）从任务根导入 `dependencies.repos` 的固定依赖，运行 `bash tools/build_native.sh "$W" -j2`，目录变量 `W=~/workspace/slicer/dev/rtk-navigation-optimization`。构建后在任务源码根下用 `SLICER_NATIVE_WS="$W" ./tools/rtk_desktop_ui.sh` 启动任务安装。现场由同一执行会话结束已有导航控制链，再操作候选。参数位于 [RTK 导航 launch](../../src/ugv_bringup/launch/slicer_field_navigation.launch)、[正式速度档](../../src/ugv_bringup/config/dwa_field.yaml)和[配准速度档](../../src/ugv_bringup/config/dwa_registration.yaml)。观察 `/cmd_vel/nav_raw`、`/cmd_vel/nav`、`/cmd_vel`、`/slicer_nav_arc_guard/hold_reason`、`/geographic/status` 与 `/geographic/navigation_runtime`。

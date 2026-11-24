@@ -357,15 +357,21 @@ def project_safe_twist(pose, v, w, footprint, grid, horizon, threshold=100,
     return v*low, w*low, 'scaled to %.0f%% for predicted footprint' % (100*low)
 
 
+def _braking_horizon(forward, angular, minimum_horizon, brake_linear, command_timeout,
+                     angular_accel, lateral=0.):
+    return max(minimum_horizon, math.hypot(forward, lateral)/brake_linear+command_timeout,
+               abs(angular)/angular_accel+command_timeout)
+
+
 def adaptive_forward_twist(pose, target, previous, measured, footprint, grid,
                            minimum_horizon, brake_linear, command_timeout, dt, limits, *, reserve=0.):
     """Keep a clear forward prefix only while the previous and observed motion can stop."""
-    if target[0] <= 0. or measured is None:
+    if target[0] < 0. or measured is None:
         return None
 
     def braking_clear(forward, angular, lateral=0., extra_time=0.):
-        horizon = max(minimum_horizon, math.hypot(forward, lateral)/brake_linear+command_timeout,
-                      abs(angular)/limits['accel_angular']+command_timeout)
+        horizon = _braking_horizon(forward, angular, minimum_horizon, brake_linear,
+                                   command_timeout, limits['accel_angular'], lateral)
         return swept_clear(pose, forward, angular, footprint, grid,
                            horizon + extra_time, lateral=lateral)
 
@@ -373,27 +379,55 @@ def adaptive_forward_twist(pose, target, previous, measured, footprint, grid,
     if not braking_clear(*previous) or not braking_clear(forward, angular, lateral):
         return None
 
-    # Scale both components together along the same arc. At each lower speed
-    # the distance covered before stopping also decreases, including timeout.
-    low, high = 0., 1.
-    for _ in range(6):
-        fraction = .5 * (low + high)
-        if braking_clear(target[0]*fraction, target[1]*fraction, extra_time=reserve):
-            low = fraction
-        else:
-            high = fraction
-    output = slew_arc(previous, (target[0]*low, target[1]*low), dt,
-                      limits['accel_linear'], limits['accel_angular'])
-    if output[0] > 0. and braking_clear(*output):
-        return output
-    return None
+    if target[0] > 0.:
+        # Scale along the requested arc, then check the actual slew-limited arc.
+        low, high = 0., 1.
+        for _ in range(6):
+            fraction = .5 * (low + high)
+            if braking_clear(target[0]*fraction, target[1]*fraction, extra_time=reserve):
+                low = fraction
+            else:
+                high = fraction
+        output = slew_arc(previous, (target[0]*low, target[1]*low), dt,
+                          limits['accel_linear'], limits['accel_angular'])
+        if output[0] > 0. and braking_clear(*output):
+            return output
+
+    # An unsafe arc change or a request to spin can brake on the previous clear
+    # arc. Keep its curvature and check the outgoing command on the latest grid.
+    speed, turn = previous
+    if speed <= 0.:
+        return None
+    step = min(1., limits['accel_linear']*dt/speed)
+    if turn:
+        step = min(step, limits['accel_angular']*dt/abs(turn))
+    output = (speed*(1.-step), turn*(1.-step))
+    return output if braking_clear(*output) else None
 
 
 def guarded_forward_twist(pose, target, output, previous, measured, footprint,
-                          grid, minimum_horizon, brake_linear, command_timeout, dt, limits):
+                          grid, minimum_horizon, brake_linear, command_timeout, dt, limits,
+                          *, recovering=False):
     """Limit speed early near a grid boundary while keeping the hard braking checks."""
-    horizon = max(minimum_horizon, target[0]/brake_linear+command_timeout,
-                  abs(target[1])/limits['accel_angular']+command_timeout)
+    if target == (0., 0.):
+        return target
+    horizon = _braking_horizon(*target, minimum_horizon, brake_linear,
+                               command_timeout, limits['accel_angular'])
+    if recovering:
+        # A hard stop clears the last output; that alone must not make the
+        # blocked request eligible for a slow restart on the next frame.
+        if measured is None:
+            return None
+        forward, lateral, angular = measured
+        observed_horizon = _braking_horizon(forward, angular, minimum_horizon, brake_linear,
+                                            command_timeout, limits['accel_angular'], lateral)
+        if (swept_clear(pose, forward, angular, footprint, grid, observed_horizon, lateral=lateral)
+                and all(swept_clear(pose, *cmd, footprint, grid, horizon) for cmd in (target, output))):
+            return output
+        return None
+    if target[0] == 0.:
+        return adaptive_forward_twist(pose, target, previous, measured, footprint, grid,
+                                      minimum_horizon, brake_linear, command_timeout, dt, limits)
     if (swept_clear(pose, *target, footprint, grid, horizon + command_timeout)
             and (target == output or swept_clear(pose, *output, footprint, grid, horizon))):
         return output

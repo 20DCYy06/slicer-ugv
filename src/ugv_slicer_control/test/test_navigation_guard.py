@@ -76,6 +76,51 @@ class NavigationGuardTests(unittest.TestCase):
         self.assertGreater(position, 2.5)
         self.assertAlmostEqual(peak, .8)
 
+    def test_blocked_new_arc_brakes_on_the_previous_clear_arc(self):
+        pose = (0., 0., 0.)
+        footprint = [(-.145, -.14), (.20, -.14), (.20, .14), (-.145, .14)]
+        grid = dict(width=120, height=110, resolution=.05, origin=(-1., -2.75, 0.),
+                    data=[0] * 13200)
+        for iy in range(55):
+            grid['data'][iy * 120 + 55] = 100
+        grid['data'][65 * 120 + 48] = 100
+        target, previous = (.8, -.1), (.68, .43)
+        limits = dict(accel_linear=1., accel_angular=1.)
+        output = slew_arc(previous, target, .05, 1., 1.)
+        measured = (previous[0], 0., previous[1])
+        self.assertTrue(swept_clear(pose, *previous, footprint, grid, previous[0] / .2 + .5))
+        self.assertFalse(swept_clear(pose, *target, footprint, grid, target[0] / .2 + .5))
+
+        def guarded(observed):
+            return guarded_forward_twist(pose, target, output, previous, observed, footprint, grid,
+                                         .8, .2, .5, .05, limits)
+
+        reduced = guarded(measured)
+        self.assertIsNotNone(reduced)
+        self.assertAlmostEqual(reduced[0], .63)
+        self.assertAlmostEqual(reduced[1] / reduced[0], previous[1] / previous[0])
+        self.assertIsNone(guarded(None))
+        self.assertIsNone(guarded((.8, 0., -.1)))
+        grid['data'][55 * 120 + 20] = -1
+        self.assertIsNone(guarded(measured))
+
+    def test_forward_to_spin_brakes_before_rotating_in_place(self):
+        pose = (0., 0., 0.)
+        footprint = [(-.15, -.14), (.2, -.14), (.2, .14), (-.15, .14)]
+        grid = dict(width=120, height=120, resolution=.05, origin=(-3., -3., 0.),
+                    data=[0] * 14400)
+        limits = dict(accel_linear=1., accel_angular=1.)
+        previous, target = (.25, .2), (0., -.4)
+        for expected in (.20, .15, .10, .05, 0.):
+            observed = (previous[0], 0., previous[1])
+            output = slew_arc(previous, target, .05, 1., 1.)
+            reduced = guarded_forward_twist(pose, target, output, previous, observed,
+                                           footprint, grid, .8, .2, .5, .05, limits)
+            self.assertIsNotNone(reduced)
+            self.assertAlmostEqual(reduced[0], expected)
+            self.assertAlmostEqual(reduced[1], expected * .8)
+            previous = reduced
+
     def test_observed_side_motion_and_occupied_start_disallow_reduced_command(self):
         pose = (0., 0., 0.)
         footprint = [(-.2, -.11), (.2, -.11), (.2, .11), (-.2, .11)]
