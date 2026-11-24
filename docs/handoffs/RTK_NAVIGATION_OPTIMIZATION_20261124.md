@@ -30,6 +30,20 @@
 - 05:25–05:26 的最新现场会话仍从正式发布 `a7a64c7` 启动。RViz 的两次目标均在 `odom` 坐标系，DWA 的 `max_vel_x` 和 Guard 启动限速均为 0.25 m/s。该会话只启动了起步导航配置，处于正式 `map` 导航前。较早的 04:37 `map` 日志确认正式档为 0.8 m/s。日志位于 `~/workspace/slicer/logs/20261123-rtk-fixed-a7a64c7/ros/`，其中最新导航日志是 `rtk-navigation-odom-zv86ynmz.log`，对应 ROS 会话是 `4e96b1d8-e80a-11f1-a504-3c6d661ed63d`。
 - 当日最新会话没有同步速度与 MCU 遥测录包，无法回算该趟实车速度。已有 11 月 23 日 08:15 正式 `map` 录包中，DWA、Mux 与 MCU 目标的线速峰值均为 0.404 m/s，PWM 峰值 903 ticks，低于会话上限 1429 ticks。这一趟的约 0.4 m/s 在规划器指令中已出现。后一份录包还记录了拐角处 DWA 局部规划失败、长时间偏向转向的情况。同一 08:15 录包编码器反馈峰值 0.425 m/s，LIO 位姿差分峰值 0.227 m/s。需用地面距离区分反馈尺度与滑移，现有证据不足以归因于 PID。后续实车记录应同步保存 `/cmd_vel/nav_raw`、`/cmd_vel/nav`、`/cmd_vel`、底盘诊断、`/wheel/odom` 和 `/lio/odom`，并记录运行档位。
 
+## 独立候选安装
+
+2026-11-24 在 `~/workspace/slicer/dev/rtk-navigation-optimization` 从程序提交 `7f0bfdb102348e42e30f1cd6b8d8a01138fee2f8` 完整构建 Livox SDK 和 Catkin 安装。四项依赖分别检出 `dependencies.repos` 固定版本。该工作区有独立的构建、安装、运行配置和验证日志。原生安装检查通过，包路径均解析到候选 `install`，正式档和配准档分别解析为 0.8 m/s 和 0.35 m/s，两张代价图的膨胀半径均为 0.48 m。用候选安装的回环 ROS 与离屏 Qt 复测了「当前位置」单行、复制、过期清空和 Waypoint。证据见任务工作区 `logs/build-7f0bfdb.log`、`logs/check-7f0bfdb.log` 和 `logs/candidate-7f0bfdb.log`。程序尚待现场试车。
+
+在 Jetson 本地 X11 新终端启动候选，切换前由现场执行会话停稳并退出原控制链。
+
+```bash
+W="$HOME/workspace/slicer/dev/rtk-navigation-optimization"
+cd "$W/src/slicer-ugv"
+SLICER_NATIVE_WS="$W" ./tools/rtk_desktop_ui.sh
+```
+
+正式日常入口 `~/workspace/slicer/run rtk` 由 `current` 选择发布。本次 `./run status` 核对到 `a7a64c7`。测试版在 `RTK导航优化` 分支维护，`main` 继续作为稳定集成主线。
+
 ## 开发、现场复测和回退
 
 首次构建按车端入口说明（`~/workspace/slicer/START_HERE.md`）从任务根导入 `dependencies.repos` 的固定依赖，运行 `bash tools/build_native.sh "$W" -j2`，目录变量 `W=~/workspace/slicer/dev/rtk-navigation-optimization`。构建后在任务源码根下用 `SLICER_NATIVE_WS="$W" ./tools/rtk_desktop_ui.sh` 启动任务安装。现场由同一执行会话结束已有导航控制链，再操作候选。参数位于 [RTK 导航 launch](../../src/ugv_bringup/launch/slicer_field_navigation.launch)、[正式速度档](../../src/ugv_bringup/config/dwa_field.yaml)和[配准速度档](../../src/ugv_bringup/config/dwa_registration.yaml)。观察 `/cmd_vel/nav_raw`、`/cmd_vel/nav`、`/cmd_vel`、`/slicer_nav_arc_guard/hold_reason`、`/geographic/status` 与 `/geographic/navigation_runtime`。
