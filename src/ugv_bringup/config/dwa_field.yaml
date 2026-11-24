@@ -3,9 +3,13 @@ DWAPlannerROS:
   max_vel_x: 0.8
   max_vel_trans: 0.8
   max_vel_theta: 0.7853981633974483
-  # Ramp toward cruise speed within the Guard braking checks.
-  acc_lim_x: 0.5
-  acc_lim_trans: 0.5
+  # Respond faster while retaining the Guard's independent braking envelope.
+  acc_lim_x: 1.0
+  acc_lim_trans: 1.0
+  sim_time: 1.05
+  # Terminal speed budget only. Obstacle braking is set in the Guard.
+  goal_approach_decel: 0.60
+  goal_approach_response: 0.25
   # Favor the planned bypass over cutting back toward the final goal at a wall.
   path_distance_bias: 2.4
   # Finer forward sampling within the existing acceleration window.

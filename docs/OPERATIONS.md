@@ -82,7 +82,7 @@ RViz 绘制上限为 15 FPS，右栏每 250 毫秒检查显示变化。启动前
 
 黑白占据栅格中白色为空闲、黑色为障碍、灰色为未知，实时扫描和膨胀代价仍叠加显示。有已对齐 RTK 坐标系的 ROS 地图文件时，可在启动前设置 `SLICER_RTK_MAP_YAML=/绝对路径/map.yaml`，默认坐标系为 `map`，可通过 `SLICER_RTK_MAP_FRAME` 指定实际坐标系。没有指定文件时优先显示 `/map`，其余情况由 RTK 当前全局代价地图生成黑白栅格。
 
-共享 RTK 导航的准备配置限速 0.35 m/s，配准倒车上限为 0.15 m/s。普通 `odom` 与正式 `map` 导航上限均为 0.8 m/s、45°/s（0.785398 rad/s），前进加速度上限为 0.50 m/s²。局部代价地图为 9×9 m，供 Guard 检查全速制动扫掠范围。两种导航的保护距离均继续按 0.20 m/s² 制动减速度计算。现有 C30D 固件的 PWM 使用整数档，900‰ 上限对应最高可用档 1429/1600 ticks（89.31% 占空比）。重启导航和底盘驱动后使用新参数。DWA 参数在 `src/ugv_bringup/config/dwa_field.yaml`，PWM 档位在 `src/ugv_bringup/config/slicer_driver_body_speed.yaml`。
+共享 RTK 导航的准备配置限速 0.35 m/s，配准倒车上限为 0.15 m/s。普通 `odom` 与正式 `map` 导航上限均为 0.8 m/s、45°/s（0.785398 rad/s），前进加速度上限为 1.00 m/s²。DWA 轨迹预测时长为 1.05 s，末段按剩余距离、0.60 m/s² 的到点减速预算和 0.25 s 的响应预算限制速度。局部代价地图为 9×9 m，供 Guard 检查全速制动扫掠范围。两种导航的保护距离均继续按 0.20 m/s² 制动减速度计算。现有 C30D 固件的 PWM 使用整数档，900‰ 上限对应最高可用档 1429/1600 ticks（89.31% 占空比）。重启导航和底盘驱动后使用新参数。DWA 参数在 `src/ugv_bringup/config/dwa_field.yaml`，PWM 档位在 `src/ugv_bringup/config/slicer_driver_body_speed.yaml`。
 
 - **1. 启动 RTK 与配准** 启动 GNSS 和全局定位，并安排自动配准。配置默认读取 `~/.config/slicer/gnss.yaml`，可用 `SLICER_GNSS_CONFIG` 指定。确认有直行和倒回空间，再启动后续两步。收到新鲜 Fixed，且雷达、底盘、导航与 Mux 就绪并确认车辆停稳后，才执行前进约 2 m、停车拟合、倒回起点。成功后自动切入 `map`，已有有效配准可直接切换。
 - **2. 启动雷达与底盘** 启动 MID360、本地定位和底盘驱动。车端实际就绪后显示 **已完成**。

@@ -86,14 +86,18 @@ class FieldLaunchTests(unittest.TestCase):
             self.assertEqual(planner[key], .8 if field else .4)
         self.assertAlmostEqual(planner['max_vel_theta'], math.pi / 4 if field else .25)
         if field:
+            self.assertEqual((planner['acc_lim_x'], planner['acc_lim_trans'], planner['sim_time']),
+                             (1.0, 1.0, 1.05))
             source = Path(params['/slicer_nav_arc_guard/config_file'].value)
             source_config = yaml.safe_load(source.read_text())
             effective = planner_limits(source_config['navigation'], plugin, planner)
             self.assertEqual(effective['max_forward'], .8)
+            self.assertEqual(effective['accel_linear'], 1.0)
             self.assertAlmostEqual(effective['max_angular'], math.pi / 4)
             timeout = params['/slicer_nav_arc_guard/command_timeout'].value
             speed = effective['max_forward']
             brake = min(effective['brake_linear'], effective['accel_linear'])
+            self.assertEqual(brake, .2)
             travel = speed * (speed / brake + timeout)
             local = '/ugv/move_base/local_costmap/'
             radius = max(math.hypot(*vertex) for vertex in params[local + 'footprint'].value)
@@ -159,7 +163,6 @@ class FieldLaunchTests(unittest.TestCase):
         self.assertEqual(p[prefix + 'GlobalPlanner/smoothing/max_cost'].value, 173)
         self.assertTrue(p[prefix + 'GlobalPlanner/smoothing/observed_prefix'].value)
         self.assertEqual(p[prefix + 'DWAPlannerROS/vx_samples'].value, 9)
-        self.assertEqual(p[prefix + 'DWAPlannerROS/acc_lim_x'].value, .5)
         self.assertEqual(p[prefix + 'DWAPlannerROS/start_heading_rate'].value, .45)
         self.assertEqual(p[prefix + 'DWAPlannerROS/start_heading_lookahead'].value, .20)
         self.assertEqual(p[prefix + 'DWAPlannerROS/start_heading_kp'].value, 1.6)
@@ -174,8 +177,12 @@ class FieldLaunchTests(unittest.TestCase):
 
     def test_preparation_uses_separate_speed_profile_without_adaptive_guard(self):
         p = load('slicer_field_navigation.launch', ['geographic:=false', 'preparation:=true']).params
+        prefix = '/ugv/move_base/DWAPlannerROS/'
         for key in ('max_vel_x', 'max_vel_trans'):
-            self.assertEqual(p['/ugv/move_base/DWAPlannerROS/' + key].value, .35)
+            self.assertEqual(p[prefix + key].value, .35)
+        for key in ('acc_lim_x', 'acc_lim_trans'):
+            self.assertEqual(p[prefix + key].value, .30)
+        self.assertEqual(p[prefix + 'sim_time'].value, 1.7)
         self.assertFalse(p['/slicer_nav_arc_guard/adaptive_forward_speed'].value)
         self.assertTrue(p['/slicer_nav_arc_guard/registration_reverse'].value)
         self.assertEqual(p['/ugv/move_base/base_local_planner'].value,

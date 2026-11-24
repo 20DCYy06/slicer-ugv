@@ -85,6 +85,13 @@ RTK DWA 的 Guard 使用实际局部代价图和车体足迹。配置模板中�
 - 普通 `odom` 和正式 `map` 的前进 Guard 在原制动检查外增加一个指令超时窗口的提前减速余量，现场配置为 0.50 s。前一帧和 LIO 实测运动通过原制动包络时才允许投影为低速。原停车判据、车辆足迹和膨胀距继续生效。配准的独立运动和限速沿用原档位。
 - 回归使用固定观测边界和 0.20 s 底盘反馈延迟。旧策略在约 1.10 m 处首次置零，新策略完成同一 120 帧区间且维持原扫掠保护，并在开阔起步段触及 0.8 m/s。此距离仅为合成场景数据。独立安装、339 项离线检查和 12 项 Guard ROS 传输检查通过。隔离 ROS 的普通和绕墙 6 m 目标均到点并达到 0.800 m/s，绕墙测试未触发 Guard 硬停。证据见任务工作区 `logs/rtk-speed-continuity/`。真实连续速度由后续同路线复测确认。
 
+## 11 月 24 日缩短巡航起步和到点减速
+
+- 现场使用 0.50 m/s² 和 1.70 s 的 DWA 预测时长，见任务工作区 `logs/ros/log/rtk-navigation-odom-xt9q839j.log`。同一隔离 6 m 直线场景中，旧 DWA 原始速度已经出现长加减速。只加大加速度会缩短起步，旧预测时长下末段仍需要约 3.8 s。
+- 普通 `odom` 和正式 `map` 调为 1.00 m/s²、1.05 s，速度上限 0.80 m/s。Guard 从生成配置读取同一加速度，继续按 0.20 m/s² 做障碍制动扫掠。缩短预测后，150 ms 合成底盘延迟可让原生 DWA 冲过终点。正常导航包装器现在按终点剩余距离计算纵向速度上限，使用 0.60 m/s² 和 0.25 s 的停车预算，等比例调整线速度与角速度，以保持轨迹曲率和到点容差。
+- 隔离 6 m 开阔直线用 Mux 速度指令对比。0.05 → 0.78 m/s 用时从 2.59 s 降到 1.32 s，末段最后一次达到 0.78 m/s 到最后一次达到 0.05 m/s 用时从 3.29 s 降到 1.52 s，达到 0.78 m/s 的占比从 40% 升到 64%，总耗时从 10.90 s 降到 9.20 s。最终版用 150 ms 响应延迟、0.8 m/s² 模拟底盘响应时仍到点，距目标约 0.047 m。同一绕墙任务从 17.10 s 降到 15.40 s，模拟足迹与墙最近约 0.278 m。以相同延迟在终点前方 0.55 m 设墙，最终仍到点，模拟足迹最小净空约 0.394 m。
+- 独立安装、339 项离线回归、三项导航 launch 和 C++ 起步对向检查通过。证据见任务工作区 `logs/rtk-speed-response/`。这轮只执行静态、构建和隔离模拟，实际机械加减速及窄道速度待同路线实车复测。
+
 ## 开发、现场复测和回退
 
 首次构建按车端入口说明（`~/workspace/slicer/START_HERE.md`）从任务根导入 `dependencies.repos` 的固定依赖，运行 `bash tools/build_native.sh "$W" -j2`，目录变量 `W=~/workspace/slicer/dev/rtk-navigation-optimization`。构建后在任务源码根下用 `SLICER_NATIVE_WS="$W" ./tools/rtk_desktop_ui.sh` 启动任务安装。现场由同一执行会话结束已有导航控制链，再操作候选。参数位于 [RTK 导航 launch](../../src/ugv_bringup/launch/slicer_field_navigation.launch)、[正式速度档](../../src/ugv_bringup/config/dwa_field.yaml)和[配准速度档](../../src/ugv_bringup/config/dwa_registration.yaml)。观察 `/cmd_vel/nav_raw`、`/cmd_vel/nav`、`/cmd_vel`、`/slicer_nav_arc_guard/hold_reason`、`/geographic/status` 与 `/geographic/navigation_runtime`。

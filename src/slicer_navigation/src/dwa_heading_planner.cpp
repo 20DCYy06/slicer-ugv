@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <cmath>
+#include <limits>
 #include <memory>
 #include <mutex>
 #include <stdexcept>
@@ -38,6 +39,11 @@ class HeadingDWAPlanner : public nav_core::BaseLocalPlanner {
       if (!std::isfinite(value) || value <= 0.)
         throw std::invalid_argument("start heading parameters must be positive and finite");
     heading_.reset(new StartHeading(rate, tolerance, settle, timeout, kp, kd));
+    nh.param("goal_approach_decel", approach_decel_, .60);
+    nh.param("goal_approach_response", approach_response_, .25);
+    if (!std::isfinite(approach_decel_) || approach_decel_ <= 0. ||
+        !std::isfinite(approach_response_) || approach_response_ < 0.)
+      throw std::invalid_argument("invalid goal approach deceleration or response time");
     std::string odom_topic;
     nh.param<std::string>("odom_topic", odom_topic, "odom");
     ros::NodeHandle node;
@@ -63,26 +69,18 @@ class HeadingDWAPlanner : public nav_core::BaseLocalPlanner {
   }
 
   bool computeVelocityCommands(geometry_msgs::Twist& command) override {
-    if (aligned_) return delegate_.computeVelocityCommands(command);
+    if (aligned_) return cruise(command);
     command = geometry_msgs::Twist();
     geometry_msgs::PoseStamped robot;
     if (!has_goal_ || !costmap_->getRobotPose(robot)) return false;
 
     const auto now = ros::WallTime::now().toSec();
     if (!aimed_) {
-      auto target = goal_;
-      target.header.stamp = ros::Time(0);
-      try {
-        target = tf_->transform(target, robot.header.frame_id, ros::Duration(.02));
-      } catch (const tf2::TransformException& error) {
-        ROS_WARN_THROTTLE(2., "RTK start heading needs goal TF: %s", error.what());
-        return false;
-      }
-      const double dx = target.pose.position.x - robot.pose.position.x;
-      const double dy = target.pose.position.y - robot.pose.position.y;
-      if (std::hypot(dx, dy) <= min_distance_) {
+      const double distance = distanceToGoal(robot);
+      if (!std::isfinite(distance)) return false;
+      if (distance <= min_distance_) {
         aligned_ = true;
-        return delegate_.computeVelocityCommands(command);
+        return cruise(command);
       }
       std::vector<geometry_msgs::PoseStamped> local_path;
       if (!base_local_planner::transformGlobalPlan(*tf_, start_path_, robot,
@@ -137,6 +135,40 @@ class HeadingDWAPlanner : public nav_core::BaseLocalPlanner {
   }
 
  private:
+  double distanceToGoal(const geometry_msgs::PoseStamped& robot) const {
+    auto target = goal_;
+    if (target.header.frame_id != robot.header.frame_id) {
+      target.header.stamp = ros::Time(0);
+      try {
+        target = tf_->transform(target, robot.header.frame_id, ros::Duration(.02));
+      } catch (const tf2::TransformException& error) {
+        ROS_WARN_THROTTLE(2., "RTK navigation needs goal TF: %s", error.what());
+        return std::numeric_limits<double>::quiet_NaN();
+      }
+    }
+    return std::hypot(target.pose.position.x - robot.pose.position.x,
+                      target.pose.position.y - robot.pose.position.y);
+  }
+
+  bool cruise(geometry_msgs::Twist& command) {
+    if (!delegate_.computeVelocityCommands(command)) return false;
+    if (command.linear.x <= 0.) return true;
+    geometry_msgs::PoseStamped robot;
+    if (!costmap_->getRobotPose(robot)) return false;
+    const double distance = distanceToGoal(robot);
+    if (!std::isfinite(distance)) return false;
+
+    // Solve distance = speed * response + speed² / (2 * deceleration).
+    // Reduce both components to keep the collision-checked arc's curvature.
+    const double margin = approach_decel_ * approach_response_;
+    const double cap = std::sqrt(margin * margin + 2. * approach_decel_ * distance) - margin;
+    if (command.linear.x > cap) {
+      command.angular.z *= cap / command.linear.x;
+      command.linear.x = cap;
+    }
+    return true;
+  }
+
   bool differentGoal(const geometry_msgs::PoseStamped& target) const {
     return target.header.frame_id != goal_.header.frame_id ||
         std::hypot(target.pose.position.x - goal_.pose.position.x,
@@ -165,6 +197,7 @@ class HeadingDWAPlanner : public nav_core::BaseLocalPlanner {
   std::atomic<unsigned> goal_epoch_{0};
   unsigned plan_epoch_ = 0;
   double min_distance_ = .2, lookahead_ = .2, bearing_ = 0.;
+  double approach_decel_ = .60, approach_response_ = .25;
   bool has_goal_ = false, aimed_ = false, aligned_ = false;
 };
 
