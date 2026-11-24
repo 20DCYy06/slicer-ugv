@@ -88,9 +88,9 @@
           obstacle_range: 4.5
           raytrace_range: 4.5
       inflation_layer:
-        inflation_radius: 0.48
+        inflation_radius: 0.25
     local_costmap:
       inflation_layer:
-        inflation_radius: 0.48
+        inflation_radius: 0.25
   </rosparam>
 </launch>

@@ -149,7 +149,7 @@ class FieldLaunchTests(unittest.TestCase):
         self.assertEqual(p[prefix + 'DWAPlannerROS/vx_samples'].value, 7)
         for scope in ('global_costmap', 'local_costmap'):
             costmap = prefix + scope + '/'
-            self.assertEqual(p[costmap + 'inflation_layer/inflation_radius'].value, .48)
+            self.assertEqual(p[costmap + 'inflation_layer/inflation_radius'].value, .25)
             self.assertEqual(p[costmap + 'obstacle_layer/scan/obstacle_range'].value, 4.5)
             self.assertEqual(p[costmap + 'obstacle_layer/scan/raytrace_range'].value, 4.5)
 
