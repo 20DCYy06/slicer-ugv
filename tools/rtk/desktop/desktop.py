@@ -112,11 +112,21 @@ class Readouts(QtWidgets.QWidget):
         self.copy_antenna.triggered.connect(
             lambda: QtWidgets.QApplication.clipboard().setText(self.antenna.value.partition('：')[2]))
         self.antenna.addAction(self.copy_antenna)
+        self.waypoint = ReadoutLine()
+        self.waypoint.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
+        self.waypoint.setContextMenuPolicy(QtCore.Qt.ActionsContextMenu)
+        self.waypoint_coords = ''
+        self.copy_waypoint = QtWidgets.QAction('复制 Waypoint 经纬度', self.waypoint)
+        self.copy_waypoint.setEnabled(False)
+        self.copy_waypoint.triggered.connect(
+            lambda: QtWidgets.QApplication.clipboard().setText(self.waypoint_coords))
+        self.waypoint.addAction(self.copy_waypoint)
         self.registration = ReadoutLine()
         self.task_phase = ReadoutLine()
         self.task_metrics = ReadoutLine(muted=True)
         self.task_metrics.hide()
-        for item in (self.destination, self.own, self.antenna, self.registration, self.task_phase, self.task_metrics):
+        for item in (self.destination, self.own, self.antenna, self.waypoint,
+                     self.registration, self.task_phase, self.task_metrics):
             rows.addWidget(item)
         self.system = {}
         for name, title in (('lidar', 'MID360 扫描'), ('lio', 'LIO'), ('driver', '底盘驱动'), ('mux', 'Mux')):
@@ -136,7 +146,7 @@ class Readouts(QtWidgets.QWidget):
         available = self.height() - (self.workflow.sizeHint().height() if self.workflow else 0)
         size = min(22, max(8, min(self.width() // 20, available // 23)))
         family = 'Noto Sans CJK SC'
-        coordinates_example = '正在前往：-90.0000000, -180.0000000'
+        coordinates_example = 'Waypoint（估算）：-90.0000000, -180.0000000'
         coordinate_size = size
         # Reserve space for the two layouts and the optional vertical scrollbar.
         while coordinate_size > 6:
@@ -152,7 +162,7 @@ class Readouts(QtWidgets.QWidget):
                 break
             rtk_size -= 1
         for readout in self.findChildren(ReadoutLine):
-            if readout in (self.destination, self.own, self.antenna):
+            if readout in (self.destination, self.own, self.antenna, self.waypoint):
                 point_size = coordinate_size
             else:
                 point_size = rtk_size if readout is self.rtk else size
@@ -190,6 +200,9 @@ class Readouts(QtWidgets.QWidget):
             self.own.set_value(view['own'])
         self.antenna.set_value(view['antenna'])
         self.copy_antenna.setEnabled(not view['antenna'].endswith('—'))
+        self.waypoint.set_value(view.get('waypoint', ''))
+        self.waypoint_coords = view.get('waypoint_coords', '')
+        self.copy_waypoint.setEnabled(bool(self.waypoint_coords))
         self.feedback.set_value(view['feedback'])
         if self.workflow is not None:
             self.workflow.refresh(now)
@@ -225,7 +238,7 @@ class DesktopRviz(rviz.VisualizationFrame):
         self.closing.emit()
 
 
-def make_rviz(config_path, app):
+def make_rviz(config_path, app, observer=None):
     window = DesktopRviz()
     window.setSplashPath('')
     window.initialize()
@@ -269,6 +282,9 @@ def make_rviz(config_path, app):
         buttons.append((tool, action))
         if index == 0:
             action.setChecked(True)
+    if observer is not None:
+        toolbar.addAction('记录参考点', observer.capture_waypoint_reference)
+        toolbar.addAction('清除参考点', observer.clear_waypoint_references)
     toolbar.addSeparator()
     toolbar.addAction('关闭', app.quit)
     refresh_tools = QtCore.QTimer(toolbar)
@@ -334,7 +350,7 @@ def run_desktop():
     workflow = Workflow(board)
     executor = ThreadPoolExecutor(max_workers=2)
     dashboard = Readouts(workflow, observer.cancel_pending_goal, lambda: executor.submit(process_snapshot))
-    frame, manager = make_rviz(Path(__file__).with_name('rtk_desktop.rviz'), app)
+    frame, manager = make_rviz(Path(__file__).with_name('rtk_desktop.rviz'), app, observer)
     frame.closing.connect(app.quit)
     frame.attach_readouts(dashboard)
     dashboard.workflow.calibration_active.connect(observer.set_calibration_active)

@@ -140,6 +140,24 @@ class FieldLaunchTests(unittest.TestCase):
         self.assertEqual(p[prefix + 'local_costmap/global_frame'].value, 'odom')
         self.assertTrue(p[prefix + 'local_costmap/rolling_window'].value)
         self.assertTrue(p[prefix + 'local_costmap/track_unknown_space'].value)
+        self.assertEqual(p[prefix + 'base_global_planner'].value, 'slicer_navigation/BSplineGlobalPlanner')
+        self.assertTrue(p['/slicer_nav_arc_guard/adaptive_forward_speed'].value)
+        self.assertEqual(p[prefix + 'GlobalPlanner/lethal_cost'].value, 175)
+        self.assertFalse(p[prefix + 'GlobalPlanner/use_grid_path'].value)
+        self.assertEqual(p[prefix + 'GlobalPlanner/smoothing/max_cost'].value, 173)
+        self.assertTrue(p[prefix + 'GlobalPlanner/smoothing/observed_prefix'].value)
+        self.assertEqual(p[prefix + 'DWAPlannerROS/vx_samples'].value, 7)
+        for scope in ('global_costmap', 'local_costmap'):
+            costmap = prefix + scope + '/'
+            self.assertEqual(p[costmap + 'inflation_layer/inflation_radius'].value, .48)
+            self.assertEqual(p[costmap + 'obstacle_layer/scan/obstacle_range'].value, 4.5)
+            self.assertEqual(p[costmap + 'obstacle_layer/scan/raytrace_range'].value, 4.5)
+
+    def test_preparation_uses_separate_speed_profile_without_adaptive_guard(self):
+        p = load('slicer_field_navigation.launch', ['geographic:=false', 'preparation:=true']).params
+        for key in ('max_vel_x', 'max_vel_trans'):
+            self.assertEqual(p['/ugv/move_base/DWAPlannerROS/' + key].value, .35)
+        self.assertFalse(p['/slicer_nav_arc_guard/adaptive_forward_speed'].value)
 
     def test_bootstrap_odom_profile_remains_explicit(self):
         config = load('slicer_field_navigation.launch', ['geographic:=false'])

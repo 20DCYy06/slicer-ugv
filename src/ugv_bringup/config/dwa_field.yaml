@@ -5,3 +5,7 @@ DWAPlannerROS:
   max_vel_theta: 0.7853981633974483
   acc_lim_x: 0.4
   acc_lim_trans: 0.4
+  # Favor the planned bypass over cutting back toward the final goal at a wall.
+  path_distance_bias: 2.4
+  # Sample intermediate forward speeds in the same acceleration-limited window.
+  vx_samples: 7

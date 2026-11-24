@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """Deterministic geometry only: no ROS master, transport, devices or accuracy claim."""
+from collections import deque
 import importlib
 import json
 import math
 from pathlib import Path
 import sys
 import unittest
+from unittest.mock import patch
 
 
 PACKAGE = Path(__file__).resolve().parents[1]
@@ -239,6 +241,35 @@ class GeographicCoreTest(unittest.TestCase):
         anchor['enu'][0] += .5
         fitted, progress = core.fit_trajectory_alignment(samples, [0., 0.])
         self.assertIsNone(fitted, progress)
+
+    def test_incremental_registration_matches_full_fit_after_gaps_eviction_and_reset(self):
+        evidence = core.TrajectoryEvidence()
+        latest = deque(maxlen=22)
+        samples = [pair(i*.20, i*.25, 0., i*.25, 0.) for i in range(12)]
+        samples[9]['enu'][1] = .45
+        anchor = pair(10., 2.76, 0., 2.76, 0.)
+        anchor['resumed'] = True
+        samples.append(anchor)
+        samples.extend(pair(10.+i*.20, 2.76+i*.25, 0., 2.76+i*.25, 0.) for i in range(1, 5))
+        samples.extend(pair(20.+i*.20, i*.25, 0., i*.25, 0.) for i in range(10))
+        for sample in samples:
+            latest.append(sample)
+            with self.subTest(stamp=sample['stamp']):
+                self.assertEqual(core.fit_trajectory_alignment(latest, [0., 0.], evidence=evidence),
+                                 core.fit_trajectory_alignment(latest, [0., 0.]))
+        latest.clear()
+        self.assertEqual(core.fit_trajectory_alignment(latest, [0., 0.], evidence=evidence),
+                         core.fit_trajectory_alignment([], [0., 0.]))
+
+    def test_incremental_registration_processes_only_new_pairs_between_fits(self):
+        evidence = core.TrajectoryEvidence()
+        latest = deque(pair(i*.02, .04*math.sin(i), 0., 0., 0.) for i in range(150))
+        with patch.object(core, '_alignment_pair', wraps=core._alignment_pair) as normalize:
+            core.fit_trajectory_alignment(latest, [0., 0.], evidence=evidence)
+            self.assertEqual(normalize.call_count, 150)
+            latest.append(pair(3.01, .03, 0., 0., 0.))
+            core.fit_trajectory_alignment(latest, [0., 0.], evidence=evidence)
+            self.assertEqual(normalize.call_count, 151)
 
     def test_enu_conversion_preserves_identical_origin_and_height_difference(self):
         self.assertXY(core.enu_between([10., 20., 30.], ORIGIN, ORIGIN), [10., 20., 30.])

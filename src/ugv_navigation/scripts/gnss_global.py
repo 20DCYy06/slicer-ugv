@@ -28,7 +28,7 @@ import yaml
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from cup_gnss.enu import to_enu
-from geographic_core import (base_from_antenna, fit_alignment, fit_trajectory_alignment,
+from geographic_core import (TrajectoryEvidence, base_from_antenna, fit_alignment, fit_trajectory_alignment,
                              interpolate_odom, transform_xy, wrap)
 from geographic_goal_core import quiet_odom_tail
 from geographic_state import antenna_xy, finite, horizontal_covariance, odom_reset, qualified_fix
@@ -73,6 +73,7 @@ class GeographicLocalization:
         self.generation, self.alignment = 0, None
         self.registration_mode, self.registration_started, self.registered_stamp = None, None, None
         self.trajectory, self.resume_anchor = None, False
+        self.trajectory_evidence = TrajectoryEvidence()
         self.paired_rtk_reason = 'waiting_for_qualified_rtk_odom_pair'
         fit_trajectory_alignment([], self.lever, **self.options.get('automatic_registration', {}))
         self.odoms, self.globals = deque(maxlen=600), deque(maxlen=600)
@@ -254,6 +255,7 @@ class GeographicLocalization:
         self.collecting = False
         self.registration_mode = self.registration_started = None
         self.trajectory, self.resume_anchor = None, False
+        self.trajectory_evidence = TrajectoryEvidence()
         self.pairs.clear()
 
     def stop_collection(self, mode, keep=False):
@@ -315,7 +317,8 @@ class GeographicLocalization:
         stamp = self.pairs[-1]['stamp'] if self.pairs else None
         if self.trajectory is None or self.trajectory[0] != stamp:
             alignment, progress = fit_trajectory_alignment(
-                self.pairs, self.lever, **self.options.get('automatic_registration', {}))
+                self.pairs, self.lever, evidence=self.trajectory_evidence,
+                **self.options.get('automatic_registration', {}))
             self.trajectory = stamp, alignment, progress
         return self.trajectory[1:]
 

@@ -297,20 +297,37 @@ def footprint_clear(pose, footprint, grid, threshold=100, unknown=True):
     return True
 
 
-def swept_clear(pose, v, w, footprint, grid, horizon, threshold=100, unknown=True):
+def body_twist_between(start, end, dt):
+    """Estimate a constant body-frame planar twist between consecutive LIO poses."""
+    angle = end[2] - start[2]
+    angle = math.atan2(math.sin(angle), math.cos(angle))
+    half = .5 * angle
+    mid_yaw = start[2] + half
+    dx, dy = end[0] - start[0], end[1] - start[1]
+    c, s = math.cos(mid_yaw), math.sin(mid_yaw)
+    duration = dt * (math.sin(half) / half if abs(half) > 1e-9 else 1.)
+    return (c*dx + s*dy) / duration, (c*dy - s*dx) / duration, angle / dt
+
+
+def swept_clear(pose, v, w, footprint, grid, horizon, threshold=100, unknown=True,
+                lateral=0.):
     extent = max(math.hypot(*p) for p in footprint)
     # 同时限制平移和足迹旋转边缘的离散间隔，避免跨过单格障碍物。
-    speed = abs(v) + abs(w) * extent
+    speed = math.hypot(v, lateral) + abs(w) * extent
     dt = min(0.1, grid['resolution'] / (2 * speed)) if speed else 0.1
     steps = max(1, math.ceil(horizon / dt))
     x, y, yaw = pose
     for step in range(steps + 1):
         t = horizon * step / steps
         if abs(w) < 1e-9:
-            p = (x + v * t * math.cos(yaw), y + v * t * math.sin(yaw), yaw)
+            c, s = math.cos(yaw), math.sin(yaw)
+            p = (x + t * (v*c - lateral*s), y + t * (v*s + lateral*c), yaw)
         else:
-            p = (x + v / w * (math.sin(yaw + w * t) - math.sin(yaw)),
-                 y - v / w * (math.cos(yaw + w * t) - math.cos(yaw)), yaw + w * t)
+            end_yaw = yaw + w*t
+            dsin = math.sin(end_yaw) - math.sin(yaw)
+            dcos = math.cos(end_yaw) - math.cos(yaw)
+            p = (x + (v*dsin + lateral*dcos) / w,
+                 y + (lateral*dsin - v*dcos) / w, end_yaw)
         if not footprint_clear(p, footprint, grid, threshold, unknown):
             return False
     return True
@@ -338,3 +355,34 @@ def project_safe_twist(pose, v, w, footprint, grid, horizon, threshold=100,
     if low <= 0.0:
         return 0.0, 0.0, 'no safe motion in predicted footprint'
     return v*low, w*low, 'scaled to %.0f%% for predicted footprint' % (100*low)
+
+
+def adaptive_forward_twist(pose, target, previous, measured, footprint, grid,
+                           minimum_horizon, brake_linear, command_timeout, dt, limits):
+    """Keep a clear forward prefix only while the previous and observed motion can stop."""
+    if target[0] <= 0. or measured is None:
+        return None
+
+    def braking_clear(forward, angular, lateral=0.):
+        horizon = max(minimum_horizon, math.hypot(forward, lateral)/brake_linear+command_timeout,
+                      abs(angular)/limits['accel_angular']+command_timeout)
+        return swept_clear(pose, forward, angular, footprint, grid, horizon, lateral=lateral)
+
+    forward, lateral, angular = measured
+    if not braking_clear(*previous) or not braking_clear(forward, angular, lateral):
+        return None
+
+    # Scale both components together along the same arc. At each lower speed
+    # the distance covered before stopping also decreases, including timeout.
+    low, high = 0., 1.
+    for _ in range(6):
+        fraction = .5 * (low + high)
+        if braking_clear(target[0]*fraction, target[1]*fraction):
+            low = fraction
+        else:
+            high = fraction
+    output = slew_arc(previous, (target[0]*low, target[1]*low), dt,
+                      limits['accel_linear'], limits['accel_angular'])
+    if output[0] > 0. and braking_clear(*output):
+        return output
+    return None

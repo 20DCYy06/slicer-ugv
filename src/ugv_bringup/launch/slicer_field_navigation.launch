@@ -16,6 +16,7 @@
   <include unless="$(arg mapping)" file="$(find ugv_bringup)/launch/slicer_odom.launch">
     <arg name="local_planner" value="dwa"/>
     <arg name="connect_control" value="true"/>
+    <arg name="adaptive_forward_speed" value="$(arg geographic)"/>
     <arg name="source_config" value="$(find ugv_bringup)/config/online_runtime/config/slicer_config.yaml"/>
     <arg name="control_config" value="$(find ugv_bringup)/config/slicer_driver_body_speed.yaml"/>
     <arg name="global_costmap_config"
@@ -59,11 +60,37 @@
   <!-- The Guard reads final planner limits at startup; restart navigation after edits. -->
   <rosparam if="$(eval arg('cruise_config') != '')" command="load"
             ns="ugv/move_base" file="$(arg cruise_config)"/>
-  <rosparam if="$(eval arg('preparation') and not arg('mapping') and not arg('geographic'))" ns="ugv/move_base">
+  <rosparam unless="$(arg mapping)" ns="ugv/move_base">
+    base_global_planner: slicer_navigation/BSplineGlobalPlanner
     GlobalPlanner:
-      allow_unknown: false
+      # Same provisional routing policy as NoRTK. The Guard still rejects
+      # unobserved local footprint sweeps, and preparation validates its route.
+      allow_unknown: true
+      # Continuous traceback starts turns earlier than grid-cell corners.
+      use_grid_path: false
+      old_navfn_behavior: true
+      # A .23 m centre-to-obstacle planning contour with the .14 m
+      # inscribed radius and 4.5/m inflation decay. Unknown stays provisional.
+      lethal_cost: 175
+      cost_factor: 0.65
+      smoothing:
+        max_cost: 173
+        observed_prefix: true
+      continuity:
+        extra_cost: 0.35
+        join_distance: 0.30
     global_costmap:
       track_unknown_space: true
       always_send_full_costmap: true
+      obstacle_layer:
+        scan:
+          # Replan as soon as the local layer sees a new obstacle.
+          obstacle_range: 4.5
+          raytrace_range: 4.5
+      inflation_layer:
+        inflation_radius: 0.48
+    local_costmap:
+      inflation_layer:
+        inflation_radius: 0.48
   </rosparam>
 </launch>

@@ -6,7 +6,8 @@ import sys
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
-from navigation_core import saturate_twist, slew_arc, planner_limits, swept_clear
+from navigation_core import (adaptive_forward_twist, body_twist_between, planner_limits,
+                             saturate_twist, slew_arc, swept_clear)
 
 
 class NavigationGuardTests(unittest.TestCase):
@@ -15,6 +16,60 @@ class NavigationGuardTests(unittest.TestCase):
     DWA = dict(max_vel_x=.125, min_vel_x=0., max_vel_trans=.125,
                max_vel_theta=.25, acc_lim_x=.2, acc_lim_trans=.2,
                acc_lim_theta=1.)
+
+    def test_forward_speed_uses_checked_prefix_and_keeps_arc_curvature(self):
+        pose = (0., 0., 0.)
+        footprint = [(-.2, -.11), (.2, -.11), (.2, .11), (-.2, .11)]
+        grid = dict(width=80, height=80, resolution=.05,
+                    origin=(-2., -2., 0.), data=[0] * 6400)
+        limits = dict(accel_linear=.5, accel_angular=1.)
+        for wall_cost in (100, -1):
+            for iy in range(grid['height']):
+                grid['data'][iy * grid['width'] + 52] = wall_cost
+            target = (.8, .3)
+            self.assertFalse(swept_clear(pose, *target, footprint, grid, 2.1))
+            output = adaptive_forward_twist(pose, target, (0., 0.), (.1, 0., .0375),
+                                            footprint, grid, .8, .5, .5, .1, limits)
+            self.assertGreater(output[0], 0.)
+            self.assertLess(output[0], target[0])
+            self.assertTrue(swept_clear(pose, *output, footprint, grid, 2.1))
+            steady = adaptive_forward_twist(pose, target, (.30, .1125), (.1, 0., .0375),
+                                            footprint, grid, .8, .5, .5, .1, limits)
+            self.assertAlmostEqual(steady[1] / steady[0], target[1] / target[0])
+            self.assertFalse(swept_clear(pose, *steady, footprint, grid, 2.1))
+            self.assertTrue(swept_clear(pose, *steady, footprint, grid, max(.8, steady[0]/.5+.5)))
+            self.assertIsNone(adaptive_forward_twist(
+                pose, target, (0., 0.), (.8, 0., 0.), footprint, grid, .8, .5, .5, .1, limits))
+            self.assertIsNone(adaptive_forward_twist(
+                pose, target, (.8, 0.), (0., 0., 0.), footprint, grid, .8, .5, .5, .1, limits))
+            self.assertIsNone(adaptive_forward_twist(
+                pose, target, (0., 0.), None, footprint, grid, .8, .5, .5, .1, limits))
+
+    def test_observed_side_motion_and_occupied_start_disallow_reduced_command(self):
+        pose = (0., 0., 0.)
+        footprint = [(-.2, -.11), (.2, -.11), (.2, .11), (-.2, .11)]
+        grid = dict(width=80, height=80, resolution=.05,
+                    origin=(-2., -2., 0.), data=[0] * 6400)
+        limits = dict(accel_linear=.5, accel_angular=1.)
+        for ix in range(grid['width']):
+            grid['data'][46 * grid['width'] + ix] = 100
+        self.assertFalse(swept_clear(pose, .1, 0., footprint, grid, 2.1, lateral=.3))
+        self.assertIsNone(adaptive_forward_twist(
+            pose, (.8, 0.), (0., 0.), (.1, .3, 0.), footprint, grid, .8, .5, .5, .1, limits))
+        grid['data'][40 * grid['width'] + 40] = -1
+        self.assertIsNone(adaptive_forward_twist(
+            pose, (.8, 0.), (0., 0.), (0., 0., 0.), footprint, grid, .8, .5, .5, .1, limits))
+
+    def test_observed_twist_uses_body_axes_and_wraps_yaw(self):
+        vx, vy, angular = body_twist_between((0., 0., 0.), (.04, -.02, 0.), .1)
+        self.assertAlmostEqual(vx, .4)
+        self.assertAlmostEqual(vy, -.2)
+        self.assertEqual(angular, 0.)
+        vx, vy, angular = body_twist_between((0., 0., math.pi-.01),
+                                             (-.05, 0., -math.pi+.01), .1)
+        self.assertAlmostEqual(vx, .5000083334)
+        self.assertAlmostEqual(vy, 0.)
+        self.assertAlmostEqual(angular, .2)
 
     def test_dwa_uses_its_caps_and_forbids_reverse_without_teb_parameters(self):
         limits = planner_limits(self.SOURCE, 'dwa_local_planner/DWAPlannerROS', self.DWA)

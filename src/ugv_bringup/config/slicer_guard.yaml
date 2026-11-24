@@ -12,6 +12,8 @@ turning_linear_window: 0.03
 angular_intent_threshold: 0.01
 turn_compensation_enabled: false
 allow_patrol_spin: false
+# Opt-in in the RTK field map launch. Legacy and direct Guard launches keep stop-only behavior.
+adaptive_forward_speed: false
 
 # Independent upstream localization freshness; EKF/TF may continue on wheel input.
 lio_topic: /lio/odom

@@ -16,5 +16,6 @@
   <exec_depend>gmapping</exec_depend>
   <exec_depend>realsense2_camera</exec_depend>
   <exec_depend>slicer_bringup</exec_depend>
+  <exec_depend>slicer_navigation</exec_depend>
   <exec_depend>slicer_wasd_control</exec_depend>
 </package>

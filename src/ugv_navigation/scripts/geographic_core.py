@@ -202,25 +202,10 @@ def _baseline(samples):
                max(_antenna_distance(first, item) for item in samples))
 
 
-def fit_trajectory_alignment(pairs, antenna_xy, min_baseline_m=1.2, spacing_m=.20,
-                             min_samples=6, max_gap_s=1.5, max_residual_m=.15,
-                             max_heading_std_rad=.11, max_heading_delta_rad=.10,
-                             resume_odom_m=.10, resume_enu_m=.20):
-    """Fit the latest continuous trajectory using spatially distinct pairs.
-
-    Report observed path length, an effective baseline and heading consistency
-    separately. An explicit resume can bridge a time gap only at a coincident
-    odom and GNSS anchor. A gap during collection starts a new trajectory.
-    """
-    config = (min_baseline_m, spacing_m, max_gap_s, max_residual_m, max_heading_std_rad,
-              max_heading_delta_rad, resume_odom_m, resume_enu_m)
-    if any(_number(value, 'automatic alignment threshold') <= 0. for value in config):
-        raise ValueError('automatic alignment thresholds must be positive')
-    if type(min_samples) is not int or min_samples < 5:
-        raise ValueError('automatic alignment needs at least five distinct positions')
-
-    selected, previous = [], None
-    path_length, discontinuity = 0., False
+def _trajectory_samples(pairs, thresholds, prior=None):
+    spacing_m, max_gap_s, resume_odom_m, resume_enu_m = thresholds
+    selected, previous, path_length, discontinuity = ([], None, 0., False) if prior is None else prior
+    selected = selected.copy()
     for item in pairs:
         stamp, record, enu = _alignment_pair(item)
         point = dict(stamp=stamp, odom=record, enu=enu)
@@ -242,7 +227,57 @@ def fit_trajectory_alignment(pairs, antenna_xy, min_baseline_m=1.2, spacing_m=.2
         # Returning to an already sampled area contributes no extra fit weight.
         if all(_base_distance(point, candidate) >= spacing_m-1e-9 for candidate in selected):
             selected.append(point)
+    return selected, previous, path_length, discontinuity
 
+
+class TrajectoryEvidence:
+    """Reuse selection from a single append-only pair buffer.
+
+    Pair records must stay unchanged after insertion. Rebuild when the buffer
+    evicts its oldest sample, is reset, or the selection thresholds change.
+    """
+
+    def __init__(self):
+        self.buffer = None
+        self.first, self.last, self.count = None, None, 0
+        self.thresholds, self.selection = None, None
+
+    def select(self, pairs, thresholds):
+        count = len(pairs)
+        first = pairs[0] if count else None
+        last = pairs[-1] if count else None
+        if (pairs is self.buffer and first is self.first and thresholds == self.thresholds
+                and 0 < self.count <= count and pairs[self.count-1] is self.last):
+            suffix = (pairs[index] for index in range(self.count, count))
+            selection = _trajectory_samples(suffix, thresholds, self.selection)
+        else:
+            selection = _trajectory_samples(pairs, thresholds)
+        self.buffer = pairs
+        self.first, self.last, self.count = first, last, count
+        self.thresholds, self.selection = thresholds, selection
+        return selection
+
+
+def fit_trajectory_alignment(pairs, antenna_xy, min_baseline_m=1.2, spacing_m=.20,
+                             min_samples=6, max_gap_s=1.5, max_residual_m=.15,
+                             max_heading_std_rad=.11, max_heading_delta_rad=.10,
+                             resume_odom_m=.10, resume_enu_m=.20, *, evidence=None):
+    """Fit the latest continuous trajectory using spatially distinct pairs.
+
+    Report observed path length, an effective baseline and heading consistency
+    separately. An explicit resume can bridge a time gap only at a coincident
+    odom and GNSS anchor. A gap during collection starts a new trajectory.
+    """
+    config = (min_baseline_m, spacing_m, max_gap_s, max_residual_m, max_heading_std_rad,
+              max_heading_delta_rad, resume_odom_m, resume_enu_m)
+    if any(_number(value, 'automatic alignment threshold') <= 0. for value in config):
+        raise ValueError('automatic alignment thresholds must be positive')
+    if type(min_samples) is not int or min_samples < 5:
+        raise ValueError('automatic alignment needs at least five distinct positions')
+
+    thresholds = spacing_m, max_gap_s, resume_odom_m, resume_enu_m
+    selected, _, path_length, discontinuity = (_trajectory_samples(pairs, thresholds)
+                                               if evidence is None else evidence.select(pairs, thresholds))
     progress = dict(ready=False, reason='', samples=len(selected), rejected_samples=0,
                     baseline_m=_baseline(selected), path_length_m=path_length, residual_m=None,
                     heading_std_rad=None, heading_delta_rad=None, discontinuity=discontinuity)
@@ -275,7 +310,8 @@ def fit_trajectory_alignment(pairs, antenna_xy, min_baseline_m=1.2, spacing_m=.2
         # Overlap the early and late fits so a short straight track still has
         # enough separation. This detects conflicting heading estimates while
         # keeping the same least-squares problem and antenna reference.
-        estimate = fit_alignment(inliers, antenna_xy, min_baseline_m, float_info.max)
+        if rejected:
+            estimate = fit_alignment(inliers, antenna_xy, min_baseline_m, float_info.max)
         progress.update(residual_m=estimate['rmse_m'], heading_std_rad=estimate['heading_std_rad'])
         if estimate['rmse_m'] > max_residual_m:
             return pending('alignment_residual_too_large')
