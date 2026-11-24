@@ -371,13 +371,8 @@ class Observer:
             result = text or ('等待地图 TF' if self.origin(now) is not None else WAYPOINT_PROMPT)
             self.waypoint_status, self.waypoint_coords = f'Waypoint：{result}', text
         print(f'Waypoint | 经纬度：{result}', flush=True)
-        if self.waypoint_selected is not None:
-            self.waypoint_selected(deepcopy(message), text)
-
-    def submit_waypoint(self, message):
-        goal = deepcopy(message)
-        goal.header.stamp = rospy.Time.now()
-        self.manual_goal(goal)
+        if text and self.waypoint_selected is not None:
+            self.waypoint_selected(geographic, text)
 
     def _goal_blocked_locked(self, reason, now):
         self.manual_feedback = reason, now

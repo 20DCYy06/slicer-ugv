@@ -35,6 +35,16 @@ class FieldLaunchTests(unittest.TestCase):
         self.assertTrue(displays['/scan']['Enabled'])
         self.assertTrue(displays['/ugv/move_base/global_costmap/costmap']['Enabled'])
 
+    def test_rtk_receiver_and_local_sensor_steps_start_disjoint_nodes(self):
+        rtk = load('slicer_field_sensors.launch', ['start_local_sensors:=false'])
+        local = load('slicer_field_sensors.launch', ['geographic:=false'])
+        rtk_nodes = {(n.package, n.type) for n in rtk.nodes}
+        local_nodes = {(n.package, n.type) for n in local.nodes}
+        self.assertTrue(any(package == 'cup_gnss' for package, _ in rtk_nodes))
+        self.assertFalse(any(package == 'cup_gnss' for package, _ in local_nodes))
+        self.assertFalse(any('fastlio' in kind for _, kind in rtk_nodes))
+        self.assertTrue(any('fastlio' in kind for _, kind in local_nodes))
+
     def test_body_shortcut_selects_only_0x16_driver_without_tf(self):
         config = load('slicer_body_driver.launch')
         self.assertEqual([(n.package, n.type) for n in config.nodes],
@@ -148,9 +158,11 @@ class FieldLaunchTests(unittest.TestCase):
         self.assertFalse(p[prefix + 'GlobalPlanner/use_grid_path'].value)
         self.assertEqual(p[prefix + 'GlobalPlanner/smoothing/max_cost'].value, 173)
         self.assertTrue(p[prefix + 'GlobalPlanner/smoothing/observed_prefix'].value)
-        self.assertEqual(p[prefix + 'DWAPlannerROS/vx_samples'].value, 7)
+        self.assertEqual(p[prefix + 'DWAPlannerROS/vx_samples'].value, 9)
         self.assertEqual(p[prefix + 'DWAPlannerROS/acc_lim_x'].value, .5)
         self.assertEqual(p[prefix + 'DWAPlannerROS/start_heading_rate'].value, .45)
+        self.assertEqual(p[prefix + 'DWAPlannerROS/start_heading_lookahead'].value, .20)
+        self.assertEqual(p[prefix + 'DWAPlannerROS/start_heading_kp'].value, 1.6)
         self.assertEqual(p[prefix + 'GlobalPlanner/continuity/preferred_clearance'].value, .45)
         self.assertEqual(p[prefix + 'DWAPlannerROS/vth_samples'].value, 21)
         self.assertFalse(p['/slicer_nav_arc_guard/registration_reverse'].value)
@@ -166,10 +178,12 @@ class FieldLaunchTests(unittest.TestCase):
             self.assertEqual(p['/ugv/move_base/DWAPlannerROS/' + key].value, .35)
         self.assertFalse(p['/slicer_nav_arc_guard/adaptive_forward_speed'].value)
         self.assertTrue(p['/slicer_nav_arc_guard/registration_reverse'].value)
+        self.assertEqual(p['/ugv/move_base/base_local_planner'].value,
+                         'dwa_local_planner/DWAPlannerROS')
 
     def test_bootstrap_odom_profile_remains_explicit(self):
         config = load('slicer_field_navigation.launch', ['geographic:=false'])
-        self.assert_navigation_chain(config)
+        self.assert_navigation_chain(config, heading=True)
         self.assert_no_depth(config)
         p = config.params
         self.assertEqual(p['/ugv/move_base/global_costmap/global_frame'].value, 'odom')

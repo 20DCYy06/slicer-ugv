@@ -9,12 +9,12 @@
 - 正式导航上限保留 0.8 m/s 和 45°/s。DWA 将前进速度采样从 3 个增加到 7 个，并提高跟踪全局绕障路线的权重。Guard 在原指令过快、实际 LIO 位移及上一帧指令均可在已观察范围内制动时，沿现有前进弧线寻找较低可用速度，并按每个候选速度单独校验制动包络。制动净空不足、输入过期、规划无可用前进指令时停车。底盘和固件参数不变。
 - 配准 DWA 的线速上限由 0.25 m/s 增至 0.35 m/s，角速度、加速度、质量门和停车确认沿用原值。拟合增量处理新配对，样本淘汰或重置时重建缓存。
 
-## 启动往返配准、对向与 Waypoint
+## 桌面入口、起步与 Waypoint
 
-1. 启动定位和底盘，确认当前停车且具备直行空间，在桌面点击第 4 步「启动 RTK 导航（自动往返配准）」。桌面等待新鲜 Fixed、扫描、定位、底盘及 Mux 放行，随后发起一次 `geographic.py initialize --distance 2.0 --return-to-start`。旧有有效配准直接切换到 `map`。由外部终端启动的导航只显示状态。
-2. 配准在 2 m 目标附近停稳拟合。返程倒车上限 0.15 m/s，通过配准档专用 Guard、原 Mux 与底盘。需要新鲜且空闲的 MoveBase，位置校验、曲率扫掠、观测与控制权检查持续有效。回到起点 0.12 m 容差内并停稳后进入 `map`。返程失败停止并显示故障。
-3. 正式档的新目标先计算目标方位，采用 0.45 rad/s 固定转速对向。Guard 检查原地旋转，TF 验证对向误差和停稳后交回 DWA。误差容差 0.12 rad，等待停稳 0.25 s，转向超时 16 s。已经对向且停车可直接导航，0.20 m 内的目标由 DWA 自身到位处理。
-4. 选「Waypoint 打点」，点 RViz 地面后显示 WGS84 经纬度和导航确认。确认使用普通最新目标入口和原导航互锁，取消只保留坐标。桌面直接使用配准结果，启动侧无需录参考点。
+1. 「启动 RTK 与配准」启动 GNSS 与全局定位并安排往返。「启动雷达与底盘」启动 MID360、本地定位与底盘驱动。「启动导航」使用共享运行器，普通 2D Nav Goal 和 RTK WGS84 使用同一导航链。飞机通信和一键全部停止保留。抓取依然有独立命令入口。
+2. 只按后两步启动，或暂时收不到 Fixed 时，普通 `odom` 导航可以按 0.8 m/s 上限运行。RTK 已安排且条件满足后，在任务空闲、停车和 Mux 就绪时切到 0.35 m/s 的配准档，再发起一次前进 2 m、停车拟合、沿原路低速倒回。返程倒车上限 0.15 m/s，到距起点 0.12 m 容差内并停稳后切到 `map`。已有有效配准直接申请切换。返程失败停止并显示原因。
+3. 普通 `odom` 和正式 `map` 目标都使用同一闭环对向。先把可行路线转换、裁剪到 DWA 的局部跟踪窗口，取开头约 0.20 m 的短弦近似起点切线，记录当前 TF 朝向、切线和差值。PD 使用 TF 航向误差和实测角速度，(`Kp=1.6`、`Kd=0.25`)。转速上限 0.45 rad/s，误差容差 0.12 rad，转动后停稳 0.25 s 再交回 DWA。16 s 未完成时报告失败。0.20 m 内的短目标由 DWA 到位控制处理。Guard 和 Mux 全程维持原控制权限。
+4. 选「Waypoint 打点」，在 RViz 点地面，启动终端立即打印 WGS84 纬度和经度，桌面询问是否导航。确认走共享 WGS84 入口，取消仅保留坐标。具备可用地理变换即可打点，现场无需另录参考点。
 
 ## 验证
 
@@ -71,11 +71,19 @@ RTK DWA 的 Guard 使用实际局部代价图和车体足迹。配置模板中�
 - 用真实软件导航链和合成传感器执行往返，回程停在距起点 0.106 m 处，随后完成正式 `map` 切换。后方加障碍的独立试验中，Guard 拦截并停车，返程报告失败。Qt 回环 ROS 验证了 Waypoint 显示、取消不发目标、延迟确认提交原位置以及 Mux 停车时拒发。证据见任务工作区 `logs/start-heading/roundtrip-map.log`、`/tmp/rtk-roundtrip-registration/rear-wall.log` 和 `/tmp/slicer-rtk-startup-desktop/waypoint-proof.log`。
 - 实车的可持续速度取决于路径、可见制动距离和实际底盘响应。对于确需小半径转弯、观测不足和停车区域，Guard 按实际可用空间处理。现场复测需记录原始速度、Guard、Mux、编码器、LIO 和 MCU 状态。
 
+## 11 月 24 日桌面简化与闭环对向复测
+
+- 旧候选用普通 `odom` 送 2D Nav Goal 时仍加载 0.35 m/s 配准档，见任务工作区 `logs/ros/log/rtk-navigation-odom-ksx0xi3a.log`。本次从桌面分开普通巡航和配准档。0.8 m/s 上限、0.50 m/s² 前进加速度、0.25 m 膨胀半径和 0.20 m/s² 制动模型保留。DWA 前进档采样从 7 增至 9，进度权重从 1.2 增至 1.4。
+- 独立 Catkin 构建、原生安装检查、338 项离线用例、8 项 launch 检查和 C++ 闭环转向用例通过。桌面测试单独运行 73 项通过。设备未连接到这些测试会话。证据见任务工作区 `logs/local-path-start/` 的 `build-final.log`、`native-final.log` 和 `offline-final.log`。
+- 从 0.80 rad 初始朝向发 6 m 目标，普通 `odom` 与正式 `map` 在开始前进时的误差分别为 0.104、0.099 rad，Mux 速度指令峰值都为 0.800 m/s，两次都到点。最终版的合成绕墙目标用时 18.41 s，x 为 3.5–5.3 m 的绕墙段全程达到 0.5 m/s，约 68% 时长达到 0.7 m/s。Guard 在其他路段曾按扫掠范围拦停。证据为同目录 `odom-turn.log`、`map-turn.log` 和 `wall-final.log`。
+- 独立参数对比的 6 m 墙场景中，绕墙段达到 0.5 m/s 的占比由约 84% 提高到 100%。同一候选参数的 12 m 开阔场景，约 73% 时长达到 0.7 m/s。A/B 对比见 `/tmp/rtk-dwa-tuning/baseline-wall.log`、`progress-14-wall.log`、`progress-14-open-12.log`。
+- `check_auto_registration_ros.py cli --odom-cruise` 验证先按普通档启动，WGS84 提交后切入配准，再完成原 `map` 目标。见 `odom-to-wgs84-final.log`。桌面调用的配准服务也已验证在导航空闲时切入 0.35 m/s 档，见 `preparation-service.log`。当前会话尚未验证真实 RViz 画面、实车闭环转向、全套桌面往返配准和实际持续速度。正式车端发布仍独立安装。
+
 ## 开发、现场复测和回退
 
 首次构建按车端入口说明（`~/workspace/slicer/START_HERE.md`）从任务根导入 `dependencies.repos` 的固定依赖，运行 `bash tools/build_native.sh "$W" -j2`，目录变量 `W=~/workspace/slicer/dev/rtk-navigation-optimization`。构建后在任务源码根下用 `SLICER_NATIVE_WS="$W" ./tools/rtk_desktop_ui.sh` 启动任务安装。现场由同一执行会话结束已有导航控制链，再操作候选。参数位于 [RTK 导航 launch](../../src/ugv_bringup/launch/slicer_field_navigation.launch)、[正式速度档](../../src/ugv_bringup/config/dwa_field.yaml)和[配准速度档](../../src/ugv_bringup/config/dwa_registration.yaml)。观察 `/cmd_vel/nav_raw`、`/cmd_vel/nav`、`/cmd_vel`、`/slicer_nav_arc_guard/hold_reason`、`/geographic/status` 与 `/geographic/navigation_runtime`。
 
-接手先核对任务工作树和 `~/workspace/slicer/run status`，随后复测空旷直线、直角和窄道停车净空，再复测未扫目标与两点经纬度。退出任务桌面或启动链后，从 `~/workspace/slicer` 用 `./run status`、`./run rtk` 返回既有正式发布。
+接手先核对任务工作树和 `~/workspace/slicer/run status`，随后复测空旷直线、直角和窄道停车净空，再复测未扫目标、自动配准往返和 Waypoint 经纬度。退出任务桌面或启动链后，从 `~/workspace/slicer` 用 `./run status`、`./run rtk` 返回既有正式发布。
 
 ### 接手提示词
 

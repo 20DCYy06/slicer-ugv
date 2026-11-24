@@ -8,8 +8,8 @@ DWAPlannerROS:
   acc_lim_trans: 0.5
   # Favor the planned bypass over cutting back toward the final goal at a wall.
   path_distance_bias: 2.4
-  # Sample intermediate forward speeds in the same acceleration-limited window.
-  vx_samples: 7
-  # Favor progress on a valid bypass and sample zero angular speed as well.
-  goal_distance_bias: 1.2
+  # Finer forward sampling within the existing acceleration window.
+  vx_samples: 9
+  # Favor progress on valid trajectories and sample zero angular speed as well.
+  goal_distance_bias: 1.4
   vth_samples: 21

@@ -11,10 +11,9 @@ from xmlrpc.client import Error, ServerProxy, Transport
 CALLER_ID = '/slicer_rtk_desktop_probe'
 NAV_ACTION = '/ugv/move_base'
 LAUNCHES = {
-    'slicer_field_sensors.launch': ('sensors',),
     'slicer_sensors.launch': ('sensors',),
-    'slicer_geographic.launch': ('sensors',),
-    'slicer_gnss.launch': ('sensors',),
+    'slicer_geographic.launch': ('rtk',),
+    'slicer_gnss.launch': ('rtk',),
     'slicer_body_driver.launch': ('driver',),
     'slicer_driver.launch': ('driver',),
     'slicer_odom.launch': ('nav',),
@@ -94,6 +93,13 @@ def _process_keys(argv):
             return ()
         path = next((Path(arg) for arg in args if arg.endswith('.launch')), Path())
         launch = path.name
+        if launch == 'slicer_field_sensors.launch':
+            groups = []
+            if 'start_local_sensors:=false' not in args:
+                groups.append('sensors')
+            if 'geographic:=false' not in args:
+                groups.append('rtk')
+            return tuple(groups)
         if launch == 'slicer_field_navigation.launch':
             if 'mapping:=true' in args:
                 return ('nav',)

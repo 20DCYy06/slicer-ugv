@@ -30,7 +30,7 @@ def wait_until(check, label, timeout=15., diagnostic=lambda: None):
     raise AssertionError(f'Timed out waiting for {label}: {diagnostic()}')
 
 
-def run(protocol, interruption, logs, launch):
+def run(protocol, interruption, logs, launch, odom_cruise=False):
     import rosgraph
     import rospkg
     import rospy
@@ -179,7 +179,8 @@ def run(protocol, interruption, logs, launch):
     try:
         launch('geographic', *geographic,
                f'session_file:={logs / "session.json"}')
-        launch('runtime', 'roslaunch', 'ugv_bringup', 'slicer_navigation_runtime.launch')
+        launch('runtime', 'roslaunch', 'ugv_bringup', 'slicer_navigation_runtime.launch',
+               f'odom_cruise:={str(odom_cruise).lower()}')
         if protocol == 'v1':
             launch('task', 'roslaunch', 'ugv_bringup', 'slicer_air_ground.launch')
         elif protocol == 'v2':
@@ -192,6 +193,11 @@ def run(protocol, interruption, logs, launch):
                                              and publisher.get_num_connections()))),
                    'released odom startup and qualified RTK', 32., evidence)
         assert not state['geo']['registered'] and not goals
+        if odom_cruise:
+            assert state['runtime']['preparation'] is False, evidence()
+            assert rospy.get_param('/ugv/move_base/DWAPlannerROS/max_vel_x') == .8
+            print('PASS ordinary odom cruise without existing RTK registration', flush=True)
+        expected_mux_instances = 3 if odom_cruise else 2
 
         set_op = 'SET_TASK' if protocol == 'v1' else 'SET_TARGET'
         initial, destination = wgs84(2.85, 0.), wgs84(2.35, 0.)
@@ -207,7 +213,7 @@ def run(protocol, interruption, logs, launch):
             assert goals[0][3] == '/slicer_navigation_runtime', evidence()
             expected = to_enu(*destination, state['geo']['origin'])
             assert math.dist(goals[1][1:3], expected[:2]) < .01, evidence()
-            assert state['geo']['registered'] and len(mux_ids) == 2, evidence()
+            assert state['geo']['registered'] and len(mux_ids) == expected_mux_instances, evidence()
             print(f'PASS CLI: plan did not move, send prepared and completed the original map target; {logs}')
             return
         send(set_op, point=initial)
@@ -275,7 +281,7 @@ def run(protocol, interruption, logs, launch):
         assert publishers['/ugv/move_base/status'] == ['/ugv/move_base'], evidence()
         assert transform_owners[('odom', 'base_link')] == {'/slicer_c30d_driver'}, transform_owners
         assert transform_owners[('map', 'odom')] == {'/global_localization/ekf'}, transform_owners
-        assert len(mux_ids) == 2 and len([row for row in goals if row[0] == 'map']) == 2, evidence()
+        assert len(mux_ids) == expected_mux_instances and len([row for row in goals if row[0] == 'map']) == 2, evidence()
         odom_goal_count = 2 if interruption == 'pause' else 1
         assert plant.error is None and len([row for row in goals if row[0] == 'odom']) == odom_goal_count, evidence()
         print(f'PASS {protocol}: {odom_goal_count} odom target(s), two map targets, latest intent, registered reuse, '
@@ -290,6 +296,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('protocol', choices=('v1', 'v2', 'cli'))
     parser.add_argument('--interrupt', choices=('pause', 'cancel', 'global-output'))
+    parser.add_argument('--odom-cruise', action='store_true',
+                        help='start in ordinary odom and enter preparation only for WGS84')
     args = parser.parse_args()
     if args.protocol == 'cli' and args.interrupt:
         parser.error('interruption variants apply to a V1 or V2 task')
@@ -317,7 +325,7 @@ def main():
     try:
         launch('core', 'roscore', '-p', str(port))
         wait_until(master_alive, 'private loopback ROS master')
-        run(args.protocol, args.interrupt, logs, launch)
+        run(args.protocol, args.interrupt, logs, launch, args.odom_cruise)
     finally:
         for process in reversed(processes):
             if process.poll() is None:

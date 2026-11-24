@@ -144,8 +144,9 @@ class Readouts(QtWidgets.QWidget):
 
     def bind_waypoint_confirmation(self, observer):
         self.waypoint_selected.connect(
-            lambda pose, coordinates: self.workflow.confirm_waypoint(
-                coordinates, lambda: observer.submit_waypoint(pose)),
+            lambda location, coordinates: self.workflow.confirm_waypoint(
+                coordinates, lambda: self.workflow.controller.send_wgs84(
+                    location['latitude'], location['longitude'])),
             QtCore.Qt.QueuedConnection)
         observer.waypoint_selected = self.waypoint_selected.emit
 

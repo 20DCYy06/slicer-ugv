@@ -52,7 +52,9 @@ class DiscoveryTests(unittest.TestCase):
     @patch('workflow_discovery.os.getpgid', side_effect=lambda pid: pid + 10)
     def test_process_groups_from_proc_and_exact_argv(self, _process_group):
         cases = (
-            ('roslaunch ugv_bringup slicer_field_sensors.launch', ('sensors',)),
+            ('roslaunch ugv_bringup slicer_field_sensors.launch', ('sensors', 'rtk')),
+            ('roslaunch ugv_bringup slicer_field_sensors.launch start_local_sensors:=false', ('rtk',)),
+            ('roslaunch ugv_bringup slicer_field_sensors.launch geographic:=false', ('sensors',)),
             ('roslaunch ugv_bringup slicer_body_driver.launch', ('driver',)),
             ('roslaunch ugv_bringup slicer_field_navigation.launch geographic:=false', ('odom', 'nav')),
             ('roslaunch ugv_bringup slicer_field_navigation.launch', ('map', 'nav')),

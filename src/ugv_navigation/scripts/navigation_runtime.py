@@ -83,6 +83,9 @@ class NavigationRuntime:
         self.master = rosgraph.Master(rospy.get_name())
         self.field_launch = rospy.get_param('~field_launch')
         self.initial_mode = rospy.get_param('~initial_mode', 'odom')
+        self.odom_cruise = rospy.get_param('~odom_cruise', False)
+        if type(self.odom_cruise) is not bool:
+            raise ValueError('odom_cruise must be boolean')
         if self.initial_mode not in ('odom', 'map'):
             raise ValueError('initial_mode must be odom or map')
         self.distances = tuple(rospy.get_param('~candidate_distances_m', [2.5, 1.8, 1.25]))
@@ -102,6 +105,7 @@ class NavigationRuntime:
         self.events = SimpleQueue()
         self.last_failure = None
         self.nav, self.mode, self.transition = None, None, None
+        self.preparation = False
         self.control, self.control_call, self.owned_hold = None, None, None
         self.worker = None
         self.samples = {}
@@ -127,6 +131,8 @@ class NavigationRuntime:
                                              lambda goal: self.events.put(('cancel', goal)),
                                              auto_start=False)
         self.map_service = rospy.Service('/geographic/navigation_map', Trigger, self._diagnostic_map)
+        self.preparation_service = rospy.Service('/geographic/navigation_prepare', Trigger,
+                                                 self._diagnostic_prepare)
         self.action.start()
 
     def _action_status(self, msg):
@@ -285,6 +291,20 @@ class NavigationRuntime:
             self._switch('map')
             return TriggerResponse(True, 'switching to map navigation')
 
+    def _diagnostic_prepare(self, _request):
+        with self.lock:
+            if self.request is not None or self.transition is not None or self.startup_pending:
+                return TriggerResponse(False, 'active navigation preparation or switch')
+            if self.mode != 'odom':
+                return TriggerResponse(False, 'local odom navigation must be running')
+            if self.preparation:
+                return TriggerResponse(True, 'odom preparation already running')
+            problem = self._permission()
+            if problem or not self._idle() or not self._quiet():
+                return TriggerResponse(False, problem or 'navigation must be idle and stopped')
+            self._switch('odom', preparation=True)
+            return TriggerResponse(True, 'switching to odom preparation')
+
     def _permission(self, allow_owned_hold=False):
         mux = self._sample('mux')
         if self.emergency:
@@ -301,7 +321,9 @@ class NavigationRuntime:
             return 'waiting for ready chassis driver'
         return None
 
-    def _start(self, mode):
+    def _start(self, mode, preparation=None):
+        if preparation is None:
+            preparation = mode == 'odom' and not self.odom_cruise
         if self._nav_present():
             raise RuntimeError('external field navigation is present; stop it from its own terminal')
         self.samples.pop('action', None)
@@ -310,9 +332,10 @@ class NavigationRuntime:
         self.nav = OwnedProcess(mode, ('roslaunch', '--sigint-timeout', '4',
                                       '--sigterm-timeout', '2', self.field_launch,
                                       'geographic:=' + ('true' if mode == 'map' else 'false'),
-                                      'preparation:=' + ('true' if mode == 'odom' else 'false')),
+                                      'preparation:=' + ('true' if preparation else 'false')),
                                 os.environ.copy(), log_prefix='rtk-navigation')
         self.mode, self.owned_hold = mode, None
+        self.preparation = preparation
         self.startup_pending = True
 
     def _begin_control(self, operation, key):
@@ -359,8 +382,9 @@ class NavigationRuntime:
                     and (self.mode != 'map' or not self._global_problem(strict_global))):
                 self._begin_control('release', self.owned_hold)
 
-    def _switch(self, mode):
-        self.transition = dict(stage='hold', mode=mode, deadline=time.monotonic() + self.switch_timeout)
+    def _switch(self, mode, preparation=None):
+        self.transition = dict(stage='hold', mode=mode, preparation=preparation,
+                               deadline=time.monotonic() + self.switch_timeout)
         self.phase, self.reason = 'SWITCHING_NAVIGATION', 'holding old navigation before switching to ' + mode
 
     def _advance_switch(self, release):
@@ -388,7 +412,7 @@ class NavigationRuntime:
         elif stage == 'exit':
             if self.nav.poll() is None or self._nav_present():
                 return
-            self._start(transition['mode'])
+            self._start(transition['mode'], transition['preparation'])
             transition['stage'] = 'start'
         else:
             self._startup(release, strict_global=self.mode == 'map')
@@ -608,7 +632,7 @@ class NavigationRuntime:
             return
         if self.mode == 'map':
             if status and self._idle() and self._quiet() and not self._permission(allow_owned_hold=True):
-                self._switch('odom')
+                self._switch('odom', preparation=True)
             else:
                 request.phase = 'WAITING_NAVIGATION'
                 request.reason = self._permission(allow_owned_hold=True) or 'waiting for local odometry and navigation to stop'
@@ -622,6 +646,15 @@ class NavigationRuntime:
             return
         if not self._idle() or not self._quiet():
             request.phase, request.reason = 'WAITING_NAVIGATION', 'waiting for idle Action and stationary odometry'
+            return
+        if not self.preparation:
+            if status.get('paired_rtk_usable'):
+                self._switch('odom', preparation=True)
+            else:
+                request.phase = 'WAITING_RTK'
+                request.reason = status.get('paired_rtk_reason') or 'waiting for a qualified RTK and odometry pair'
+                if now - request.started > self.rtk_wait:
+                    self._stop_request(request, 'FAILED', request.reason)
             return
         if request.generation is None and status:
             request.registration_changed = True
@@ -707,7 +740,7 @@ class NavigationRuntime:
             request.handle.publish_feedback(PrepareGeographicFeedback(phase, reason))
         alignment = self._status().get('alignment_progress') or {}
         displayed = request or self.last_failure
-        payload = dict(action=ACTION, mode=self.mode, phase=phase, reason=reason,
+        payload = dict(action=ACTION, mode=self.mode, preparation=self.preparation, phase=phase, reason=reason,
                        busy=bool(request or self.transition), stamp=rospy.Time.now().to_sec(),
                        task_id=displayed.handle.get_goal().task_id if displayed else None,
                        target=displayed.target if displayed else None,

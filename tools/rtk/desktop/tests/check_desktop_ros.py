@@ -26,6 +26,7 @@ sys.path.insert(0, str(DIRECTORY))
 from desktop import Dashboard, Observer, Readouts, make_rviz, sip
 from ros_observer import WAYPOINT_CLICK
 from workflow import Workflow
+from unittest.mock import Mock
 
 
 def main():
@@ -36,6 +37,7 @@ def main():
     observer = Observer(Dashboard())
     dashboard = Readouts(Workflow(observer.board))
     dashboard.bind_waypoint_confirmation(observer)
+    send_wgs84 = dashboard.workflow.controller.send_wgs84 = Mock(return_value=True)
     window, manager = make_rviz(DIRECTORY/'rtk_desktop.rviz', app)
     screen = app.primaryScreen()
     window.attach_readouts(dashboard)
@@ -189,9 +191,8 @@ def main():
 
         with redirect_stdout(output):
             click('Waypoint 打点')
-            wait(lambda: len(clicks) == 1 and '等待地理配准' in output.getvalue()
-                 and dashboard.workflow.waypoint_dialog is not None)
-            dashboard.workflow.waypoint_dialog.reject()
+            wait(lambda: len(clicks) == 1 and '等待地理配准' in output.getvalue())
+            assert dashboard.workflow.waypoint_dialog is None
             assert clicks[0].header.frame_id == 'odom' and not goals
             # A brief Action heartbeat gap must not reject an otherwise valid click.
             status_delay = .7
@@ -299,13 +300,16 @@ def main():
             assert len(goals) == 3
             dialog = dashboard.workflow.waypoint_dialog
             QtTest.QTest.mouseClick(dialog.button(QtWidgets.QMessageBox.Yes), QtCore.Qt.LeftButton)
-            wait(lambda: len(goals) == 4)
-            assert goals[3].goal.target_pose.pose.position == clicks[2].pose.position
+            wait(lambda: send_wgs84.call_count == 1)
+            assert len(goals) == 3
+            expected_coordinates = observer.wgs84(
+                observer.point('map', clicks[2].pose.position.x, clicks[2].pose.position.y), time.monotonic())
+            send_wgs84.assert_called_once_with(expected_coordinates['latitude'], expected_coordinates['longitude'])
             status_delay = 2.
             wait(lambda: observer.board.recent('action', time.monotonic(), 1.5) is None)
             click('2D Nav Goal')
             wait(lambda: '等待当前导航坐标系和 move_base 状态' in output.getvalue())
-            assert len(goals) == 4
+            assert len(goals) == 3
         print('RTK_DESKTOP_GUI_PASS split odom map waypoint WGS84 preparation manual goal isolation')
     except AssertionError:
         print(output.getvalue(), file=sys.stderr)

@@ -72,7 +72,7 @@ class WorkflowTests(unittest.TestCase):
             self.board.record(key, value, self.clock)
 
     def prerequisites(self, fixed=True, held=True):
-        self.graph.nodes.update(('/geographic', '/slicer_c30d_driver', '/ugv/move_base'))
+        self.graph.nodes.update(('/slicer_ekf', '/geographic', '/slicer_c30d_driver', '/ugv/move_base'))
         self.graph.frame = 'odom'
         self.graph.subscribers['/ugv/move_base/goal'] = {'/ugv/move_base'}
         self.graph.publishers['/cup_nav/manual_state'] = {'/slicer_velocity_mux'}
@@ -89,7 +89,7 @@ class WorkflowTests(unittest.TestCase):
     def test_sensor_driver_and_odom_lifecycle(self):
         self.assertEqual(self.color('sensors'), 'red')
         self.workflow.click('sensors')
-        self.assertEqual(self.starts[-1][1][-1], 'config_file:=/test/.config/slicer/gnss.yaml')
+        self.assertEqual(self.starts[-1][1][-1], 'geographic:=false')
         self.assertEqual(self.color('sensors'), 'yellow')
         self.graph.nodes.add('/geographic')
         self.sample(lidar=True, odom=(0, 0))
@@ -101,12 +101,13 @@ class WorkflowTests(unittest.TestCase):
         self.refresh()
         self.assertEqual(self.color('driver'), 'green')
         self.workflow.click('navigation')
-        self.assertEqual(self.starts[-1][1], ('roslaunch', 'ugv_bringup', 'slicer_navigation_runtime.launch'))
+        self.assertEqual(self.starts[-1][1], ('roslaunch', 'ugv_bringup', 'slicer_navigation_runtime.launch',
+                                               'odom_cruise:=true'))
         self.graph.frame = 'odom'
         self.graph.subscribers['/ugv/move_base/goal'] = {'/ugv/move_base'}
         self.sample(action=[])
         self.refresh()
-        self.assertEqual(self.workflow.states['navigation'][:2], ('yellow', '等待 RTK Fixed'))
+        self.assertEqual(self.workflow.states['navigation'][:2], ('green', 'Nav Goal 就绪'))
         self.workflow.click('navigation')
         self.starts[-1][3].status = 0
         self.graph.frame = None
@@ -115,25 +116,32 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(self.color('navigation'), 'red')
 
     def test_rtk_start_waits_for_fresh_stationary_inputs_then_runs_roundtrip_once(self):
+        self.workflow.click('rtk')
         self.workflow.click('navigation')
+        self.assertIn('odom_cruise:=true', self.starts[-1][1])
         self.prerequisites(fixed=False, held=False)
-        self.assertTrue(self.workflow.startup_calibration_pending)
+        self.assertEqual(self.workflow.startup_calibration, 'waiting')
         self.sample(lio=True, wheel_still=False)
         self.refresh()
-        self.assertEqual([entry[0] for entry in self.starts], ['navigation'])
+        self.assertEqual([entry[0] for entry in self.starts], ['rtk', 'navigation'])
         self.prerequisites(held=True)
         self.sample(wheel_still=True)
         self.refresh()
-        self.assertEqual([entry[0] for entry in self.starts], ['navigation'])
+        self.assertEqual([entry[0] for entry in self.starts], ['rtk', 'navigation'])
 
         self.sample(mux=dict(self.workflow.mux, manual_hold=False))
+        self.refresh()
+        self.assertEqual(self.starts[-1][1], ('rosservice', 'call', '/geographic/navigation_prepare'))
+        self.starts[-1][3].status = 0
+        self.sample(runtime={'preparation': True, 'phase': 'IDLE'})
+        self.refresh()
         self.refresh()
         command = self.starts[-1][1]
         self.assertEqual(command, ('rosrun', 'ugv_navigation', 'geographic.py',
                                    'initialize', '--distance', '2.0', '--return-to-start'))
         for _ in range(3):
             self.refresh()
-        self.assertEqual([entry[0] for entry in self.starts], ['navigation', 'calibrate'])
+        self.assertEqual([entry[0] for entry in self.starts], ['rtk', 'navigation', 'prepare', 'calibrate'])
 
         self.sample(geographic={'state': 'ready', 'registered': True})
         self.starts[-1][3].status = 0
@@ -145,6 +153,8 @@ class WorkflowTests(unittest.TestCase):
         self.assertFalse(self.workflow.startup_calibration_pending)
 
     def test_roundtrip_failure_does_not_restart_or_switch_even_when_outbound_registered(self):
+        self.workflow.click('rtk')
+        self.sample(fixed_position={'latitude': 19., 'longitude': 119., 'altitude': 7.})
         self.workflow.click('navigation')
         self.prerequisites(held=False)
         self.sample(lio=True, wheel_still=True)
@@ -154,8 +164,8 @@ class WorkflowTests(unittest.TestCase):
         self.starts[-1][3].status = 1
         for _ in range(3):
             self.refresh()
-        self.assertEqual([entry[0] for entry in self.starts], ['navigation', 'calibrate'])
-        self.assertIn('未完成', self.workflow.states['navigation'][1])
+        self.assertEqual([entry[0] for entry in self.starts], ['rtk', 'navigation', 'calibrate'])
+        self.assertIn('未完成', self.workflow.states['rtk'][1])
         self.assertFalse(self.workflow.startup_calibration_pending)
 
     def test_observing_external_rtk_does_not_automatically_move(self):
@@ -166,6 +176,7 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(self.starts, [])
 
     def test_stop_all_clears_pending_startup_and_does_not_launch_when_fix_arrives(self):
+        self.workflow.click('rtk')
         self.workflow.click('navigation')
         self.prerequisites(fixed=False, held=False)
         self.workflow.stop_all()
@@ -173,7 +184,50 @@ class WorkflowTests(unittest.TestCase):
         self.sample(lio=True, wheel_still=True)
         self.refresh()
         self.assertFalse(self.workflow.startup_calibration_pending)
-        self.assertEqual([entry[0] for entry in self.starts], ['navigation'])
+        self.assertEqual([entry[0] for entry in self.starts], ['rtk', 'navigation'])
+
+    def test_buttons_split_rtk_from_radar_and_driver(self):
+        self.workflow.click('rtk')
+        self.assertIn('start_local_sensors:=false', self.starts[-1][1])
+        self.assertIn('config_file:=/test/.config/slicer/gnss.yaml', self.starts[-1][1])
+        self.workflow.click('base')
+        self.assertEqual([step for step, *_ in self.starts], ['rtk', 'sensors', 'driver'])
+        self.assertIn('geographic:=false', self.starts[1][1])
+        self.refresh()
+        self.assertEqual([step for step, *_ in self.starts], ['rtk', 'sensors', 'driver'])
+        self.sample(fixed_position={'latitude': 19., 'longitude': 119., 'altitude': 7.})
+        self.workflow.click('navigation')
+        self.assertNotIn('odom_cruise:=true', self.starts[-1][1])
+
+    def test_base_starts_only_missing_component_around_external_driver(self):
+        self.graph.nodes.add('/slicer_c30d_driver')
+        self.workflow.click('base')
+        self.assertEqual([step for step, *_ in self.starts], ['sensors'])
+        self.workflow.click('base')
+        self.assertTrue(self.starts[0][3].stopped)
+
+    def test_late_rtk_switches_owned_local_navigation_only_when_stationary(self):
+        self.workflow.click('navigation')
+        self.prerequisites(held=False)
+        self.workflow.click('rtk')
+        self.sample(lio=True, wheel_still=False, runtime={'preparation': False, 'phase': 'IDLE'})
+        self.refresh()
+        self.assertEqual([step for step, *_ in self.starts], ['navigation'])
+        self.assertEqual(self.workflow.startup_calibration, 'waiting')
+
+        self.sample(wheel_still=True)
+        self.refresh()
+        self.assertEqual(self.starts[-1][1], ('rosservice', 'call', '/geographic/navigation_prepare'))
+        self.assertTrue(self.workflow.startup_calibration_pending)
+        self.starts[-1][3].status = 0
+        self.sample(runtime={'preparation': True, 'phase': 'IDLE'}, mux=dict(self.workflow.mux, manual_hold=True))
+        self.refresh()
+        self.refresh()
+        self.assertEqual(self.starts[-1][0], 'prepare')
+
+        self.sample(mux=dict(self.workflow.mux, manual_hold=False))
+        self.refresh()
+        self.assertEqual(self.starts[-1][0], 'calibrate')
 
     def test_external_ready_and_stale_owner_both_block_duplicate(self):
         self.prerequisites()

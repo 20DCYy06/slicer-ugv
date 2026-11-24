@@ -16,7 +16,7 @@
   <include unless="$(arg mapping)" file="$(find ugv_bringup)/launch/slicer_odom.launch">
     <arg name="local_planner" value="dwa"/>
     <arg name="connect_control" value="true"/>
-    <arg name="adaptive_forward_speed" value="$(arg geographic)"/>
+    <arg name="adaptive_forward_speed" value="$(eval arg('geographic') or not arg('preparation'))"/>
     <arg name="registration_reverse" value="$(eval arg('preparation') and not arg('geographic'))"/>
     <arg name="source_config" value="$(find ugv_bringup)/config/online_runtime/config/slicer_config.yaml"/>
     <arg name="control_config" value="$(find ugv_bringup)/config/slicer_driver_body_speed.yaml"/>
@@ -61,7 +61,7 @@
   <!-- The Guard reads final planner limits at startup; restart navigation after edits. -->
   <rosparam if="$(eval arg('cruise_config') != '')" command="load"
             ns="ugv/move_base" file="$(arg cruise_config)"/>
-  <rosparam if="$(eval arg('geographic') and not arg('mapping'))" ns="ugv/move_base">
+  <rosparam if="$(eval not arg('mapping') and (arg('geographic') or not arg('preparation')))" ns="ugv/move_base">
     base_local_planner: slicer_navigation/DWAPlannerROS
     GlobalPlanner:
       continuity:
@@ -72,6 +72,9 @@
       start_heading_settle: 0.25
       start_heading_timeout: 16.0
       start_heading_min_distance: 0.20
+      start_heading_lookahead: 0.20
+      start_heading_kp: 1.6
+      start_heading_kd: 0.25
   </rosparam>
   <rosparam unless="$(arg mapping)" ns="ugv/move_base">
     base_global_planner: slicer_navigation/BSplineGlobalPlanner
