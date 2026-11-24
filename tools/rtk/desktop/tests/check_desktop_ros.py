@@ -152,23 +152,23 @@ def main():
              and observer.goal_pub.impl.has_connection('/ugv/move_base'))
         assert observer.board.fixed_position(time.monotonic()) is None
         gnss_pair = 'matched'
-        wait(lambda: dashboard.antenna.value == 'RTK 天线：31.2100000, 121.5100000')
+        wait(lambda: dashboard.own.value == '当前位置：31.2100000, 121.5100000')
         assert observer.board.fixed_position(time.monotonic())['altitude'] == 18.
-        assert dashboard.own.value == '当前位置：—'
-        dashboard.antenna.actions()[0].trigger()
+        assert not any(row.text().startswith('RTK 天线') for row in dashboard.findChildren(QtWidgets.QLabel))
+        dashboard.own.actions()[0].trigger()
         assert QtWidgets.QApplication.clipboard().text() == '31.2100000, 121.5100000'
         gnss_pair = 'lost'
-        wait(lambda: dashboard.antenna.value == 'RTK 天线：—')
+        wait(lambda: dashboard.own.value == '当前位置：—')
         assert observer.board.fixed_position(time.monotonic()) is None
         gnss_pair = 'matched'
-        wait(lambda: dashboard.antenna.value == 'RTK 天线：31.2100000, 121.5100000')
+        wait(lambda: dashboard.own.value == '当前位置：31.2100000, 121.5100000')
         gnss_session = 'desktop-test-reconnected'
         gnss_pair = 'unmatched'
-        wait(lambda: dashboard.antenna.value == 'RTK 天线：—')
+        wait(lambda: dashboard.own.value == '当前位置：—')
         gnss_pair = 'matched'
-        wait(lambda: dashboard.antenna.value == 'RTK 天线：31.2100000, 121.5100000')
+        wait(lambda: dashboard.own.value == '当前位置：31.2100000, 121.5100000')
         gnss_pair = 'silent'
-        wait(lambda: dashboard.antenna.value == 'RTK 天线：—')
+        wait(lambda: dashboard.own.value == '当前位置：—')
         assert observer.board.fixed_position(time.monotonic()) is None
         readable = [dashboard.status, dashboard.registration,
                     *(row for _, row in dashboard.system.values())]

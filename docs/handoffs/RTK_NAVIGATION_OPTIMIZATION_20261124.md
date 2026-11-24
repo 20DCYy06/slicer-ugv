@@ -24,6 +24,12 @@
 - 隔离仿真使用真实 `move_base`、Guard 和 Mux。开阔场景在 10.21 s 到达起初未知的 6 m 目标，Mux 峰值为 0.800 m/s。遮挡墙场景发现墙后改道，在横向约 0.98 m 处越过墙所在截面，37.51 s 到达原 6 m 目标。网格折线的对照在墙前爬行，65 s 内未到点。证据见隔离构建目录的 `final-unknown-goal.log` 和 `final-detour.log`。
 - 实车最高速度、最小净空与窄道通过性、配准总耗时、RViz 实际鼠标操作与打点地理误差待现场验证。
 
+## 11 月 24 日现场复查与坐标读数
+
+- 桌面将两行位置合为「当前位置」，可右键复制 WGS84 经纬度。配准前使用新鲜 Fixed 天线坐标，具备可用配准定位时优先使用车体参考点。没有新鲜坐标时显示「—」。Waypoint 和 WGS84 任务使用各自的质量检查与数据源。332 项离线测试通过。隔离 ROS 与离屏 Qt 用合成 Fixed 验证了单行显示、右键复制、过期清空和已有 Waypoint 回归，日志见 `/tmp/slicer-rtk-coordinate-readout/current-position-ros-qt.log`。
+- 05:25–05:26 的最新现场会话仍从正式发布 `a7a64c7` 启动。RViz 的两次目标均在 `odom` 坐标系，DWA 的 `max_vel_x` 和 Guard 启动限速均为 0.25 m/s。该会话只启动了起步导航配置，处于正式 `map` 导航前。较早的 04:37 `map` 日志确认正式档为 0.8 m/s。日志位于 `~/workspace/slicer/logs/20261123-rtk-fixed-a7a64c7/ros/`，其中最新导航日志是 `rtk-navigation-odom-zv86ynmz.log`，对应 ROS 会话是 `4e96b1d8-e80a-11f1-a504-3c6d661ed63d`。
+- 当日最新会话没有同步速度与 MCU 遥测录包，无法回算该趟实车速度。已有 11 月 23 日 08:15 正式 `map` 录包中，DWA、Mux 与 MCU 目标的线速峰值均为 0.404 m/s，PWM 峰值 903 ticks，低于会话上限 1429 ticks。这一趟的约 0.4 m/s 在规划器指令中已出现。后一份录包还记录了拐角处 DWA 局部规划失败、长时间偏向转向的情况。同一 08:15 录包编码器反馈峰值 0.425 m/s，LIO 位姿差分峰值 0.227 m/s。需用地面距离区分反馈尺度与滑移，现有证据不足以归因于 PID。后续实车记录应同步保存 `/cmd_vel/nav_raw`、`/cmd_vel/nav`、`/cmd_vel`、底盘诊断、`/wheel/odom` 和 `/lio/odom`，并记录运行档位。
+
 ## 开发、现场复测和回退
 
 首次构建按车端入口说明（`~/workspace/slicer/START_HERE.md`）从任务根导入 `dependencies.repos` 的固定依赖，运行 `bash tools/build_native.sh "$W" -j2`，目录变量 `W=~/workspace/slicer/dev/rtk-navigation-optimization`。构建后在任务源码根下用 `SLICER_NATIVE_WS="$W" ./tools/rtk_desktop_ui.sh` 启动任务安装。现场由同一执行会话结束已有导航控制链，再操作候选。参数位于 [RTK 导航 launch](../../src/ugv_bringup/launch/slicer_field_navigation.launch)、[正式速度档](../../src/ugv_bringup/config/dwa_field.yaml)和[配准速度档](../../src/ugv_bringup/config/dwa_registration.yaml)。观察 `/cmd_vel/nav_raw`、`/cmd_vel/nav`、`/cmd_vel`、`/slicer_nav_arc_guard/hold_reason`、`/geographic/status` 与 `/geographic/navigation_runtime`。

@@ -185,6 +185,7 @@ class Dashboard:
             registration += ' · 等待 Fixed'
         elif isinstance(reason, str) and reason:
             registration += ' · ' + REGISTRATION_REASONS.get(reason, reason)
+        current_position = self.recent('own', now) or self.fixed_position(now) or {}
         return {
             'rtk': f'RTK状态：{fix}（卫星：{satellite_text}）',
             'fix_color': fix_color,
@@ -202,8 +203,7 @@ class Dashboard:
             ('未就绪', 'bad') if driver is False else ('等待状态', 'neutral'),
             'mux': mux_label,
             'destination': '正在前往：' + (self.recent('destination', now) or '待命'),
-            'own': '当前位置：' + coordinates(self.recent('own', now) or {}),
-            'antenna': 'RTK 天线：' + coordinates(self.fixed_position(now) or {}),
+            'own': '当前位置：' + coordinates(current_position),
         }
 
 

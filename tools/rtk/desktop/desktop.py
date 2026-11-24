@@ -104,14 +104,13 @@ class Readouts(QtWidgets.QWidget):
         rows = QtWidgets.QVBoxLayout(page)
         self.destination = ReadoutLine()
         self.own = ReadoutLine()
-        self.antenna = ReadoutLine()
-        self.antenna.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
-        self.antenna.setContextMenuPolicy(QtCore.Qt.ActionsContextMenu)
-        self.copy_antenna = QtWidgets.QAction('复制 RTK 经纬度', self.antenna)
-        self.copy_antenna.setEnabled(False)
-        self.copy_antenna.triggered.connect(
-            lambda: QtWidgets.QApplication.clipboard().setText(self.antenna.value.partition('：')[2]))
-        self.antenna.addAction(self.copy_antenna)
+        self.own.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
+        self.own.setContextMenuPolicy(QtCore.Qt.ActionsContextMenu)
+        self.copy_own = QtWidgets.QAction('复制当前位置经纬度', self.own)
+        self.copy_own.setEnabled(False)
+        self.copy_own.triggered.connect(
+            lambda: QtWidgets.QApplication.clipboard().setText(self.own.value.partition('：')[2]))
+        self.own.addAction(self.copy_own)
         self.waypoint = ReadoutLine()
         self.waypoint.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
         self.waypoint.setContextMenuPolicy(QtCore.Qt.ActionsContextMenu)
@@ -125,7 +124,7 @@ class Readouts(QtWidgets.QWidget):
         self.task_phase = ReadoutLine()
         self.task_metrics = ReadoutLine(muted=True)
         self.task_metrics.hide()
-        for item in (self.destination, self.own, self.antenna, self.waypoint,
+        for item in (self.destination, self.own, self.waypoint,
                      self.registration, self.task_phase, self.task_metrics):
             rows.addWidget(item)
         self.system = {}
@@ -162,7 +161,7 @@ class Readouts(QtWidgets.QWidget):
                 break
             rtk_size -= 1
         for readout in self.findChildren(ReadoutLine):
-            if readout in (self.destination, self.own, self.antenna, self.waypoint):
+            if readout in (self.destination, self.own, self.waypoint):
                 point_size = coordinate_size
             else:
                 point_size = rtk_size if readout is self.rtk else size
@@ -198,8 +197,7 @@ class Readouts(QtWidgets.QWidget):
         own_available = not view['own'].endswith('—')
         if stable.update('own_available', own_available, now) == own_available:
             self.own.set_value(view['own'])
-        self.antenna.set_value(view['antenna'])
-        self.copy_antenna.setEnabled(not view['antenna'].endswith('—'))
+        self.copy_own.setEnabled(own_available and not self.own.value.endswith('—'))
         self.waypoint.set_value(view.get('waypoint', ''))
         self.waypoint_coords = view.get('waypoint_coords', '')
         self.copy_waypoint.setEnabled(bool(self.waypoint_coords))
