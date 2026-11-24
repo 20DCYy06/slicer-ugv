@@ -14,7 +14,7 @@ from actionlib_msgs.msg import GoalStatus, GoalStatusArray
 from geometry_msgs.msg import Twist
 from nav_msgs.msg import OccupancyGrid, Odometry
 from std_msgs.msg import String
-from navigation_core import (adaptive_forward_twist, body_twist_between, compensate_turn,
+from navigation_core import (body_twist_between, compensate_turn, guarded_forward_twist,
                              parse_footprint, planner_limits, saturate_twist, slew_arc, swept_clear)
 
 
@@ -178,14 +178,14 @@ def main():
             horizon = max(p['compensation_horizon'],
                           abs(target[0])/brake_linear+p['command_timeout'],
                           abs(target[1])/limits['accel_angular']+p['command_timeout'])
-            if all(swept_clear(pose, *command, footprint[0], grid, horizon) for command in (target, output)):
+            if adaptive_forward_speed and not compensation_enabled and target[0] > 0.:
+                guarded = guarded_forward_twist(pose, target, output, previous, observed,
+                                                footprint[0], grid, p['compensation_horizon'],
+                                                brake_linear, p['command_timeout'], dt, limits)
+                if guarded is not None:
+                    return '', guarded if guarded != output else None
+            elif all(swept_clear(pose, *command, footprint[0], grid, horizon) for command in (target, output)):
                 return '', None
-            if adaptive_forward_speed and not compensation_enabled:
-                reduced = adaptive_forward_twist(pose, target, previous, observed, footprint[0], grid,
-                                                 p['compensation_horizon'], brake_linear,
-                                                 p['command_timeout'], dt, limits)
-                if reduced is not None:
-                    return '', reduced
             return 'swept footprint occupied/unknown/outside grid', None
         except (tf.Exception, ValueError, KeyError) as exc:
             return str(exc), None

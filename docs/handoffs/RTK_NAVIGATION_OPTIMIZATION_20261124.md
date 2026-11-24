@@ -79,6 +79,12 @@ RTK DWA 的 Guard 使用实际局部代价图和车体足迹。配置模板中�
 - 独立参数对比的 6 m 墙场景中，绕墙段达到 0.5 m/s 的占比由约 84% 提高到 100%。同一候选参数的 12 m 开阔场景，约 73% 时长达到 0.7 m/s。A/B 对比见 `/tmp/rtk-dwa-tuning/baseline-wall.log`、`progress-14-wall.log`、`progress-14-open-12.log`。
 - `check_auto_registration_ros.py cli --odom-cruise` 验证先按普通档启动，WGS84 提交后切入配准，再完成原 `map` 目标。见 `odom-to-wgs84-final.log`。桌面调用的配准服务也已验证在导航空闲时切入 0.35 m/s 档，见 `preparation-service.log`。当前会话尚未验证真实 RViz 画面、实车闭环转向、全套桌面往返配准和实际持续速度。正式车端发布仍独立安装。
 
+## 11 月 24 日普通导航断速复查
+
+- 07:04–07:06 现场使用任务安装的普通 `odom` 巡航档，DWA 和 Guard 的前进加速度上限为 0.50 m/s²，DWA 角加速度上限为 1.0 rad/s²，Guard 制动模型为 0.20 m/s²。独立配准档前进加速度为 0.30 m/s²。现场末段一次 DWA 目标 0.772 m/s 被 Guard 降到 0.760 m/s，约 0.32 s 后报 `swept footprint occupied/unknown/outside grid` 并输出零。类似事件出现在多个行驶段。证据为任务工作区 `logs/ros/log/rtk-navigation-odom-69yn4ayz.log` 和 ROS 会话 `3e43f3aa-e818-11f1-92b8-3c6d661ed63d/rosout.log`。当次没有同步地图、速度和轮速数据，无法区分每次触发的是占用格、未知格或扫掠出界。
+- 普通 `odom` 和正式 `map` 的前进 Guard 在原制动检查外增加一个指令超时窗口的提前减速余量，现场配置为 0.50 s。前一帧和 LIO 实测运动通过原制动包络时才允许投影为低速。原停车判据、车辆足迹和膨胀距继续生效。配准的独立运动和限速沿用原档位。
+- 回归使用固定观测边界和 0.20 s 底盘反馈延迟。旧策略在约 1.10 m 处首次置零，新策略完成同一 120 帧区间且维持原扫掠保护，并在开阔起步段触及 0.8 m/s。此距离仅为合成场景数据。独立安装、339 项离线检查和 12 项 Guard ROS 传输检查通过。隔离 ROS 的普通和绕墙 6 m 目标均到点并达到 0.800 m/s，绕墙测试未触发 Guard 硬停。证据见任务工作区 `logs/rtk-speed-continuity/`。真实连续速度由后续同路线复测确认。
+
 ## 开发、现场复测和回退
 
 首次构建按车端入口说明（`~/workspace/slicer/START_HERE.md`）从任务根导入 `dependencies.repos` 的固定依赖，运行 `bash tools/build_native.sh "$W" -j2`，目录变量 `W=~/workspace/slicer/dev/rtk-navigation-optimization`。构建后在任务源码根下用 `SLICER_NATIVE_WS="$W" ./tools/rtk_desktop_ui.sh` 启动任务安装。现场由同一执行会话结束已有导航控制链，再操作候选。参数位于 [RTK 导航 launch](../../src/ugv_bringup/launch/slicer_field_navigation.launch)、[正式速度档](../../src/ugv_bringup/config/dwa_field.yaml)和[配准速度档](../../src/ugv_bringup/config/dwa_registration.yaml)。观察 `/cmd_vel/nav_raw`、`/cmd_vel/nav`、`/cmd_vel`、`/slicer_nav_arc_guard/hold_reason`、`/geographic/status` 与 `/geographic/navigation_runtime`。

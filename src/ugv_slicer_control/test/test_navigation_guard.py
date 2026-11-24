@@ -6,8 +6,8 @@ import sys
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
-from navigation_core import (adaptive_forward_twist, body_twist_between, planner_limits,
-                             saturate_twist, slew_arc, swept_clear)
+from navigation_core import (adaptive_forward_twist, body_twist_between, guarded_forward_twist,
+                             planner_limits, saturate_twist, slew_arc, swept_clear)
 
 
 class NavigationGuardTests(unittest.TestCase):
@@ -44,6 +44,37 @@ class NavigationGuardTests(unittest.TestCase):
                 pose, target, (.8, 0.), (0., 0., 0.), footprint, grid, .8, .5, .5, .1, limits))
             self.assertIsNone(adaptive_forward_twist(
                 pose, target, (0., 0.), None, footprint, grid, .8, .5, .5, .1, limits))
+
+    def test_observation_boundary_slows_before_guard_has_to_stop(self):
+        target = (.8, 0.)
+        footprint = [(-.16, -.14), (.16, -.14), (.16, .14), (-.16, .14)]
+        grid = dict(width=140, height=40, resolution=.05, origin=(-2., -1., 0.),
+                    data=[0] * 5600)
+        # Fixed observation limit 4.85 m ahead of the starting pose.
+        for iy in range(grid['height']):
+            grid['data'][iy * grid['width'] + 137] = -1
+        limits = dict(accel_linear=.5, accel_angular=1.)
+        dt = .05
+        previous = (0., 0.)
+        motor = [0.] * 4  # Last command takes 0.20 s to appear in odometry.
+        position = 0.
+        peak = 0.
+        for _ in range(120):
+            pose = (position, 0., 0.)
+            measured = motor.pop(0)
+            demand = slew_arc(previous, target, dt, .5, 1.)
+            command = guarded_forward_twist(pose, target, demand, previous,
+                                           (measured, 0., 0.), footprint, grid,
+                                           .8, .2, .5, dt, limits)
+            self.assertIsNotNone(command, f'avoidable stop at {position:.3f} m')
+            peak = max(peak, command[0])
+            self.assertTrue(swept_clear(pose, *command, footprint, grid,
+                                        max(.8, command[0] / .2 + .5)))
+            previous = command
+            motor.append(command[0])
+            position += measured * dt
+        self.assertGreater(position, 2.5)
+        self.assertAlmostEqual(peak, .8)
 
     def test_observed_side_motion_and_occupied_start_disallow_reduced_command(self):
         pose = (0., 0., 0.)
