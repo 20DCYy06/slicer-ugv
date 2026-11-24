@@ -5,6 +5,7 @@ import sys
 import unittest
 
 import roslaunch
+import rospkg
 import yaml
 
 
@@ -35,14 +36,25 @@ class FieldLaunchTests(unittest.TestCase):
         self.assertTrue(displays['/scan']['Enabled'])
         self.assertTrue(displays['/ugv/move_base/global_costmap/costmap']['Enabled'])
 
+    def test_rtk_receiver_and_local_sensor_steps_start_disjoint_nodes(self):
+        rtk = load('slicer_field_sensors.launch', ['start_local_sensors:=false'])
+        local = load('slicer_field_sensors.launch', ['geographic:=false'])
+        rtk_nodes = {(n.package, n.type) for n in rtk.nodes}
+        local_nodes = {(n.package, n.type) for n in local.nodes}
+        self.assertTrue(any(package == 'cup_gnss' for package, _ in rtk_nodes))
+        self.assertFalse(any(package == 'cup_gnss' for package, _ in local_nodes))
+        self.assertFalse(any('fastlio' in kind for _, kind in rtk_nodes))
+        self.assertTrue(any('fastlio' in kind for _, kind in local_nodes))
+
     def test_body_shortcut_selects_only_0x16_driver_without_tf(self):
         config = load('slicer_body_driver.launch')
         self.assertEqual([(n.package, n.type) for n in config.nodes],
                          [('ugv_slicer_control', 'c30d_driver_node.py')])
         self.assertEqual(config.params['/slicer_c30d_driver/control_mode'].value, 'body_speed')
         self.assertFalse(config.params['/slicer_c30d_driver/publish_tf'].value)
+        bringup = Path(rospkg.RosPack().get_path('ugv_bringup'))
         self.assertEqual(Path(config.params['/slicer_c30d_driver/config_file'].value),
-                         CONFIG / 'slicer_driver_body_speed.yaml')
+                         bringup / 'config/slicer_driver_body_speed.yaml')
 
     def test_sensor_shortcut_retains_single_local_ekf_and_tuned_wz(self):
         config = load('slicer_field_sensors.launch', ['geographic:=false'])
@@ -60,7 +72,7 @@ class FieldLaunchTests(unittest.TestCase):
         self.assertFalse(any(n.type in ('c30d_driver_node.py', 'move_base', 'slam_gmapping')
                              for n in config.nodes))
 
-    def assert_navigation_chain(self, config, field=True):
+    def assert_navigation_chain(self, config, field=True, heading=False):
         types = [n.type for n in config.nodes]
         for name in ('move_base', 'arc_velocity_guard.py', 'velocity_mux.py'):
             self.assertEqual(types.count(name), 1)
@@ -68,21 +80,27 @@ class FieldLaunchTests(unittest.TestCase):
             self.assertNotIn(name, types)
         params = config.params
         plugin = params['/ugv/move_base/base_local_planner'].value
-        self.assertEqual(plugin, 'dwa_local_planner/DWAPlannerROS')
+        expected = 'slicer_navigation/DWAPlannerROS' if heading else 'dwa_local_planner/DWAPlannerROS'
+        self.assertEqual(plugin, expected)
         prefix = '/ugv/move_base/DWAPlannerROS/'
         planner = {key[len(prefix):]: param.value for key, param in params.items() if key.startswith(prefix)}
         for key in ('max_vel_x', 'max_vel_trans'):
             self.assertEqual(planner[key], .8 if field else .4)
         self.assertAlmostEqual(planner['max_vel_theta'], math.pi / 4 if field else .25)
         if field:
+            self.assertEqual((planner['acc_lim_x'], planner['acc_lim_trans'], planner['sim_time']),
+                             (1.0, 1.0, 1.05))
             source = Path(params['/slicer_nav_arc_guard/config_file'].value)
             source_config = yaml.safe_load(source.read_text())
             effective = planner_limits(source_config['navigation'], plugin, planner)
             self.assertEqual(effective['max_forward'], .8)
+            self.assertEqual(effective['accel_linear'], 1.0)
             self.assertAlmostEqual(effective['max_angular'], math.pi / 4)
             timeout = params['/slicer_nav_arc_guard/command_timeout'].value
             speed = effective['max_forward']
-            travel = speed * (speed / effective['accel_linear'] + timeout)
+            brake = min(effective['brake_linear'], effective['accel_linear'])
+            self.assertEqual(brake, .2)
+            travel = speed * (speed / brake + timeout)
             local = '/ugv/move_base/local_costmap/'
             radius = max(math.hypot(*vertex) for vertex in params[local + 'footprint'].value)
             grid_period = (1 / params[local + 'update_frequency'].value
@@ -120,7 +138,7 @@ class FieldLaunchTests(unittest.TestCase):
 
     def test_default_geographic_profile_uses_fixed_map_grid_without_static_or_depth(self):
         config = load('slicer_field_navigation.launch')
-        self.assert_navigation_chain(config)
+        self.assert_navigation_chain(config, heading=True)
         self.assert_no_depth(config)
         self.assertIn('/ugv/move_base/', config.clear_params)
         self.assertFalse(any(n.package in ('gmapping', 'realsense2_camera') for n in config.nodes))
@@ -140,10 +158,41 @@ class FieldLaunchTests(unittest.TestCase):
         self.assertEqual(p[prefix + 'local_costmap/global_frame'].value, 'odom')
         self.assertTrue(p[prefix + 'local_costmap/rolling_window'].value)
         self.assertTrue(p[prefix + 'local_costmap/track_unknown_space'].value)
+        self.assertEqual(p[prefix + 'base_global_planner'].value, 'slicer_navigation/BSplineGlobalPlanner')
+        self.assertTrue(p['/slicer_nav_arc_guard/adaptive_forward_speed'].value)
+        self.assertEqual(p[prefix + 'GlobalPlanner/lethal_cost'].value, 175)
+        self.assertFalse(p[prefix + 'GlobalPlanner/use_grid_path'].value)
+        self.assertEqual(p[prefix + 'GlobalPlanner/smoothing/max_cost'].value, 173)
+        self.assertTrue(p[prefix + 'GlobalPlanner/smoothing/observed_prefix'].value)
+        self.assertEqual(p[prefix + 'DWAPlannerROS/vx_samples'].value, 9)
+        self.assertEqual(p[prefix + 'DWAPlannerROS/start_heading_rate'].value, .45)
+        self.assertEqual(p[prefix + 'DWAPlannerROS/start_heading_lookahead'].value, .20)
+        self.assertEqual(p[prefix + 'DWAPlannerROS/start_heading_kp'].value, 1.6)
+        self.assertEqual(p[prefix + 'GlobalPlanner/continuity/preferred_clearance'].value, .45)
+        self.assertEqual(p[prefix + 'DWAPlannerROS/vth_samples'].value, 21)
+        self.assertFalse(p['/slicer_nav_arc_guard/registration_reverse'].value)
+        for scope in ('global_costmap', 'local_costmap'):
+            costmap = prefix + scope + '/'
+            self.assertEqual(p[costmap + 'inflation_layer/inflation_radius'].value, .25)
+            self.assertEqual(p[costmap + 'obstacle_layer/scan/obstacle_range'].value, 4.5)
+            self.assertEqual(p[costmap + 'obstacle_layer/scan/raytrace_range'].value, 4.5)
+
+    def test_preparation_uses_separate_speed_profile_without_adaptive_guard(self):
+        p = load('slicer_field_navigation.launch', ['geographic:=false', 'preparation:=true']).params
+        prefix = '/ugv/move_base/DWAPlannerROS/'
+        for key in ('max_vel_x', 'max_vel_trans'):
+            self.assertEqual(p[prefix + key].value, .35)
+        for key in ('acc_lim_x', 'acc_lim_trans'):
+            self.assertEqual(p[prefix + key].value, .30)
+        self.assertEqual(p[prefix + 'sim_time'].value, 1.7)
+        self.assertFalse(p['/slicer_nav_arc_guard/adaptive_forward_speed'].value)
+        self.assertTrue(p['/slicer_nav_arc_guard/registration_reverse'].value)
+        self.assertEqual(p['/ugv/move_base/base_local_planner'].value,
+                         'dwa_local_planner/DWAPlannerROS')
 
     def test_bootstrap_odom_profile_remains_explicit(self):
         config = load('slicer_field_navigation.launch', ['geographic:=false'])
-        self.assert_navigation_chain(config)
+        self.assert_navigation_chain(config, heading=True)
         self.assert_no_depth(config)
         p = config.params
         self.assertEqual(p['/ugv/move_base/global_costmap/global_frame'].value, 'odom')

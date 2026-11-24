@@ -6,16 +6,10 @@ from dashboard_model import StableStatus
 
 
 STEPS = {
-    'sensors': '1. 启动定位与传感器',
-    'driver': '2. 启动底盘驱动',
-    'vision': '3. 移动并抓取',
-    'navigation': '4. 启动导航',
-    'air': '5. 飞机通信节点',
-    'wgs84': 'WGS84 测试目标',
-}
-DIAGNOSTICS = {
-    'calibrate': '直行配准诊断 (2.5 m)',
-    'map': '手动切换 map',
+    'rtk': '1. 启动 RTK 与配准',
+    'base': '2. 启动雷达与底盘',
+    'navigation': '3. 启动导航',
+    'air': '4. 飞机通信节点',
 }
 STATUS = {'red': '未启动', 'yellow': '进行中', 'green': '已就绪'}
 STYLES = """
@@ -55,8 +49,7 @@ class WorkflowPanel(QtWidgets.QWidget):
         self.submit_process_scan = submit_process_scan
         self.scan = None
         self.pending_step = None
-        self.confirmation = None
-        self.target_dialog = None
+        self.waypoint_dialog = None
         self.calibration_blocked = False
         self.scan_timer = QtCore.QTimer(self, interval=40)
         self.scan_timer.timeout.connect(self.finish_scan)
@@ -80,7 +73,7 @@ class WorkflowPanel(QtWidgets.QWidget):
             button.setSizePolicy(QtWidgets.QSizePolicy.Ignored, QtWidgets.QSizePolicy.Fixed)
             button.clicked.connect(lambda _checked=False, item=key: self.click(item))
             self.buttons[key] = button
-            if key not in ('air', 'wgs84'):
+            if key != 'air':
                 layout.addWidget(button)
 
         options = QtWidgets.QHBoxLayout()
@@ -94,21 +87,6 @@ class WorkflowPanel(QtWidgets.QWidget):
         options.addWidget(self.buttons['air'], 1)
         options.addWidget(self.air_mode)
         layout.addLayout(options)
-
-        actions = QtWidgets.QHBoxLayout()
-        actions.setSpacing(4)
-        actions.addWidget(self.buttons['wgs84'], 1)
-        self.diagnostics = QtWidgets.QPushButton('导航诊断')
-        self.diagnostics.setFixedHeight(23)
-        menu = QtWidgets.QMenu(self.diagnostics)
-        self.diagnostics_actions = {}
-        for key, label in DIAGNOSTICS.items():
-            action = menu.addAction(label)
-            action.triggered.connect(lambda _checked=False, item=key: self.click(item))
-            self.diagnostics_actions[key] = action
-        self.diagnostics.setMenu(menu)
-        actions.addWidget(self.diagnostics)
-        layout.addLayout(actions)
 
         self.stop_button = QtWidgets.QPushButton('一键全部停止', objectName='stop_all')
         self.stop_button.setFixedHeight(23)
@@ -129,65 +107,49 @@ class WorkflowPanel(QtWidgets.QWidget):
     def click(self, key):
         if self.cancel_pending_goal is not None:
             self.cancel_pending_goal()
-        if key == 'wgs84':
-            if key in self.controller.owned:
-                self.controller.stop(key)
-            else:
-                self.open_wgs84()
-            self.refresh()
-            return
         if self.pending_step is not None and key == self.pending_step[0]:
             return
-        if key == 'calibrate' and self.confirmation is not None:
-            self.confirmation.raise_()
-            self.confirmation.activateWindow()
-            return
-        if self.confirmation is not None or key in self.controller.owned:
+        if self.waypoint_dialog is not None or key in self.controller.owned:
             self.cancel_pending()
         self.request_step(key, self.air_mode.currentData(), confirmed=False)
 
-    def open_wgs84(self):
-        if self.target_dialog is not None:
-            self.target_dialog.raise_()
-            self.target_dialog.activateWindow()
+    def confirm_waypoint(self, coordinates, navigate):
+        if self.controller.stopping_all is True or not coordinates:
             return
-        dialog = QtWidgets.QDialog(self)
-        dialog.setWindowTitle('发送 WGS84 测试目标')
+        if self.waypoint_dialog is not None:
+            old, self.waypoint_dialog = self.waypoint_dialog, None
+            old.reject()
+        location = f'\nWGS84 经纬度 {coordinates}'
+        dialog = QtWidgets.QMessageBox(
+            QtWidgets.QMessageBox.Question, 'Waypoint 导航',
+            '导航到所选位置？' + location,
+            QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No, self)
+        dialog.setWindowModality(QtCore.Qt.NonModal)
+        dialog.button(QtWidgets.QMessageBox.Yes).setText('开始导航')
+        dialog.button(QtWidgets.QMessageBox.No).setText('取消')
+        dialog.setDefaultButton(QtWidgets.QMessageBox.No)
+        dialog.setEscapeButton(QtWidgets.QMessageBox.No)
         dialog.setAttribute(QtCore.Qt.WA_DeleteOnClose)
-        form = QtWidgets.QFormLayout(dialog)
-        inputs = []
-        for label in ('纬度 (°)', '经度 (°)'):
-            entry = QtWidgets.QLineEdit()
-            entry.setAccessibleName(label)
-            form.addRow(label, entry)
-            inputs.append(entry)
-        hint = QtWidgets.QLabel('采用当前 Fixed 定位的椭球高。车辆可能先执行自动配准准备运动。')
-        form.addRow(hint)
-        buttons = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel)
-        buttons.button(QtWidgets.QDialogButtonBox.Ok).setText('发送任务')
-        buttons.button(QtWidgets.QDialogButtonBox.Cancel).setText('取消')
-        form.addRow(buttons)
-
-        def submit():
-            if self.cancel_pending_goal is not None:
-                self.cancel_pending_goal()
-            if self.controller.send_wgs84(*(entry.text() for entry in inputs)):
-                dialog.accept()
-            self.refresh()
-
-        buttons.accepted.connect(submit)
-        buttons.rejected.connect(dialog.reject)
-        dialog.finished.connect(lambda _result: self._finished_wgs84(dialog))
-        self.target_dialog = dialog
+        dialog.finished.connect(lambda answer: self._finished_waypoint(dialog, answer, navigate))
+        self.waypoint_dialog = dialog
         dialog.show()
 
-    def _finished_wgs84(self, dialog):
-        if self.target_dialog is dialog:
-            self.target_dialog = None
+    def _finished_waypoint(self, dialog, answer, navigate):
+        if self.waypoint_dialog is dialog:
+            self.waypoint_dialog = None
+            if answer == QtWidgets.QMessageBox.Yes and self.controller.stopping_all is not True:
+                if self.cancel_pending_goal is not None:
+                    self.cancel_pending_goal()
+                navigate()
+
+    def _owner(self, key):
+        if key == 'base':
+            return tuple(self.controller.owned.get(group) for group in ('sensors', 'driver'))
+        return self.controller.owned.get(key)
 
     def request_step(self, key, mode, confirmed):
-        owner = self.controller.owned.get(key)
-        if self.submit_process_scan is None or (owner is not None and key not in ('sensors', 'driver')):
+        owner = self._owner(key)
+        if self.submit_process_scan is None or (owner is not None and key not in ('rtk', 'base')):
             self.run_step(key, mode, confirmed)
             return
         if self.pending_step is not None or self.scan is not None and not self.scan.done():
@@ -216,7 +178,7 @@ class WorkflowPanel(QtWidgets.QWidget):
             except Exception as error:
                 self.controller.report(f'无法检查本机进程，请重新点击。{error}')
             else:
-                if self.controller.owned.get(key) is not owner:
+                if self._owner(key) != owner:
                     self.controller.report('步骤状态已变化，请重新点击。')
                 else:
                     self.run_step(key, mode, confirmed, process_groups=groups)
@@ -225,39 +187,16 @@ class WorkflowPanel(QtWidgets.QWidget):
     def run_step(self, key, mode, confirmed, **kwargs):
         if confirmed and self.cancel_pending_goal is not None:
             self.cancel_pending_goal()
-        result = self.controller.click(key, mode=mode, confirmed=confirmed, **kwargs)
-        if result == 'confirm' and not confirmed:
-            box = QtWidgets.QMessageBox(
-                QtWidgets.QMessageBox.Question, '确认地理配准',
-                '小车将在配准时直行约 2.5 m。确认前方空旷且可以急停后开始。',
-                QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No, self)
-            box.setWindowFlag(QtCore.Qt.WindowStaysOnTopHint)
-            box.setWindowModality(QtCore.Qt.NonModal)
-            box.setAttribute(QtCore.Qt.WA_DeleteOnClose)
-            box.setDefaultButton(QtWidgets.QMessageBox.No)
-            box.finished.connect(lambda answer: self.finish_confirmation(box, mode, answer))
-            self.confirmation = box
-            box.show()
+        self.controller.click(key, mode=mode, confirmed=confirmed, **kwargs)
         self.refresh()
-
-    def finish_confirmation(self, box, mode, answer):
-        if self.confirmation is box:
-            self.confirmation = None
-            if answer == QtWidgets.QMessageBox.Yes:
-                self.request_step('calibrate', mode, confirmed=True)
-            else:
-                self.refresh()
 
     def cancel_pending(self):
         self.scan_timer.stop()
         self.pending_step = None
         if self.scan is not None:
             self.scan.cancel()
-        if self.confirmation is not None:
-            box, self.confirmation = self.confirmation, None
-            box.close()
-        if self.target_dialog is not None:
-            dialog, self.target_dialog = self.target_dialog, None
+        if self.waypoint_dialog is not None:
+            dialog, self.waypoint_dialog = self.waypoint_dialog, None
             dialog.reject()
 
     def stop_all(self):
@@ -272,27 +211,24 @@ class WorkflowPanel(QtWidgets.QWidget):
         now = time.monotonic() if now is None else now
         states = self.controller.states
         pending_key = self.pending_step[0] if self.pending_step is not None else None
-        calibration_blocked = (pending_key in ('calibrate', 'map') or self.confirmation is not None
-                               or self.controller.calibrating or self.controller.switching)
+        calibration_blocked = (self.controller.calibrating or self.controller.switching
+                               or self.controller.startup_calibration_pending)
         if calibration_blocked != self.calibration_blocked:
             self.calibration_blocked = calibration_blocked
             self.calibration_active.emit(calibration_blocked)
         for key, button in self.buttons.items():
             raw_color, raw_suffix, clickable = states[key]
             color, suffix = self.stable.update(key, (raw_color, raw_suffix), now,
-                                               immediate=immediate or not clickable or key == 'vision')
+                                               immediate=immediate or not clickable)
             if key == pending_key:
                 color, suffix = 'yellow', '检查中'
             if button.property('stage') != color:
                 button.setProperty('stage', color)
                 button.style().unpolish(button)
                 button.style().polish(button)
-            suffix = suffix or ('' if key == 'wgs84' and color == 'red' else STATUS[color])
-            tail = ' · ' + suffix if suffix else ''
-            title = ('3. 释放' if key == 'vision' and (suffix in ('抓取完成', '需释放') or suffix.startswith('释放'))
-                     else STEPS[key])
-            if key == 'wgs84' and suffix == '取消本地任务':
-                title, tail = suffix, ''
+            suffix = suffix or STATUS[color]
+            tail = ' · ' + suffix
+            title = STEPS[key]
             text = title + tail
             metrics = button.fontMetrics()
             room = button.width() - metrics.horizontalAdvance(tail) - 15
@@ -304,13 +240,6 @@ class WorkflowPanel(QtWidgets.QWidget):
                 button.setAccessibleName(text)
             if button.isEnabled() != clickable:
                 button.setEnabled(clickable)
-        if self.target_dialog is not None:
-            buttons = self.target_dialog.findChild(QtWidgets.QDialogButtonBox)
-            buttons.button(QtWidgets.QDialogButtonBox.Ok).setEnabled(self.controller.can_send_wgs84())
-        for key, action in self.diagnostics_actions.items():
-            _, suffix, clickable = states[key]
-            action.setText(DIAGNOSTICS[key] + (' · ' + suffix if suffix else ''))
-            action.setEnabled(clickable and key != pending_key)
         self.air_mode.setEnabled(pending_key != 'air' and states['air'][0] == 'red' and states['air'][2])
         messages = list(self.controller.messages)[-3:]
         text = '\n'.join(str(line).strip().replace('\n', ' ') for line in messages)

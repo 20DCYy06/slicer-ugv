@@ -22,12 +22,14 @@ class WorkflowPanelTests(unittest.TestCase):
         self.controller = Mock()
         self.controller.states = {
             key: ('red', '', True)
-            for key in ('sensors', 'driver', 'navigation', 'calibrate', 'map', 'vision', 'air', 'wgs84')
+            for key in ('rtk', 'base', 'navigation', 'air')
         }
         self.controller.messages = []
         self.controller.mux = {}
         self.controller.owned = {}
         self.controller.calibrating = False
+        self.controller.startup_calibration_pending = False
+        self.controller.stopping_all = False
         self.controller.switching = False
         self.controller.can_send_wgs84.return_value = True
         self.panel = WorkflowPanel(self.controller)
@@ -40,16 +42,16 @@ class WorkflowPanelTests(unittest.TestCase):
         QtTest.QTest.mouseClick(button, QtCore.Qt.LeftButton)
 
     def test_step_button_clicks_refresh_and_show_external_ownership(self):
-        for key in ('sensors', 'driver', 'navigation', 'vision'):
+        for key in ('rtk', 'base', 'navigation'):
             self.click(self.panel.buttons[key])
             self.controller.click.assert_called_with(key, mode='v1', confirmed=False)
-        item = self.panel.buttons['sensors']
+        item = self.panel.buttons['rtk']
         self.assertEqual(item.property('stage'), 'red')
-        self.controller.states['sensors'] = ('yellow', '启动中', False)
+        self.controller.states['rtk'] = ('yellow', '启动中', False)
         self.panel.refresh()
         self.assertEqual(item.property('stage'), 'yellow')
         self.assertFalse(item.isEnabled())
-        self.controller.states['sensors'] = ('green', '外部运行中', True)
+        self.controller.states['rtk'] = ('green', '外部运行中', True)
         self.panel.refresh()
         self.assertEqual(item.property('stage'), 'green')
         self.assertIn('外部运行中', item.text())
@@ -70,76 +72,57 @@ class WorkflowPanelTests(unittest.TestCase):
         self.assertFalse(self.panel.air_mode.isEnabled())
         self.assertEqual(air.property('stage'), 'green')
 
-    def test_motion_confirmation_and_stop_all(self):
-        self.controller.click.return_value = 'confirm'
+    def test_stop_remains_available_during_roundtrip(self):
         confirmation_states = []
         self.panel.calibration_active.connect(confirmation_states.append)
-        self.panel.diagnostics_actions['calibrate'].trigger()
-        confirmation = self.panel.confirmation
-        self.assertIsNotNone(confirmation)
-        self.assertEqual(confirmation.windowModality(), QtCore.Qt.NonModal)
-        self.click(confirmation.button(QtWidgets.QMessageBox.No))
-        self.assertEqual(self.controller.click.call_count, 1)
-        self.app.processEvents()
-        self.panel.diagnostics_actions['calibrate'].trigger()
-        confirmation = self.panel.confirmation
-        self.click(confirmation.button(QtWidgets.QMessageBox.Yes))
-        self.controller.click.assert_called_with('calibrate', mode='v1', confirmed=True)
-        self.app.processEvents()
-        self.panel.diagnostics_actions['calibrate'].trigger()
-        self.assertIsNotNone(self.panel.confirmation)
+        self.controller.calibrating = True
+        self.panel.refresh()
         self.click(self.panel.stop_button)
         self.controller.stop_all.assert_called_once_with()
-        self.assertIsNone(self.panel.confirmation)
-        self.assertEqual(confirmation_states, [True, False, True, False, True, False])
+        self.controller.calibrating = False
+        self.panel.refresh()
+        self.assertEqual(confirmation_states, [True, False])
 
-    def test_wgs84_form_calls_shared_sender_and_stop_closes_unsubmitted_form(self):
-        self.click(self.panel.buttons['wgs84'])
-        dialog = self.panel.target_dialog
-        self.assertIsNotNone(dialog)
-        inputs = dialog.findChildren(QtWidgets.QLineEdit)
-        self.assertEqual(len(inputs), 2)
-        self.assertIn('测试', dialog.windowTitle())
-        for item, value in zip(inputs, ('20.2', '120.8')):
-            item.setText(value)
-        self.click(dialog.findChild(QtWidgets.QDialogButtonBox).button(QtWidgets.QDialogButtonBox.Ok))
-        self.controller.send_wgs84.assert_called_once_with('20.2', '120.8')
-        self.assertIsNone(self.panel.target_dialog)
-        self.click(self.panel.buttons['wgs84'])
+    def test_waypoint_confirmation_sends_only_latest_accepted_selection(self):
+        first = Mock()
+        second = Mock()
+        self.panel.confirm_waypoint('31.1111111, 121.1111111', first)
+        dialog = self.panel.waypoint_dialog
+        self.assertIn('31.1111111, 121.1111111', dialog.text())
+        self.click(dialog.button(QtWidgets.QMessageBox.No))
+        first.assert_not_called()
+
+        self.panel.confirm_waypoint('31.1111111, 121.1111111', first)
+        self.panel.confirm_waypoint('31.2222222, 121.2222222', second)
+        dialog = self.panel.waypoint_dialog
+        self.assertIn('31.2222222, 121.2222222', dialog.text())
+        self.click(dialog.button(QtWidgets.QMessageBox.Yes))
+        first.assert_not_called()
+        second.assert_called_once_with()
+
+        self.panel.confirm_waypoint('', first)
         self.click(self.panel.stop_button)
-        self.assertIsNone(self.panel.target_dialog)
-        self.assertEqual(self.controller.send_wgs84.call_count, 1)
+        self.assertIsNone(self.panel.waypoint_dialog)
+        first.assert_not_called()
 
-    def test_open_wgs84_form_disables_send_when_readiness_changes(self):
-        self.controller.can_send_wgs84.return_value = True
-        self.click(self.panel.buttons['wgs84'])
-        button = self.panel.target_dialog.findChild(QtWidgets.QDialogButtonBox).button(QtWidgets.QDialogButtonBox.Ok)
-        self.assertTrue(button.isEnabled())
-
-        self.controller.can_send_wgs84.return_value = False
-        self.panel.refresh()
-        self.assertFalse(button.isEnabled())
-        self.click(button)
-        self.controller.send_wgs84.assert_not_called()
-
-        self.controller.can_send_wgs84.return_value = True
-        self.panel.refresh()
-        self.assertTrue(button.isEnabled())
+    def test_waypoint_cannot_submit_without_coordinates(self):
+        self.panel.confirm_waypoint('', Mock())
+        self.assertIsNone(self.panel.waypoint_dialog)
 
     def test_slow_process_scan_leaves_stop_responsive(self):
         future = Future()
         future.set_running_or_notify_cancel()
         self.panel.submit_process_scan = Mock(return_value=future)
-        self.click(self.panel.buttons['driver'])
+        self.click(self.panel.buttons['base'])
         self.panel.submit_process_scan.assert_called_once_with()
         self.controller.click.assert_not_called()
-        self.assertIn('检查中', self.panel.buttons['driver'].toolTip())
+        self.assertIn('检查中', self.panel.buttons['base'].toolTip())
         self.click(self.panel.stop_button)
         self.controller.stop_all.assert_called_once_with()
         future.set_result({})
         self.app.processEvents()
         self.controller.click.assert_not_called()
-        self.assertTrue(self.panel.buttons['driver'].isEnabled())
+        self.assertTrue(self.panel.buttons['base'].isEnabled())
 
     def test_click_uses_fresh_scan_and_recovers_from_scan_failure(self):
         failed, recovered = Future(), Future()
@@ -147,27 +130,27 @@ class WorkflowPanelTests(unittest.TestCase):
         groups = {'driver': {820}}
         recovered.set_result(groups)
         self.panel.submit_process_scan = Mock(side_effect=[failed, recovered])
-        self.click(self.panel.buttons['driver'])
+        self.click(self.panel.buttons['base'])
         QtTest.QTest.qWait(80)
         self.controller.click.assert_not_called()
-        self.assertTrue(self.panel.buttons['driver'].isEnabled())
-        self.click(self.panel.buttons['driver'])
+        self.assertTrue(self.panel.buttons['base'].isEnabled())
+        self.click(self.panel.buttons['base'])
         QtTest.QTest.qWait(80)
         self.controller.click.assert_called_once_with(
-            'driver', mode='v1', confirmed=False, process_groups=groups)
+            'base', mode='v1', confirmed=False, process_groups=groups)
 
     def test_driver_stopping_requires_a_fresh_scan_and_cannot_restart_after_exit(self):
         original = object()
         self.controller.owned['driver'] = original
         future = Future()
         self.panel.submit_process_scan = Mock(return_value=future)
-        self.click(self.panel.buttons['driver'])
+        self.click(self.panel.buttons['base'])
         self.controller.click.assert_not_called()
         self.controller.owned.clear()
         future.set_result({})
         QtTest.QTest.qWait(80)
         self.controller.click.assert_not_called()
-        self.assertTrue(self.panel.buttons['driver'].isEnabled())
+        self.assertTrue(self.panel.buttons['base'].isEnabled())
 
     def test_scan_timeout_never_launches_when_a_late_result_arrives(self):
         late = Future()
@@ -175,17 +158,17 @@ class WorkflowPanelTests(unittest.TestCase):
         recovered = Future()
         recovered.set_result({})
         self.panel.submit_process_scan = Mock(side_effect=[late, recovered])
-        self.click(self.panel.buttons['driver'])
+        self.click(self.panel.buttons['base'])
         with patch('workflow_panel.time.monotonic', return_value=self.panel.pending_step[-1] + 1.):
             self.panel.finish_scan()
         self.assertIn('超时', self.controller.report.call_args[0][0])
         late.set_result({})
         QtTest.QTest.qWait(80)
         self.controller.click.assert_not_called()
-        self.click(self.panel.buttons['driver'])
+        self.click(self.panel.buttons['base'])
         QtTest.QTest.qWait(80)
         self.controller.click.assert_called_once_with(
-            'driver', mode='v1', confirmed=False, process_groups={})
+            'base', mode='v1', confirmed=False, process_groups={})
 
     def test_log_keeps_recent_three_lines_in_compact_panel(self):
         self.controller.messages = ['更早', '启动定位', '底盘就绪', '开始配准']
@@ -194,13 +177,10 @@ class WorkflowPanelTests(unittest.TestCase):
         self.assertLessEqual(self.panel.minimumSizeHint().width(), 260)
         self.assertLessEqual(self.panel.sizeHint().height(), 310)
 
-    def test_held_grasp_button_switches_to_release_and_parking_control_is_absent(self):
-        self.controller.states['vision'] = ('green', '抓取完成', True)
-        self.panel.refresh()
-        self.assertEqual(list(self.panel.buttons)[:4], ['sensors', 'driver', 'vision', 'navigation'])
-        self.assertTrue(self.panel.buttons['vision'].text().startswith('3. 释放'))
-        self.assertNotIn('解除停车', [button.text() for button in
-                                       self.panel.findChildren(QtWidgets.QPushButton)])
+    def test_only_four_steps_and_stop_are_shown(self):
+        self.assertEqual(list(self.panel.buttons), ['rtk', 'base', 'navigation', 'air'])
+        self.assertEqual({button.objectName() for button in self.panel.findChildren(QtWidgets.QPushButton)},
+                         {'workflow_rtk', 'workflow_base', 'workflow_navigation', 'workflow_air', 'stop_all'})
 
 
 if __name__ == '__main__':

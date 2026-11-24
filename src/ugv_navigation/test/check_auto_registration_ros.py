@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Exercise one real WGS84 task interface on a private, device-free ROS graph.
 
-Source the task's Noetic install, then run this script for v1, v2 or cli. The
+Source the task's Noetic install, then select v1, v2, cli or roundtrip. The
 existing differential plant consumes only final Mux Twist. Scan, local odom,
 receiver FIXED and chassis-ready are synthetic; navigation and global EKF are
 real. The script launches no hardware or transport processes.
@@ -30,7 +30,7 @@ def wait_until(check, label, timeout=15., diagnostic=lambda: None):
     raise AssertionError(f'Timed out waiting for {label}: {diagnostic()}')
 
 
-def run(protocol, interruption, logs, launch):
+def run(protocol, interruption, logs, launch, odom_cruise=False, rear_blocked=False):
     import rosgraph
     import rospkg
     import rospy
@@ -41,6 +41,7 @@ def run(protocol, interruption, logs, launch):
     from sensor_msgs.msg import NavSatFix
     from slicer_air_ground_msgs.msg import Command, GeoPoint
     from std_msgs.msg import Bool, String
+    from std_srvs.srv import Trigger
     from tf2_msgs.msg import TFMessage
     from cup_gnss.enu import to_enu
     from test_odom_navigation import TestOnlyDifferentialPlant
@@ -59,6 +60,10 @@ def run(protocol, interruption, logs, launch):
 
     class Plant(TestOnlyDifferentialPlant):
         ROOM = (-5., 5., -3., 3.)
+        # Let the 4.5 m navigation profile see its entire braking envelope
+        # on the clear return. The ordinary task fixture retains its 3.5 m scans.
+        if protocol == 'roundtrip':
+            SCAN_RANGE_M = 4.5
 
         def __init__(self):
             self.fix_pub = rospy.Publisher('/gnss/fix', NavSatFix, queue_size=10)
@@ -179,7 +184,8 @@ def run(protocol, interruption, logs, launch):
     try:
         launch('geographic', *geographic,
                f'session_file:={logs / "session.json"}')
-        launch('runtime', 'roslaunch', 'ugv_bringup', 'slicer_navigation_runtime.launch')
+        launch('runtime', 'roslaunch', 'ugv_bringup', 'slicer_navigation_runtime.launch',
+               f'odom_cruise:={str(odom_cruise).lower()}')
         if protocol == 'v1':
             launch('task', 'roslaunch', 'ugv_bringup', 'slicer_air_ground.launch')
         elif protocol == 'v2':
@@ -188,10 +194,53 @@ def run(protocol, interruption, logs, launch):
                    and state.get('geo', {}).get('paired_rtk_usable')
                    and state.get('mux', {}).get('manual_hold') is False
                    and plant.grid('global_costmap') is not None
-                   and (protocol == 'cli' or (state.get('task', {}).get('phase') == 'IDLE'
+                   and (protocol in ('cli', 'roundtrip') or (state.get('task', {}).get('phase') == 'IDLE'
                                              and publisher.get_num_connections()))),
                    'released odom startup and qualified RTK', 32., evidence)
         assert not state['geo']['registered'] and not goals
+        if protocol == 'roundtrip':
+            repo = Path(__file__).resolve().parents[3]
+            sys.path.insert(0, str(repo / 'tools/rtk/desktop'))
+            from dashboard_model import Dashboard
+            from ros_observer import Observer
+
+            observer = Observer(Dashboard())
+            started = time.monotonic()
+            client = launch('roundtrip', 'rosrun', 'ugv_navigation', 'geographic.py',
+                            'initialize', '--return-to-start', '--timeout', '25')
+            if rear_blocked:
+                wait_until(lambda: plant.pose()[0] > 1.45, 'outbound motion', 20., evidence)
+                # New obstacle behind the car after the outbound path has passed it.
+                plant.set_segments((((1.02, -1.), (1.02, 1.)),))
+            wait_until(lambda: state['geo']['registered'], 'outbound registration', 30., evidence)
+            wait_until(lambda: observer.display_frame(time.monotonic()) == 'map',
+                       'RViz map while the preparation planner is still odom', 5., evidence)
+            assert client.poll() is None and state['runtime']['mode'] == 'odom', evidence()
+            wait_until(lambda: client.poll() is not None, 'return termination', 25., evidence)
+            trace = plant.commands_since(started)
+            peak = -min(row[1] for row in trace)
+            if rear_blocked:
+                assert client.returncode != 0 and plant.pose()[0] > 1.20, evidence()
+                assert abs(plant.velocity) < .001, evidence()
+                result = dict(case='rear obstacle', peak_reverse=peak, stopped_at=plant.pose()[0])
+            else:
+                assert client.returncode == 0, (logs / 'roundtrip.log').read_text()
+                assert .795 <= peak <= .80001 and math.hypot(*plant.pose()[:2]) <= .12, (peak, evidence())
+                assert abs(plant.velocity) < .001, evidence()
+                peak_at = min(range(len(trace)), key=lambda i: trace[i][1])
+                assert any(-.35 < row[1] < -.05 for row in trace[peak_at+1:]), evidence()
+                switched = rospy.ServiceProxy('/geographic/navigation_map', Trigger)()
+                assert switched.success, switched
+                wait_until(lambda: state['runtime']['mode'] == 'map',
+                           'planner map handoff after return', 30., evidence)
+                result = dict(case='clear return', peak_reverse=peak, stopped_at=plant.pose()[0])
+            print(f'PASS roundtrip: early map preview, {result}; evidence in {logs}', flush=True)
+            return
+        if odom_cruise:
+            assert state['runtime']['preparation'] is False, evidence()
+            assert rospy.get_param('/ugv/move_base/DWAPlannerROS/max_vel_x') == .8
+            print('PASS ordinary odom cruise without existing RTK registration', flush=True)
+        expected_mux_instances = 3 if odom_cruise else 2
 
         set_op = 'SET_TASK' if protocol == 'v1' else 'SET_TARGET'
         initial, destination = wgs84(2.85, 0.), wgs84(2.35, 0.)
@@ -207,7 +256,7 @@ def run(protocol, interruption, logs, launch):
             assert goals[0][3] == '/slicer_navigation_runtime', evidence()
             expected = to_enu(*destination, state['geo']['origin'])
             assert math.dist(goals[1][1:3], expected[:2]) < .01, evidence()
-            assert state['geo']['registered'] and len(mux_ids) == 2, evidence()
+            assert state['geo']['registered'] and len(mux_ids) == expected_mux_instances, evidence()
             print(f'PASS CLI: plan did not move, send prepared and completed the original map target; {logs}')
             return
         send(set_op, point=initial)
@@ -275,7 +324,7 @@ def run(protocol, interruption, logs, launch):
         assert publishers['/ugv/move_base/status'] == ['/ugv/move_base'], evidence()
         assert transform_owners[('odom', 'base_link')] == {'/slicer_c30d_driver'}, transform_owners
         assert transform_owners[('map', 'odom')] == {'/global_localization/ekf'}, transform_owners
-        assert len(mux_ids) == 2 and len([row for row in goals if row[0] == 'map']) == 2, evidence()
+        assert len(mux_ids) == expected_mux_instances and len([row for row in goals if row[0] == 'map']) == 2, evidence()
         odom_goal_count = 2 if interruption == 'pause' else 1
         assert plant.error is None and len([row for row in goals if row[0] == 'odom']) == odom_goal_count, evidence()
         print(f'PASS {protocol}: {odom_goal_count} odom target(s), two map targets, latest intent, registered reuse, '
@@ -288,10 +337,16 @@ def run(protocol, interruption, logs, launch):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('protocol', choices=('v1', 'v2', 'cli'))
+    parser.add_argument('protocol', choices=('v1', 'v2', 'cli', 'roundtrip'))
     parser.add_argument('--interrupt', choices=('pause', 'cancel', 'global-output'))
+    parser.add_argument('--odom-cruise', action='store_true',
+                        help='start in ordinary odom and enter preparation only for WGS84')
+    parser.add_argument('--rear-blocked', action='store_true', help='insert a rear obstacle in the roundtrip test')
     args = parser.parse_args()
-    if args.protocol == 'cli' and args.interrupt:
+    if (args.rear_blocked and args.protocol != 'roundtrip'
+            or args.odom_cruise and args.protocol == 'roundtrip'):
+        parser.error('the roundtrip test starts in the preparation profile and may add a rear obstacle')
+    if args.protocol in ('cli', 'roundtrip') and args.interrupt:
         parser.error('interruption variants apply to a V1 or V2 task')
     with socket.socket() as free:
         free.bind(('127.0.0.1', 0))
@@ -317,7 +372,7 @@ def main():
     try:
         launch('core', 'roscore', '-p', str(port))
         wait_until(master_alive, 'private loopback ROS master')
-        run(args.protocol, args.interrupt, logs, launch)
+        run(args.protocol, args.interrupt, logs, launch, args.odom_cruise, args.rear_blocked)
     finally:
         for process in reversed(processes):
             if process.poll() is None:

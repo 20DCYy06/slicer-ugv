@@ -2,10 +2,12 @@
   <!-- Owns the existing field navigation launch only. Start field sensors
        (including the global EKF) and the chassis driver separately. -->
   <arg name="initial_mode" default="odom"/>
+  <arg name="odom_cruise" default="false"/>
   <node pkg="ugv_navigation" type="navigation_runtime.py" name="slicer_navigation_runtime"
         output="screen" required="true">
     <rosparam command="load" file="$(find ugv_bringup)/config/navigation_registration.yaml"/>
     <param name="initial_mode" value="$(arg initial_mode)"/>
+    <param name="odom_cruise" value="$(arg odom_cruise)"/>
     <param name="field_launch" value="$(find ugv_bringup)/launch/slicer_field_navigation.launch"/>
   </node>
 </launch>

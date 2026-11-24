@@ -31,6 +31,7 @@ WAYPOINT_CLICK = 'waypoint'
 GOAL_STATUS_AGE = .5
 GOAL_WAIT = .65
 FIX_BUFFER_SIZE = 64
+WAYPOINT_PROMPT = '等待地理配准'
 
 
 def finite(*values):
@@ -70,6 +71,9 @@ class Observer:
         self.fixed_stamp_ns = 0
         self.last_quality_stamp_ns = 0
         self.fixed_session = None
+        self.waypoint_selected = None
+        self.waypoint_status = f'Waypoint：{WAYPOINT_PROMPT}'
+        self.waypoint_coords = ''
         self.goal_pub = rospy.Publisher(ACTION + '/goal', MoveBaseActionGoal, queue_size=1)
         self.subscribers = []
         for topic, kind, callback in (
@@ -206,7 +210,8 @@ class Observer:
                               time.monotonic() - max(0., age))
 
     def local_odom(self, message):
-        if not recent_stamp(message.header.stamp.to_sec(), 1.):
+        stamp = message.header.stamp.to_sec()
+        if not recent_stamp(stamp, 1.):
             return
         p, speed = message.pose.pose.position, message.twist.twist
         if message.header.frame_id != 'odom' or not finite(p.x, p.y, speed.linear.x, speed.angular.z):
@@ -322,16 +327,21 @@ class Observer:
             return origin
         return None
 
+    def fresh_transform(self, frame, source):
+        try:
+            transform = self.tf.lookup_transform(frame, source, rospy.Time(0))
+        except (tf2_ros.LookupException, tf2_ros.ConnectivityException, tf2_ros.ExtrapolationException):
+            return None
+        return transform if recent_stamp(transform.header.stamp.to_sec(), 1.5) else None
+
+    def display_frame(self, now):
+        return self.board.display_frame(now, self.fresh_transform('map', 'odom') is not None)
+
     def point_in(self, point, frame):
         if point.header.frame_id == frame:
             return point
-        try:
-            transform = self.tf.lookup_transform(frame, point.header.frame_id, rospy.Time(0))
-            if not recent_stamp(transform.header.stamp.to_sec(), 1.5):
-                return None
-            return tf2_geometry_msgs.do_transform_point(point, transform)
-        except (tf2_ros.LookupException, tf2_ros.ConnectivityException, tf2_ros.ExtrapolationException):
-            return None
+        transform = self.fresh_transform(frame, point.header.frame_id)
+        return tf2_geometry_msgs.do_transform_point(point, transform) if transform else None
 
     def wgs84(self, point, now):
         origin = self.origin(now)
@@ -359,9 +369,15 @@ class Observer:
                 or not recent_stamp(message.header.stamp.to_sec(), 2.)):
             return
         point = self.point(message.header.frame_id, p.x, p.y, p.z)
-        geographic = self.wgs84(point, time.monotonic())
-        text = coordinates(geographic) if geographic else '待配准或等待 TF'
-        print(f'Waypoint | 经纬度：{text}', flush=True)
+        now = time.monotonic()
+        with self.lock:
+            geographic = self.wgs84(point, now)
+            text = coordinates(geographic) if geographic else ''
+            result = text or ('等待地图 TF' if self.origin(now) is not None else WAYPOINT_PROMPT)
+            self.waypoint_status, self.waypoint_coords = f'Waypoint：{result}', text
+        print(f'Waypoint | 经纬度：{result}', flush=True)
+        if text and self.waypoint_selected is not None:
+            self.waypoint_selected(geographic, text)
 
     def _goal_blocked_locked(self, reason, now):
         self.manual_feedback = reason, now
@@ -413,8 +429,15 @@ class Observer:
                    for goal, (_, seen) in self.action_goals.items()):
                 reason = 'move_base 有其他控制端的目标，当前目标优先'
         configured = self.board.recent('configured_frame', now, NAV_STATUS_AGE)
-        if reason is None and (message.header.frame_id != frame or configured != frame):
+        if reason is None and configured != frame:
             reason = '导航坐标系尚未确认或已切换，请重新点选'
+        if reason is None and message.header.frame_id != frame:
+            transform = (self.fresh_transform(frame, 'map')
+                         if message.header.frame_id == 'map' and self.display_frame(now) == 'map' else None)
+            if transform is None:
+                reason = '导航坐标系尚未确认或已切换，请重新点选'
+            else:
+                message = tf2_geometry_msgs.do_transform_pose(message, transform)
         if reason is None and not self.goal_pub.impl.has_connection(ACTION):
             reason = '等待 move_base 目标接口'
         if reason is not None:
@@ -486,6 +509,8 @@ class Observer:
             if self.pending_goal is not None and now > self.pending_goal[1]:
                 self._cancel_pending_goal_locked('未收到新的 move_base 状态，请重新点选')
             feedback = self.manual_feedback
+            waypoint, waypoint_coords = self.waypoint_status, self.waypoint_coords
         view = self.board.view(now)
+        view['waypoint'], view['waypoint_coords'] = waypoint, waypoint_coords
         view['feedback'] = feedback[0] if feedback and now-feedback[1] < 5. else ''
         return view

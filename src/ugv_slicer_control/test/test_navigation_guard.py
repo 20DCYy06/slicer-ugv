@@ -6,7 +6,8 @@ import sys
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
-from navigation_core import saturate_twist, slew_arc, planner_limits, swept_clear
+from navigation_core import (adaptive_forward_twist, body_twist_between, guarded_forward_twist,
+                             planner_limits, saturate_twist, slew_arc, swept_clear)
 
 
 class NavigationGuardTests(unittest.TestCase):
@@ -15,6 +16,136 @@ class NavigationGuardTests(unittest.TestCase):
     DWA = dict(max_vel_x=.125, min_vel_x=0., max_vel_trans=.125,
                max_vel_theta=.25, acc_lim_x=.2, acc_lim_trans=.2,
                acc_lim_theta=1.)
+
+    def test_forward_speed_uses_checked_prefix_and_keeps_arc_curvature(self):
+        pose = (0., 0., 0.)
+        footprint = [(-.2, -.11), (.2, -.11), (.2, .11), (-.2, .11)]
+        grid = dict(width=80, height=80, resolution=.05,
+                    origin=(-2., -2., 0.), data=[0] * 6400)
+        limits = dict(accel_linear=.5, accel_angular=1.)
+        for wall_cost in (100, -1):
+            for iy in range(grid['height']):
+                grid['data'][iy * grid['width'] + 52] = wall_cost
+            target = (.8, .3)
+            self.assertFalse(swept_clear(pose, *target, footprint, grid, 2.1))
+            output = adaptive_forward_twist(pose, target, (0., 0.), (.1, 0., .0375),
+                                            footprint, grid, .8, .5, .5, .1, limits)
+            self.assertGreater(output[0], 0.)
+            self.assertLess(output[0], target[0])
+            self.assertTrue(swept_clear(pose, *output, footprint, grid, 2.1))
+            steady = adaptive_forward_twist(pose, target, (.30, .1125), (.1, 0., .0375),
+                                            footprint, grid, .8, .5, .5, .1, limits)
+            self.assertAlmostEqual(steady[1] / steady[0], target[1] / target[0])
+            self.assertFalse(swept_clear(pose, *steady, footprint, grid, 2.1))
+            self.assertTrue(swept_clear(pose, *steady, footprint, grid, max(.8, steady[0]/.5+.5)))
+            self.assertIsNone(adaptive_forward_twist(
+                pose, target, (0., 0.), (.8, 0., 0.), footprint, grid, .8, .5, .5, .1, limits))
+            self.assertIsNone(adaptive_forward_twist(
+                pose, target, (.8, 0.), (0., 0., 0.), footprint, grid, .8, .5, .5, .1, limits))
+            self.assertIsNone(adaptive_forward_twist(
+                pose, target, (0., 0.), None, footprint, grid, .8, .5, .5, .1, limits))
+
+    def test_observation_boundary_slows_before_guard_has_to_stop(self):
+        target = (.8, 0.)
+        footprint = [(-.16, -.14), (.16, -.14), (.16, .14), (-.16, .14)]
+        grid = dict(width=140, height=40, resolution=.05, origin=(-2., -1., 0.),
+                    data=[0] * 5600)
+        # Fixed observation limit 4.85 m ahead of the starting pose.
+        for iy in range(grid['height']):
+            grid['data'][iy * grid['width'] + 137] = -1
+        limits = dict(accel_linear=.5, accel_angular=1.)
+        dt = .05
+        previous = (0., 0.)
+        motor = [0.] * 4  # Last command takes 0.20 s to appear in odometry.
+        position = 0.
+        peak = 0.
+        for _ in range(120):
+            pose = (position, 0., 0.)
+            measured = motor.pop(0)
+            demand = slew_arc(previous, target, dt, .5, 1.)
+            command = guarded_forward_twist(pose, target, demand, previous,
+                                           (measured, 0., 0.), footprint, grid,
+                                           .8, .2, .5, dt, limits)
+            self.assertIsNotNone(command, f'avoidable stop at {position:.3f} m')
+            peak = max(peak, command[0])
+            self.assertTrue(swept_clear(pose, *command, footprint, grid,
+                                        max(.8, command[0] / .2 + .5)))
+            previous = command
+            motor.append(command[0])
+            position += measured * dt
+        self.assertGreater(position, 2.5)
+        self.assertAlmostEqual(peak, .8)
+
+    def test_blocked_new_arc_brakes_on_the_previous_clear_arc(self):
+        pose = (0., 0., 0.)
+        footprint = [(-.145, -.14), (.20, -.14), (.20, .14), (-.145, .14)]
+        grid = dict(width=120, height=110, resolution=.05, origin=(-1., -2.75, 0.),
+                    data=[0] * 13200)
+        for iy in range(55):
+            grid['data'][iy * 120 + 55] = 100
+        grid['data'][65 * 120 + 48] = 100
+        target, previous = (.8, -.1), (.68, .43)
+        limits = dict(accel_linear=1., accel_angular=1.)
+        output = slew_arc(previous, target, .05, 1., 1.)
+        measured = (previous[0], 0., previous[1])
+        self.assertTrue(swept_clear(pose, *previous, footprint, grid, previous[0] / .2 + .5))
+        self.assertFalse(swept_clear(pose, *target, footprint, grid, target[0] / .2 + .5))
+
+        def guarded(observed):
+            return guarded_forward_twist(pose, target, output, previous, observed, footprint, grid,
+                                         .8, .2, .5, .05, limits)
+
+        reduced = guarded(measured)
+        self.assertIsNotNone(reduced)
+        self.assertAlmostEqual(reduced[0], .63)
+        self.assertAlmostEqual(reduced[1] / reduced[0], previous[1] / previous[0])
+        self.assertIsNone(guarded(None))
+        self.assertIsNone(guarded((.8, 0., -.1)))
+        grid['data'][55 * 120 + 20] = -1
+        self.assertIsNone(guarded(measured))
+
+    def test_forward_to_spin_brakes_before_rotating_in_place(self):
+        pose = (0., 0., 0.)
+        footprint = [(-.15, -.14), (.2, -.14), (.2, .14), (-.15, .14)]
+        grid = dict(width=120, height=120, resolution=.05, origin=(-3., -3., 0.),
+                    data=[0] * 14400)
+        limits = dict(accel_linear=1., accel_angular=1.)
+        previous, target = (.25, .2), (0., -.4)
+        for expected in (.20, .15, .10, .05, 0.):
+            observed = (previous[0], 0., previous[1])
+            output = slew_arc(previous, target, .05, 1., 1.)
+            reduced = guarded_forward_twist(pose, target, output, previous, observed,
+                                           footprint, grid, .8, .2, .5, .05, limits)
+            self.assertIsNotNone(reduced)
+            self.assertAlmostEqual(reduced[0], expected)
+            self.assertAlmostEqual(reduced[1], expected * .8)
+            previous = reduced
+
+    def test_observed_side_motion_and_occupied_start_disallow_reduced_command(self):
+        pose = (0., 0., 0.)
+        footprint = [(-.2, -.11), (.2, -.11), (.2, .11), (-.2, .11)]
+        grid = dict(width=80, height=80, resolution=.05,
+                    origin=(-2., -2., 0.), data=[0] * 6400)
+        limits = dict(accel_linear=.5, accel_angular=1.)
+        for ix in range(grid['width']):
+            grid['data'][46 * grid['width'] + ix] = 100
+        self.assertFalse(swept_clear(pose, .1, 0., footprint, grid, 2.1, lateral=.3))
+        self.assertIsNone(adaptive_forward_twist(
+            pose, (.8, 0.), (0., 0.), (.1, .3, 0.), footprint, grid, .8, .5, .5, .1, limits))
+        grid['data'][40 * grid['width'] + 40] = -1
+        self.assertIsNone(adaptive_forward_twist(
+            pose, (.8, 0.), (0., 0.), (0., 0., 0.), footprint, grid, .8, .5, .5, .1, limits))
+
+    def test_observed_twist_uses_body_axes_and_wraps_yaw(self):
+        vx, vy, angular = body_twist_between((0., 0., 0.), (.04, -.02, 0.), .1)
+        self.assertAlmostEqual(vx, .4)
+        self.assertAlmostEqual(vy, -.2)
+        self.assertEqual(angular, 0.)
+        vx, vy, angular = body_twist_between((0., 0., math.pi-.01),
+                                             (-.05, 0., -math.pi+.01), .1)
+        self.assertAlmostEqual(vx, .5000083334)
+        self.assertAlmostEqual(vy, 0.)
+        self.assertAlmostEqual(angular, .2)
 
     def test_dwa_uses_its_caps_and_forbids_reverse_without_teb_parameters(self):
         limits = planner_limits(self.SOURCE, 'dwa_local_planner/DWAPlannerROS', self.DWA)

@@ -118,6 +118,12 @@ class Dashboard:
     def planner_frame(self, now):
         return self.recent('frame', now, 2.) or self.recent('configured_frame', now, 1.5)
 
+    def display_frame(self, now, map_transform_ready):
+        geo = self.recent('geographic', now, NAV_STATUS_AGE) or {}
+        if map_transform_ready and geo.get('registered') is True and geo.get('state') in ('ready', 'degraded'):
+            return 'map'
+        return self.planner_frame(now)
+
     def view(self, now):
         gnss = self.latest_quality(now)
         try:
@@ -185,6 +191,7 @@ class Dashboard:
             registration += ' · 等待 Fixed'
         elif isinstance(reason, str) and reason:
             registration += ' · ' + REGISTRATION_REASONS.get(reason, reason)
+        current_position = self.recent('own', now) or self.fixed_position(now) or {}
         return {
             'rtk': f'RTK状态：{fix}（卫星：{satellite_text}）',
             'fix_color': fix_color,
@@ -202,8 +209,7 @@ class Dashboard:
             ('未就绪', 'bad') if driver is False else ('等待状态', 'neutral'),
             'mux': mux_label,
             'destination': '正在前往：' + (self.recent('destination', now) or '待命'),
-            'own': '当前位置：' + coordinates(self.recent('own', now) or {}),
-            'antenna': 'RTK 天线：' + coordinates(self.fixed_position(now) or {}),
+            'own': '当前位置：' + coordinates(current_position),
         }
 
 

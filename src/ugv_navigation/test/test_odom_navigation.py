@@ -35,6 +35,7 @@ class TestOnlyDifferentialPlant:
 
     ROOM = (-4.0, 4.0, -1.5, 1.5)
     BEAMS = 720
+    SCAN_RANGE_M = 3.5
 
     def __init__(self, command_topic='/ugv/cmd_vel/nav_raw'):
         self.lock = threading.RLock()
@@ -197,7 +198,7 @@ class TestOnlyDifferentialPlant:
         scan.angle_max = scan.angle_min + (self.BEAMS - 1) * scan.angle_increment
         scan.scan_time = 0.05
         scan.time_increment = 0.0  # An instantaneous ideal scan.
-        scan.range_min, scan.range_max = 0.05, 3.5
+        scan.range_min, scan.range_max = 0.05, self.SCAN_RANGE_M
         # Finite sensor range leaves reachable unknown cells in front of the
         # robot, without an intervening wall. Max-range rays exceed the 3m
         # marking limit and clear only, avoiding an artificial obstacle ring.

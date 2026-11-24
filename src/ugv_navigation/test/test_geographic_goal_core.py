@@ -51,6 +51,30 @@ class GeographicClientTests(unittest.TestCase):
             with self.subTest(distance=distance), self.assertRaises(SystemExit):
                 cli.arguments(['initialize', '--distance', distance])
 
+    def test_startup_roundtrip_is_limited_to_two_meters(self):
+        args = cli.arguments(['initialize', '--return-to-start'])
+        self.assertTrue(args.return_to_start)
+        self.assertEqual(args.distance, 2.)
+        self.assertEqual(cli.arguments(['initialize']).distance, 2.5)
+        with self.assertRaises(SystemExit):
+            cli.arguments(['initialize', '--distance', '2.1', '--return-to-start'])
+
+    def test_roundtrip_return_command_is_bounded_and_rejects_departure_from_corridor(self):
+        self.assertEqual(cli.registration_return_command((0., 0., 0.), (2., 0., 0.), 2.),
+                         (-.8, 0.))
+        self.assertEqual(cli.registration_return_command((0., 0., 0.), (.09, 0., 0.), 2.),
+                         (0., 0.))
+        approach, _ = cli.registration_return_command((0., 0., 0.), (.25, 0., 0.), 2.)
+        self.assertGreater(approach, -.40)
+        self.assertLess(approach, -.12)
+        forward, turn = cli.registration_return_command((0., 0., 0.), (1., .1, 0.), 2.)
+        self.assertLess(forward, 0.)
+        self.assertGreater(turn, 0.)
+        self.assertLessEqual(abs(turn), .15)
+        for pose in ((-.2, 0., 0.), (1., .35, 0.), (1., 0., 1.), (3., 0., 0.)):
+            with self.subTest(pose=pose), self.assertRaises(ValueError):
+                cli.registration_return_command((0., 0., 0.), pose, 2.)
+
     def test_wgs84_target_at_origin_is_zero_without_antenna_offset(self):
         args = cli.arguments(['plan', '--latitude', '0', '--longitude', '0', '--altitude-ellipsoid', '0'])
         target = core.resolve_target(args, self.status(), (-3., -4., 0.))

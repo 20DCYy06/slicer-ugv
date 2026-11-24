@@ -25,6 +25,8 @@ DIRECTORY = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(DIRECTORY))
 from desktop import Dashboard, Observer, Readouts, make_rviz, sip
 from ros_observer import WAYPOINT_CLICK
+from workflow import Workflow
+from unittest.mock import Mock
 
 
 def main():
@@ -33,7 +35,9 @@ def main():
     rospy.init_node('rtk_desktop_test', disable_signals=True)
     app = QtWidgets.QApplication([])
     observer = Observer(Dashboard())
-    dashboard = Readouts()
+    dashboard = Readouts(Workflow(observer.board))
+    dashboard.bind_waypoint_confirmation(observer)
+    send_wgs84 = dashboard.workflow.controller.send_wgs84 = Mock(return_value=True)
     window, manager = make_rviz(DIRECTORY/'rtk_desktop.rviz', app)
     screen = app.primaryScreen()
     window.attach_readouts(dashboard)
@@ -152,23 +156,23 @@ def main():
              and observer.goal_pub.impl.has_connection('/ugv/move_base'))
         assert observer.board.fixed_position(time.monotonic()) is None
         gnss_pair = 'matched'
-        wait(lambda: dashboard.antenna.value == 'RTK 天线：31.2100000, 121.5100000')
+        wait(lambda: dashboard.own.value == '当前位置：31.2100000, 121.5100000')
         assert observer.board.fixed_position(time.monotonic())['altitude'] == 18.
-        assert dashboard.own.value == '当前位置：—'
-        dashboard.antenna.actions()[0].trigger()
+        assert not any(row.text().startswith('RTK 天线') for row in dashboard.findChildren(QtWidgets.QLabel))
+        dashboard.own.actions()[0].trigger()
         assert QtWidgets.QApplication.clipboard().text() == '31.2100000, 121.5100000'
         gnss_pair = 'lost'
-        wait(lambda: dashboard.antenna.value == 'RTK 天线：—')
+        wait(lambda: dashboard.own.value == '当前位置：—')
         assert observer.board.fixed_position(time.monotonic()) is None
         gnss_pair = 'matched'
-        wait(lambda: dashboard.antenna.value == 'RTK 天线：31.2100000, 121.5100000')
+        wait(lambda: dashboard.own.value == '当前位置：31.2100000, 121.5100000')
         gnss_session = 'desktop-test-reconnected'
         gnss_pair = 'unmatched'
-        wait(lambda: dashboard.antenna.value == 'RTK 天线：—')
+        wait(lambda: dashboard.own.value == '当前位置：—')
         gnss_pair = 'matched'
-        wait(lambda: dashboard.antenna.value == 'RTK 天线：31.2100000, 121.5100000')
+        wait(lambda: dashboard.own.value == '当前位置：31.2100000, 121.5100000')
         gnss_pair = 'silent'
-        wait(lambda: dashboard.antenna.value == 'RTK 天线：—')
+        wait(lambda: dashboard.own.value == '当前位置：—')
         assert observer.board.fixed_position(time.monotonic()) is None
         readable = [dashboard.status, dashboard.registration,
                     *(row for _, row in dashboard.system.values())]
@@ -187,7 +191,8 @@ def main():
 
         with redirect_stdout(output):
             click('Waypoint 打点')
-            wait(lambda: len(clicks) == 1 and '待配准' in output.getvalue())
+            wait(lambda: len(clicks) == 1 and '等待地理配准' in output.getvalue())
+            assert dashboard.workflow.waypoint_dialog is None
             assert clicks[0].header.frame_id == 'odom' and not goals
             # A brief Action heartbeat gap must not reject an otherwise valid click.
             status_delay = .7
@@ -255,7 +260,11 @@ def main():
             click('Waypoint 打点')
             wait(lambda: len(clicks) == 2 and re.search(
                 r'经纬度：3[01]\.\d{7}, 121\.\d{7}\n', output.getvalue()))
+            wait(lambda: dashboard.workflow.waypoint_dialog is not None)
+            dialog = dashboard.workflow.waypoint_dialog
+            assert dashboard.waypoint_coords in dialog.text()
             assert clicks[1].header.frame_id == 'map' and len(goals) == 2
+            dialog.reject()
             observer.set_calibration_active(True)
             click('2D Nav Goal')
             wait(lambda: '正在地理配准' in output.getvalue())
@@ -286,6 +295,16 @@ def main():
             assert dashboard.destination.text() == dashboard.destination.value
             active[:] = [GoalStatus(goal_id=goals[2].goal_id, status=GoalStatus.SUCCEEDED)]
             wait(lambda: dashboard.destination.value == '正在前往：待命')
+            click('Waypoint 打点', position + QtCore.QPoint(50, 0))
+            wait(lambda: len(clicks) == 3 and dashboard.workflow.waypoint_dialog is not None)
+            assert len(goals) == 3
+            dialog = dashboard.workflow.waypoint_dialog
+            QtTest.QTest.mouseClick(dialog.button(QtWidgets.QMessageBox.Yes), QtCore.Qt.LeftButton)
+            wait(lambda: send_wgs84.call_count == 1)
+            assert len(goals) == 3
+            expected_coordinates = observer.wgs84(
+                observer.point('map', clicks[2].pose.position.x, clicks[2].pose.position.y), time.monotonic())
+            send_wgs84.assert_called_once_with(expected_coordinates['latitude'], expected_coordinates['longitude'])
             status_delay = 2.
             wait(lambda: observer.board.recent('action', time.monotonic(), 1.5) is None)
             click('2D Nav Goal')

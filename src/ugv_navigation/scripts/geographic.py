@@ -7,8 +7,11 @@ WGS84 sends can request shared preparation. Plan and capture do not move.
 """
 import argparse
 from collections import deque
+import fcntl
+import hashlib
 import json
 import math
+import os
 from pathlib import Path
 import sys
 import threading
@@ -21,6 +24,48 @@ from navigation_preparation import PreparationClient
 from geographic_goal_core import (arrival_review, capture_sample, capture_target, finite, origin_record,
                                   quiet_odom_tail, registration_observation_problem,
                                   resolve_target, status_problem)
+
+
+RETURN_TOPIC = '/geographic/registration_reverse'
+RETURN_NODE = 'slicer_geographic_roundtrip'
+RETURN_TOLERANCE_M = .12
+
+
+def registration_return_command(origin, pose, distance, max_speed=.8):
+    """Follow the odom start corridor backwards with bounded speed and yaw."""
+    if not all(finite(value) for value in (*origin, *pose)):
+        raise ValueError('registration return pose is not finite')
+    x, y, yaw = origin
+    dx, dy, heading = pose[0]-x, pose[1]-y, pose[2]-yaw
+    along = math.cos(yaw)*dx + math.sin(yaw)*dy
+    across = -math.sin(yaw)*dx + math.cos(yaw)*dy
+    heading = math.atan2(math.sin(heading), math.cos(heading))
+    if abs(heading) > .30 or abs(across) > .28 or along > distance+.30:
+        raise ValueError('vehicle left the straight registration return corridor')
+    if math.hypot(dx, dy) <= RETURN_TOLERANCE_M:
+        return 0., 0.
+    if along <= .05:
+        raise ValueError('recorded start is outside the available reverse corridor')
+    correction = math.atan2(across, max(.65, along)) - heading
+    # Reserve time for chassis response and brake toward the centre of the
+    # arrival tolerance. Proportional position feedback limits the final creep.
+    braking_distance = max(0., along - .05)
+    response_margin = .25 * .60
+    braking_speed = math.sqrt(response_margin ** 2 + 2. * .60 * braking_distance) - response_margin
+    speed = min(max_speed, 1.4 * along, braking_speed)
+    return -speed, max(-.15, min(.15, 1.5 * correction))
+
+
+def acquire_roundtrip_owner():
+    import rosgraph
+    key = hashlib.sha256(rosgraph.get_master_uri().encode()).hexdigest()[:16]
+    lock_file = open('/tmp/slicer-registration-' + key + '.lock', 'a')
+    try:
+        fcntl.flock(lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        lock_file.close()
+        raise ValueError('a roundtrip registration client is already active')
+    return lock_file
 
 
 def number(value):
@@ -43,7 +88,10 @@ def arguments(argv=None):
     commands = parser.add_subparsers(dest='command', required=True)
     commands.add_parser('status', help='print one fresh manager status JSON')
     initialize = commands.add_parser('initialize', help='one bounded forward odom goal between stationary windows')
-    initialize.add_argument('--distance', type=positive, default=2.5, help='finite metres forward; choose available field distance, no automatic retry')
+    initialize.add_argument('--distance', type=positive,
+                            help='metres forward; defaults to 2.5, or 2 with a guarded return')
+    initialize.add_argument('--return-to-start', action='store_true',
+                            help='after registration, reverse to the recorded odom start with the preparation Guard')
     initialize.add_argument('--timeout', type=positive, default=120.)
     initialize.add_argument('--output', type=Path)
     capture = commands.add_parser('capture', help='save a stationary raw-RTK base_link target; no motion or initialization')
@@ -65,6 +113,11 @@ def arguments(argv=None):
         target.add_argument('--timeout', type=positive, default=120.)
         target.add_argument('--output', type=Path, help='save result as a new JSON file')
     args = parser.parse_args(argv)
+    if args.command == 'initialize':
+        if args.distance is None:
+            args.distance = 2. if args.return_to_start else 2.5
+        if args.return_to_start and (args.distance > 2. or args.action != '/ugv/move_base'):
+            parser.error('guarded return requires /ugv/move_base and a distance of at most 2 m')
     if args.command in ('send', 'plan'):
         geodetic = any(x is not None for x in (args.latitude, args.longitude, args.altitude_ellipsoid))
         enu = args.east is not None or args.north is not None
@@ -89,7 +142,7 @@ class GeographicClient:
     def __init__(self, args):
         import actionlib
         from actionlib_msgs.msg import GoalStatusArray
-        from geometry_msgs.msg import PoseStamped
+        from geometry_msgs.msg import PoseStamped, Twist
         from move_base_msgs.msg import MoveBaseAction, MoveBaseGoal
         from nav_msgs.msg import Odometry
         from nav_msgs.srv import GetPlan, GetPlanRequest
@@ -120,6 +173,10 @@ class GeographicClient:
         self.result_pub = rospy.Publisher('/geographic/goal_result', String, queue_size=1, latch=True)
         self.preparation = PreparationClient(rospy, String, args.action)
         self.capture_subs = []
+        self.return_pub = None
+        if getattr(args, 'return_to_start', False):
+            self.Twist = Twist
+            self.return_pub = rospy.Publisher(RETURN_TOPIC, Twist, queue_size=1, latch=False)
         self.action_sample, self.mux_sample = None, None
         if args.command in ('send', 'initialize'):
             self.action_sub = rospy.Subscriber(args.action.rstrip('/') + '/status', GoalStatusArray,
@@ -147,7 +204,9 @@ class GeographicClient:
             state = json.loads(message.data)
             flags = [state[name] for name in ('manual_hold', 'teleop_fresh', 'emergency_stop_latched')]
             if all(type(flag) is bool for flag in flags):
-                self.mux_sample = time.monotonic(), any(flags) or state.get('selected_source') == 'mission'
+                owner = state.get('mux_instance_id'), state.get('takeover_generation')
+                self.mux_sample = (time.monotonic(),
+                                   any(flags) or state.get('selected_source') == 'mission', owner)
         except (KeyError, TypeError, ValueError):
             pass
 
@@ -386,6 +445,17 @@ class GeographicClient:
             raise ValueError('a WGS84 task is using shared navigation preparation')
         self.frame_check('odom')
         self.fresh_status(registered=False)
+        if self.return_pub is not None:
+            if self.ros.get_param('/slicer_nav_arc_guard/registration_reverse', False) is not True:
+                raise ValueError('the odom preparation Guard must enable registration reverse')
+            deadline = time.monotonic() + 2.
+            while not self.ros.is_shutdown() and time.monotonic() < deadline:
+                if self.action_sample and self.mux_sample and self.return_pub.get_num_connections():
+                    break
+                time.sleep(.05)
+            if not self.return_pub.get_num_connections():
+                raise ValueError('registration reverse Guard subscription missing')
+            self.check_action_idle()
         began = self.trigger('begin_registration')
         if not began['success']:
             return dict(command='initialize', begin=began, reason='begin_registration rejected'), 1
@@ -430,14 +500,104 @@ class GeographicClient:
                       physical_point='base_link', stamp=self.ros.Time.now().to_sec())
         self.goal_record = record
         self.publish(self.goal_pub, record)
+        action_started = time.monotonic()
         action = self.run_action(self.pose(xyz, yaw, 'odom'), generation, initializing=True)
-        stopped = self.quiet(time.monotonic(), generation, initializing=True)
-        # Finish is an estimation service, not permission to move or automatic retry.
-        finished = self.trigger('finish_registration') if stopped['confirmed'] else None
+        # Reuse the continuous quiet tail already observed while the outbound
+        # Action settled. Movement breaks the tail, so the initial stop cannot
+        # satisfy the final stop window.
+        quiet_since = action_started if self.return_pub is not None else time.monotonic()
+        stopped = self.quiet(quiet_since, generation, initializing=True)
+        outbound_succeeded = action['state'] == 3 and not action['reason']
+        can_fit = stopped['confirmed'] and (self.return_pub is None or outbound_succeeded)
+        finished = self.trigger('finish_registration') if can_fit else None
         result = dict(command='initialize', target=record, begin=began, move_base=action,
                       stop=stopped, registration=finished,
                       reason=action['reason'] or ('' if finished and finished['success'] else 'registration not completed'))
-        return result, 0 if action['state'] == 3 and not action['reason'] and finished and finished['success'] else 1
+        complete = outbound_succeeded and finished and finished['success']
+        if self.return_pub is not None and complete:
+            try:
+                result['return_to_start'] = self._return_to_start((x, y, yaw), generation)
+            except (ValueError, self.ros.ROSException) as error:
+                result['return_to_start'] = dict(confirmed=False, reason=str(error))
+            complete = result['return_to_start']['confirmed']
+            if not complete:
+                result['reason'] = result['return_to_start']['reason']
+        return result, 0 if complete else 1
+
+    def _return_status_problem(self, generation):
+        status, received, _ = self.observation()
+        # Relative return uses odom and the Guard's live LIO/grid checks.
+        # Transient GNSS fusion delay can degrade status even after a valid fit.
+        return status_problem(status, received, time.monotonic(), self.ros.Time.now().to_sec(),
+                              generation=generation, max_age=self.status_age)
+
+    def _return_to_start(self, origin, generation):
+        # Finishing the fit resets observation history. Wait at rest for the
+        # first fresh registered status before starting the return.
+        ready_deadline = time.monotonic() + 5.
+        while True:
+            self.check_action_idle()
+            problem = self._return_status_problem(generation)
+            if problem is None:
+                break
+            if self.ros.is_shutdown() or time.monotonic() >= ready_deadline:
+                raise ValueError(problem)
+            time.sleep(.05)
+        owner = self.mux_sample[2]
+        if not isinstance(owner[0], str) or not owner[0] or type(owner[1]) is not int:
+            raise ValueError('Mux identity is unavailable for registration return')
+        max_speed = self.ros.get_param('/slicer_nav_arc_guard/effective_registration_reverse', .15)
+        if not finite(max_speed) or not 0. < max_speed <= .8:
+            raise ValueError('registration reverse speed limit is invalid')
+        deadline = time.monotonic() + min(self.args.timeout, 45.)
+        best_error, moved_at = math.inf, time.monotonic()
+        arrived = False
+        try:
+            while not self.ros.is_shutdown() and time.monotonic() < deadline:
+                self.frame_check('odom')
+                self.check_action_idle()
+                if self.mux_sample[2] != owner:
+                    raise ValueError('Mux ownership changed during registration return')
+                if not self.return_pub.get_num_connections():
+                    raise ValueError('registration reverse Guard disconnected')
+                now = time.monotonic()
+                problem = self._return_status_problem(generation)
+                if problem:
+                    raise ValueError(problem)
+                pose = self.current_pose('odom')
+                v, w = registration_return_command(origin, pose, self.args.distance, max_speed)
+                if v == 0.:
+                    arrived = True
+                    break
+                error = math.hypot(pose[0]-origin[0], pose[1]-origin[1])
+                if best_error-error >= .02:
+                    best_error, moved_at = error, now
+                if now-moved_at > 4.:
+                    raise ValueError('registration return made no progress; check rear clearance and Guard status')
+                command = self.Twist()
+                command.linear.x, command.angular.z = v, w
+                self.return_pub.publish(command)
+                time.sleep(.05)
+        finally:
+            self.return_pub.publish(self.Twist())
+        if not arrived:
+            return dict(confirmed=False, reason='registration return timed out or ROS shut down')
+        stopped = self.quiet(time.monotonic())
+        self.check_action_idle()
+        if self.mux_sample[2] != owner:
+            raise ValueError('Mux ownership changed before registration return stopped')
+        self.frame_check('odom')
+        problem = self._return_status_problem(generation)
+        if problem:
+            raise ValueError(problem)
+        pose = self.current_pose('odom')
+        error = math.hypot(pose[0]-origin[0], pose[1]-origin[1])
+        confirmed = stopped['confirmed'] and error <= RETURN_TOLERANCE_M
+        reason = stopped.get('reason', '') if not stopped['confirmed'] else ''
+        if not confirmed and not reason:
+            reason = 'stopped outside registration start tolerance'
+        return dict(confirmed=confirmed, reason=reason, odom_xy=list(pose[:2]),
+                    start_odom_xy=list(origin[:2]), error_m=error, stop=stopped)
 
     def _wgs84_intent(self):
         if self.args.target_file is not None:
@@ -561,13 +721,25 @@ class GeographicClient:
 
 def main(argv=None):
     args = arguments(argv)
+    roundtrip = getattr(args, 'return_to_start', False)
+    if roundtrip:
+        # The dedicated Guard input recognizes this root-namespace owner.
+        os.environ['ROS_NAMESPACE'] = '/'
     try:
         import rospy
         import tf2_ros
     except ImportError as error:
         print('Run in the built ROS1 Noetic workspace: '+str(error), file=sys.stderr)
         return 2
-    rospy.init_node('slicer_geographic_client', anonymous=True, disable_signals=True)
+    owner_lock = None
+    if roundtrip:
+        try:
+            owner_lock = acquire_roundtrip_owner()
+        except (ValueError, OSError) as error:
+            print(json.dumps(dict(command=args.command, reason=str(error))), file=sys.stderr)
+            return 1
+    rospy.init_node(RETURN_NODE if roundtrip else 'slicer_geographic_client',
+                    anonymous=not roundtrip, disable_signals=True)
     client = None
     try:
         client = GeographicClient(args)
@@ -610,6 +782,8 @@ def main(argv=None):
             client.client.cancel_goal()
             client.client.wait_for_result(rospy.Duration(3.))
         rospy.signal_shutdown('geographic client finished')
+        if owner_lock is not None:
+            owner_lock.close()
 
 
 if __name__ == '__main__':

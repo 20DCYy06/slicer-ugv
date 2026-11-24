@@ -33,6 +33,17 @@ class DashboardTests(unittest.TestCase):
         self.assertEqual(board.planner_frame(2.5), 'odom')
         self.assertEqual(board.planner_frame(3.5), 'map')
 
+    def test_registered_map_is_visible_before_the_planner_handoff(self):
+        board = Dashboard()
+        board.record('frame', 'odom', 1.)
+        board.record('geographic', {'state': 'collecting', 'registered': False}, 1.)
+        self.assertEqual(board.display_frame(1., True), 'odom')
+        board.record('geographic', {'state': 'ready', 'registered': True}, 1.)
+        self.assertEqual(board.display_frame(1., False), 'odom')
+        self.assertEqual(board.display_frame(1., True), 'map')
+        self.assertEqual(board.planner_frame(1.), 'odom')
+        self.assertFalse(board.view(1.)['navigation'])
+
     def test_receive_after_ui_tick_timestamp_is_still_current(self):
         board = Dashboard()
         board.record('driver', True, 1.01)
@@ -90,15 +101,22 @@ class DashboardTests(unittest.TestCase):
         self.assertEqual(board.view(1.)['own'], '当前位置：20.0000000, 120.0000000')
         self.assertEqual(board.view(1.)['destination'], '正在前往：20.0000000, 120.0000000')
 
-    def test_fixed_antenna_readout_is_available_without_registration_and_expires(self):
+    def test_current_position_uses_fixed_before_registration_and_prefers_vehicle_pose(self):
         board = Dashboard()
         position = {'latitude': 20., 'longitude': 120., 'altitude': 18.}
         board.record('fixed_position', position, 1.)
         self.assertEqual(board.fixed_position(1.), position)
-        self.assertEqual(board.view(1.)['antenna'], 'RTK 天线：20.0000000, 120.0000000')
-        self.assertEqual(board.view(1.)['own'], '当前位置：—')
+        self.assertEqual(board.view(1.)['own'], '当前位置：20.0000000, 120.0000000')
+        self.assertNotIn('antenna', board.view(1.))
+
+        board.record('own', {'latitude': 20.1, 'longitude': 120.1}, 1.1)
+        self.assertEqual(board.view(1.1)['own'], '当前位置：20.1000000, 120.1000000')
+        self.assertEqual(board.fixed_position(1.1), position)
+        board.record('own', {}, 1.2)
+        self.assertEqual(board.view(1.2)['own'], '当前位置：20.0000000, 120.0000000')
+
         self.assertIsNone(board.fixed_position(3.51))
-        self.assertEqual(board.view(3.51)['antenna'], 'RTK 天线：—')
+        self.assertEqual(board.view(3.51)['own'], '当前位置：—')
 
     def test_desktop_goal_respects_existing_owners_and_holds(self):
         mux = {'manual_hold': False, 'emergency_stop_latched': False}

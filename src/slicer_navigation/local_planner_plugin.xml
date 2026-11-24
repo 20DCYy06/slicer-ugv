@@ -1,0 +1,6 @@
+<library path="lib/libslicer_heading_dwa_planner">
+  <class name="slicer_navigation/DWAPlannerROS" type="slicer_navigation::HeadingDWAPlanner"
+         base_class_type="nav_core::BaseLocalPlanner">
+    <description>Stop and face the new RTK goal before delegating to Noetic DWA.</description>
+  </class>
+</library>

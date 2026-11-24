@@ -1,4 +1,6 @@
+#include <slicer_navigation/clearance_preference.h>
 #include <slicer_navigation/bspline_core.h>
+#include <slicer_navigation/route_continuity.h>
 #include <cstdlib>
 #include <iostream>
 using namespace slicer_navigation;
@@ -6,6 +8,28 @@ void require(bool good,const char* message) {
   if(!good) { std::cerr<<"FAIL: "<<message<<std::endl; std::exit(1); }
 }
 int main() {
+  std::vector<std::uint8_t> map(21*21, 0);
+  const auto at = [&](int x, int y) -> std::uint8_t& { return map[y*21+x]; };
+  at(10,10) = 254;
+  at(12,10) = 255;
+  at(13,10) = 171;
+  preferClearance(map.data(), 21, 21, .05, .45, .14, 4.5, 173);
+  require(at(10,10)==254 && at(12,10)==255, "preference preserves lethal and unknown");
+  require(at(13,10)>=171 && at(13,10)<=173, "preference respects the traversable threshold");
+  require(at(16,10)>at(18,10) && at(18,10)>0 && at(20,10)==0,
+          "wider planning preference decays to no extra cost");
+  const auto observed=[](const Point2& p) { return p.x < .6 ? 0 : 255; };
+  const std::vector<Point2> route{{0,0},{.3,0},{1,0}};
+  require(std::isfinite(routeCost(route, .025, 0., observed)), "route may reach an unknown goal");
+  require(std::isfinite(routeCost(route, .025, .3, observed)), "connector entirely observed");
+  require(!std::isfinite(routeCost(route, .025, .7, observed)), "reuse cannot reconnect through unknown space");
+  const auto obstruction=[](const Point2& p) { return p.x>.4 && p.x<.48 ? 254 : 0; };
+  require(!std::isfinite(routeCost(route, .025, 0., obstruction)), "new obstacle invalidates old route");
+  const auto near_obstacle = [](const Point2& p) { return p.x > .4 ? 200 : 0; };
+  require(!std::isfinite(routeCost(route, .025, 0., near_obstacle, 173)),
+          "route reuse must respect the active inflation contour");
+  require(preferPreviousRoute(4.2, 4., .35), "near equal routes keep direction");
+  require(!preferPreviousRoute(4.5, 4., .35), "meaningfully better route replaces old route");
   const auto free=[](const PathSample&) { return true; };
   std::vector<Point2> stairs;
   for(int i=0;i<21;++i) stairs.emplace_back(i*.05, .002*(i%2));
