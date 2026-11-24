@@ -10,7 +10,8 @@
   <arg name="preparation" default="false"/>
   <arg name="enable_depth" default="false"/>
   <!-- RTK field defaults apply to odom bootstrap and geographic map navigation. -->
-  <arg name="cruise_config" default="$(eval '' if arg('mapping') else dirname() + '/../config/' + ('dwa_registration.yaml' if arg('preparation') and not arg('geographic') else 'dwa_field.yaml'))"/>
+  <arg name="default_cruise_config" value="$(eval '' if arg('mapping') else dirname() + '/../config/' + ('dwa_registration.yaml' if arg('preparation') and not arg('geographic') else 'dwa_field.yaml'))"/>
+  <arg name="cruise_config" default="$(arg default_cruise_config)"/>
   <arg name="start_camera" default="true"/>
   <arg name="camera_serial" default=""/>
   <include unless="$(arg mapping)" file="$(find ugv_bringup)/launch/slicer_odom.launch">
@@ -59,6 +60,8 @@
         raytrace_range: 4.5
   </rosparam>
   <!-- The Guard reads final planner limits at startup; restart navigation after edits. -->
+  <rosparam if="$(eval arg('cruise_config') != '' and arg('default_cruise_config') != '' and arg('cruise_config') != arg('default_cruise_config'))"
+            command="load" ns="ugv/move_base" file="$(arg default_cruise_config)"/>
   <rosparam if="$(eval arg('cruise_config') != '')" command="load"
             ns="ugv/move_base" file="$(arg cruise_config)"/>
   <rosparam if="$(eval not arg('mapping') and (arg('geographic') or not arg('preparation')))" ns="ugv/move_base">

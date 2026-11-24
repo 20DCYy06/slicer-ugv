@@ -5,6 +5,7 @@ import sys
 import unittest
 
 import roslaunch
+import rospkg
 import yaml
 
 
@@ -51,8 +52,9 @@ class FieldLaunchTests(unittest.TestCase):
                          [('ugv_slicer_control', 'c30d_driver_node.py')])
         self.assertEqual(config.params['/slicer_c30d_driver/control_mode'].value, 'body_speed')
         self.assertFalse(config.params['/slicer_c30d_driver/publish_tf'].value)
+        bringup = Path(rospkg.RosPack().get_path('ugv_bringup'))
         self.assertEqual(Path(config.params['/slicer_c30d_driver/config_file'].value),
-                         CONFIG / 'slicer_driver_body_speed.yaml')
+                         bringup / 'config/slicer_driver_body_speed.yaml')
 
     def test_sensor_shortcut_retains_single_local_ekf_and_tuned_wz(self):
         config = load('slicer_field_sensors.launch', ['geographic:=false'])

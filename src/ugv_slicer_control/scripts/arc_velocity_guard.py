@@ -48,6 +48,7 @@ def main():
             raise ValueError('external reverse requires planner output isolated from Guard input')
     with open(p['config_file'], encoding='utf-8') as stream:
         limits = yaml.safe_load(stream)['navigation']
+    registration_reverse_cap = min(.8, float(limits['max_forward'])) if registration_reverse else 0.
     planner_ns = str(p.get('planner_namespace', '/move_base')).rstrip('/')
     if not planner_ns.startswith('/') or '..' in planner_ns.split('/'):
         raise ValueError('explicit absolute planner namespace required')
@@ -63,6 +64,8 @@ def main():
         raise ValueError('brake_linear must be finite and positive')
     brake_linear = min(brake_linear, limits['accel_linear'])
     rospy.set_param('~effective_max_reverse', limits['max_reverse'])
+    rospy.set_param('~effective_registration_reverse', registration_reverse_cap)
+    return_limits = dict(limits, accel_linear=1.)
     rospy.loginfo('Guard planner %s limits: forward=%.3f reverse=%.3f angular=%.3f',
                   plugin, limits['max_forward'], limits['max_reverse'], limits['max_angular'])
     with open(p['control_config_file'], encoding='utf-8') as stream:
@@ -104,7 +107,7 @@ def main():
                 or header.get('latching', '0') != '0'):
             return
         v, w = msg.linear.x, msg.angular.z
-        valid = (-.15 <= v < 0. and -.15 <= w <= .15) or (v == 0. and w == 0.)
+        valid = (-registration_reverse_cap <= v < 0. and -.15 <= w <= .15) or (v == 0. and w == 0.)
         valid = valid and all(x == 0. for x in (msg.linear.y, msg.linear.z, msg.angular.x, msg.angular.y))
         with lock:
             sources['registration_reverse'] = time.monotonic(), (v, w) if valid else (0., 0.), valid
@@ -127,7 +130,7 @@ def main():
         if stamp.to_sec() <= 0 or not math.isfinite(age) or age < 0 or age > lio_timeout:
             return
         pose = None
-        if adaptive_forward_speed and msg.header.frame_id and msg.child_frame_id == base:
+        if (adaptive_forward_speed or registration_reverse) and msg.header.frame_id and msg.child_frame_id == base:
             position, q = msg.pose.pose.position, msg.pose.pose.orientation
             quaternion = (q.x, q.y, q.z, q.w)
             if all(math.isfinite(a) for a in (position.x, position.y, *quaternion)) and math.isclose(
@@ -144,7 +147,8 @@ def main():
                 if elapsed <= lio_timeout:
                     # The source may publish an unpopulated Odometry.twist.
                     vx, vy, wz = body_twist_between(prev_pose, pose, elapsed)
-                    if math.hypot(vx, vy) <= limits['max_forward'] and abs(wz) <= limits['max_angular']:
+                    observation_limit = 1.6 if registration_reverse else limits['max_forward']
+                    if math.hypot(vx, vy) <= observation_limit and abs(wz) <= limits['max_angular']:
                         observed = (vx, vy, wz)
             latest_lio[:] = [received, stamp, msg.header.frame_id, pose, observed]
 
@@ -159,7 +163,7 @@ def main():
         with lock:
             latest_grid[:] = [grid, time.monotonic()]
 
-    def check_motion(grid, grid_at, now, target, output, previous, dt):
+    def check_motion(grid, grid_at, now, target, output, previous, dt, returning=False):
         """Every nonzero output requires fresh context and a clear swept footprint."""
         try:
             with lock:
@@ -181,7 +185,29 @@ def main():
             horizon = max(p['compensation_horizon'],
                           abs(target[0])/brake_linear+p['command_timeout'],
                           abs(target[1])/limits['accel_angular']+p['command_timeout'])
-            if (adaptive_forward_speed and not compensation_enabled
+            if returning:
+                if observed is None:
+                    return 'registration return needs fresh LIO motion', None
+                vx, vy, wz = observed
+                angular_accel = limits['accel_angular']
+                for v, lateral, w in ((vx, vy, wz), (previous[0], 0., previous[1])):
+                    stopping_horizon = max(p['compensation_horizon'],
+                                           math.hypot(v, lateral)/brake_linear + p['command_timeout'],
+                                           abs(w)/angular_accel + p['command_timeout'])
+                    if not swept_clear(pose, v, w, footprint[0], grid, stopping_horizon, lateral=lateral):
+                        return SWEPT_STOP, None
+                # Reuse the adaptive braking check along the reverse heading.
+                # Rotate the footprint as well to preserve its asymmetric overhang.
+                reverse_pose = (pose[0], pose[1], pose[2] + math.pi)
+                reverse_footprint = tuple((-x, -y) for x, y in footprint[0])
+                guarded = guarded_forward_twist(
+                    reverse_pose, (-target[0], target[1]), (-output[0], output[1]),
+                    (-previous[0], previous[1]), (-vx, -vy, wz), reverse_footprint,
+                    grid, p['compensation_horizon'], brake_linear, p['command_timeout'],
+                    dt, return_limits, recovering=swept_held)
+                if guarded is not None:
+                    return '', (-guarded[0], guarded[1])
+            elif (adaptive_forward_speed and not compensation_enabled
                     and (swept_held or target[0] > 0. or (target[0] == 0. and previous[0] > 0.))):
                 guarded = guarded_forward_twist(pose, target, output, previous, observed,
                                                 footprint[0], grid, p['compensation_horizon'],
@@ -232,7 +258,8 @@ def main():
                 or now-action[0] > .6 or not -.1 <= (rospy.Time.now()-action[1]).to_sec() <= .6
                 or (nav and now-nav[0] <= p['command_timeout'] and nav[1] != (0., 0.))
                 or (spin and now-spin[0] <= p['command_timeout'] and spin[1] != (0., 0.)))
-            reverse_cap = .15 if returning else limits['max_reverse']
+            reverse_cap = registration_reverse_cap if returning else limits['max_reverse']
+            linear_accel = return_limits['accel_linear'] if returning else limits['accel_linear']
             if reverse_without_idle:
                 reason = 'registration return requires fresh idle navigation'
             elif sample is None or now-sample[0] > p['command_timeout']:
@@ -255,9 +282,9 @@ def main():
             # retain their curvature under saturation, including zero-radius turns.
             dt = min(.1, now-previous_at)
             output = slew_arc(previous, target, dt,
-                              limits['accel_linear'], limits['accel_angular'])
+                              linear_accel, limits['accel_angular'])
             if target != (0., 0.) or output != (0., 0.):
-                error, reduced = check_motion(grid, grid_at, now, target, output, previous, dt)
+                error, reduced = check_motion(grid, grid_at, now, target, output, previous, dt, returning)
                 if error:
                     fallback = slew_arc(previous, bounded, dt,
                                         limits['accel_linear'], limits['accel_angular'])
@@ -270,9 +297,10 @@ def main():
                         swept_held = True
                 else:
                     swept_held = False
-                    if reduced is not None:
+                    if reduced is not None and reduced != output:
                         output = reduced
-                        note = 'forward speed reduced within observed braking envelope'
+                        direction = 'registration reverse' if returning else 'forward'
+                        note = direction + ' speed reduced within observed braking envelope'
             msg = Twist()
             msg.linear.x, msg.angular.z = output
             pub.publish(msg)

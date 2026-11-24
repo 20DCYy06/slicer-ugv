@@ -402,8 +402,7 @@ def run_desktop():
     def refresh_display():
         now = time.monotonic()
         view = observer.view(now)
-        # RViz and the goal dispatcher use the same observed planner frame.
-        frame_id = board.planner_frame(now)
+        frame_id = observer.display_frame(now)
         if frame_id is not None and manager.getFixedFrame() != frame_id:
             manager.setFixedFrame(frame_id)
         dashboard.refresh(view, now)

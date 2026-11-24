@@ -61,9 +61,12 @@ class GeographicClientTests(unittest.TestCase):
 
     def test_roundtrip_return_command_is_bounded_and_rejects_departure_from_corridor(self):
         self.assertEqual(cli.registration_return_command((0., 0., 0.), (2., 0., 0.), 2.),
-                         (-.15, 0.))
+                         (-.8, 0.))
         self.assertEqual(cli.registration_return_command((0., 0., 0.), (.09, 0., 0.), 2.),
                          (0., 0.))
+        approach, _ = cli.registration_return_command((0., 0., 0.), (.25, 0., 0.), 2.)
+        self.assertGreater(approach, -.40)
+        self.assertLess(approach, -.12)
         forward, turn = cli.registration_return_command((0., 0., 0.), (1., .1, 0.), 2.)
         self.assertLess(forward, 0.)
         self.assertGreater(turn, 0.)

@@ -31,7 +31,7 @@ RETURN_NODE = 'slicer_geographic_roundtrip'
 RETURN_TOLERANCE_M = .12
 
 
-def registration_return_command(origin, pose, distance):
+def registration_return_command(origin, pose, distance, max_speed=.8):
     """Follow the odom start corridor backwards with bounded speed and yaw."""
     if not all(finite(value) for value in (*origin, *pose)):
         raise ValueError('registration return pose is not finite')
@@ -47,7 +47,13 @@ def registration_return_command(origin, pose, distance):
     if along <= .05:
         raise ValueError('recorded start is outside the available reverse corridor')
     correction = math.atan2(across, max(.65, along)) - heading
-    return -min(.15, .65*along), max(-.15, min(.15, 1.5*correction))
+    # Reserve time for chassis response and brake toward the centre of the
+    # arrival tolerance. Proportional position feedback limits the final creep.
+    braking_distance = max(0., along - .05)
+    response_margin = .25 * .60
+    braking_speed = math.sqrt(response_margin ** 2 + 2. * .60 * braking_distance) - response_margin
+    speed = min(max_speed, 1.4 * along, braking_speed)
+    return -speed, max(-.15, min(.15, 1.5 * correction))
 
 
 def acquire_roundtrip_owner():
@@ -494,8 +500,13 @@ class GeographicClient:
                       physical_point='base_link', stamp=self.ros.Time.now().to_sec())
         self.goal_record = record
         self.publish(self.goal_pub, record)
+        action_started = time.monotonic()
         action = self.run_action(self.pose(xyz, yaw, 'odom'), generation, initializing=True)
-        stopped = self.quiet(time.monotonic(), generation, initializing=True)
+        # Reuse the continuous quiet tail already observed while the outbound
+        # Action settled. Movement breaks the tail, so the initial stop cannot
+        # satisfy the final stop window.
+        quiet_since = action_started if self.return_pub is not None else time.monotonic()
+        stopped = self.quiet(quiet_since, generation, initializing=True)
         outbound_succeeded = action['state'] == 3 and not action['reason']
         can_fit = stopped['confirmed'] and (self.return_pub is None or outbound_succeeded)
         finished = self.trigger('finish_registration') if can_fit else None
@@ -535,6 +546,9 @@ class GeographicClient:
         owner = self.mux_sample[2]
         if not isinstance(owner[0], str) or not owner[0] or type(owner[1]) is not int:
             raise ValueError('Mux identity is unavailable for registration return')
+        max_speed = self.ros.get_param('/slicer_nav_arc_guard/effective_registration_reverse', .15)
+        if not finite(max_speed) or not 0. < max_speed <= .8:
+            raise ValueError('registration reverse speed limit is invalid')
         deadline = time.monotonic() + min(self.args.timeout, 45.)
         best_error, moved_at = math.inf, time.monotonic()
         arrived = False
@@ -551,7 +565,7 @@ class GeographicClient:
                 if problem:
                     raise ValueError(problem)
                 pose = self.current_pose('odom')
-                v, w = registration_return_command(origin, pose, self.args.distance)
+                v, w = registration_return_command(origin, pose, self.args.distance, max_speed)
                 if v == 0.:
                     arrived = True
                     break

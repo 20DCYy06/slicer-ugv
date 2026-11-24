@@ -118,6 +118,12 @@ class Dashboard:
     def planner_frame(self, now):
         return self.recent('frame', now, 2.) or self.recent('configured_frame', now, 1.5)
 
+    def display_frame(self, now, map_transform_ready):
+        geo = self.recent('geographic', now, NAV_STATUS_AGE) or {}
+        if map_transform_ready and geo.get('registered') is True and geo.get('state') in ('ready', 'degraded'):
+            return 'map'
+        return self.planner_frame(now)
+
     def view(self, now):
         gnss = self.latest_quality(now)
         try:

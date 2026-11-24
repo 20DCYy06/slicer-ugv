@@ -198,7 +198,7 @@ class Workflow:
                 status = {
                     'waiting': self._roundtrip_block() or '即将往返配准',
                     'preparing': '正在切换配准档',
-                    'running': '正在往返配准',
+                    'running': '配准完成 · 正在返回起点' if self.ready('calibrate') else '正在往返配准',
                     'awaiting_map': '等待配准停稳',
                     'switching': '正在切换 map',
                     'failed': '自动配准未完成',

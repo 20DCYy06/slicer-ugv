@@ -327,16 +327,21 @@ class Observer:
             return origin
         return None
 
+    def fresh_transform(self, frame, source):
+        try:
+            transform = self.tf.lookup_transform(frame, source, rospy.Time(0))
+        except (tf2_ros.LookupException, tf2_ros.ConnectivityException, tf2_ros.ExtrapolationException):
+            return None
+        return transform if recent_stamp(transform.header.stamp.to_sec(), 1.5) else None
+
+    def display_frame(self, now):
+        return self.board.display_frame(now, self.fresh_transform('map', 'odom') is not None)
+
     def point_in(self, point, frame):
         if point.header.frame_id == frame:
             return point
-        try:
-            transform = self.tf.lookup_transform(frame, point.header.frame_id, rospy.Time(0))
-            if not recent_stamp(transform.header.stamp.to_sec(), 1.5):
-                return None
-            return tf2_geometry_msgs.do_transform_point(point, transform)
-        except (tf2_ros.LookupException, tf2_ros.ConnectivityException, tf2_ros.ExtrapolationException):
-            return None
+        transform = self.fresh_transform(frame, point.header.frame_id)
+        return tf2_geometry_msgs.do_transform_point(point, transform) if transform else None
 
     def wgs84(self, point, now):
         origin = self.origin(now)
@@ -424,8 +429,15 @@ class Observer:
                    for goal, (_, seen) in self.action_goals.items()):
                 reason = 'move_base 有其他控制端的目标，当前目标优先'
         configured = self.board.recent('configured_frame', now, NAV_STATUS_AGE)
-        if reason is None and (message.header.frame_id != frame or configured != frame):
+        if reason is None and configured != frame:
             reason = '导航坐标系尚未确认或已切换，请重新点选'
+        if reason is None and message.header.frame_id != frame:
+            transform = (self.fresh_transform(frame, 'map')
+                         if message.header.frame_id == 'map' and self.display_frame(now) == 'map' else None)
+            if transform is None:
+                reason = '导航坐标系尚未确认或已切换，请重新点选'
+            else:
+                message = tf2_geometry_msgs.do_transform_pose(message, transform)
         if reason is None and not self.goal_pub.impl.has_connection(ACTION):
             reason = '等待 move_base 目标接口'
         if reason is not None:

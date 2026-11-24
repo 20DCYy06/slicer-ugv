@@ -99,6 +99,13 @@ RTK DWA 的 Guard 使用实际局部代价图和车体足迹。配置模板中�
 - 有效零速、急停、超时及扫掠不安全时立即停车。目标切换重置局部减速状态。巡航限速和障碍制动模型使用原配置。
 - 验证记录位于候选工作区 `logs/rtk-control-continuity/`。独立构建、341 项离线测试和启用适应性 Guard 的 ROS 传输回归通过。最终绕墙场景中连续八帧求解失败，Mux 将 0.701 m/s 逐帧降至零，最大单帧降幅 0.051 m/s。该场景另外触发一次扫掠硬停，随后成功到点。普通 6 m 路线加入 150 ms 合成底盘延迟后成功到点，过程中无行进中途掉零。两个场景峰值均为 0.80 m/s。实车同路线复测待补。
 
+## 11 月 24 日前进解算与快速返程
+
+- 桌面在前进结束并确认连续静止后提交配准。解算使用前进段和停稳样本。收到有效配准和新鲜 `map → odom` 后，RViz 即可显示 `map`。返程仍按起点的 `odom` 坐标控制，停稳并确认到位后正式导航切换。
+- 配准返程最高 0.8 m/s，独立起步限加速度 1.0 m/s²。接近起点按距离限制速度，继续用横向和航向反馈修正方向。Guard 复用原制动模型检查实际 LIO 运动、上一指令和候选返程弧线。后方不可通行或控制权变化时停车。配准前进档仍为 0.35 m/s。
+- 342 项离线回归及 12 项 launch 检查通过。回环 ROS 开阔用例在实际 Mux 输出中达到 0.800 m/s，距起点约 0.104 m 停稳；后方插入障碍的用例减速并停车，返程报告失败。两例均在返程结束前观测到 RViz 可用的 `map`。普通 `odom` 到首个 WGS84 任务的自动配准、切图与目标接续回归通过。日志位于任务工作区 `logs/rtk-registration-return/`。这些用例使用合成传感器和底盘响应，实车倒车速度、净空和停距待现场复测。
+- 主线交付安装使用 `~/workspace/slicer/releases/20261124-rtk-navigation`。从该目录的 `src/slicer-ugv` 运行 `./tools/rtk_desktop_ui.sh`。原日常入口由 `current` 选择。
+
 ## 开发、现场复测和回退
 
 首次构建按车端入口说明（`~/workspace/slicer/START_HERE.md`）从任务根导入 `dependencies.repos` 的固定依赖，运行 `bash tools/build_native.sh "$W" -j2`，目录变量 `W=~/workspace/slicer/dev/rtk-navigation-optimization`。构建后在任务源码根下用 `SLICER_NATIVE_WS="$W" ./tools/rtk_desktop_ui.sh` 启动任务安装。现场由同一执行会话结束已有导航控制链，再操作候选。参数位于 [RTK 导航 launch](../../src/ugv_bringup/launch/slicer_field_navigation.launch)、[正式速度档](../../src/ugv_bringup/config/dwa_field.yaml)和[配准速度档](../../src/ugv_bringup/config/dwa_registration.yaml)。观察 `/cmd_vel/nav_raw`、`/cmd_vel/nav`、`/cmd_vel`、`/slicer_nav_arc_guard/hold_reason`、`/geographic/status` 与 `/geographic/navigation_runtime`。

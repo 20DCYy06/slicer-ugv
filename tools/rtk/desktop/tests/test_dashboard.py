@@ -33,6 +33,17 @@ class DashboardTests(unittest.TestCase):
         self.assertEqual(board.planner_frame(2.5), 'odom')
         self.assertEqual(board.planner_frame(3.5), 'map')
 
+    def test_registered_map_is_visible_before_the_planner_handoff(self):
+        board = Dashboard()
+        board.record('frame', 'odom', 1.)
+        board.record('geographic', {'state': 'collecting', 'registered': False}, 1.)
+        self.assertEqual(board.display_frame(1., True), 'odom')
+        board.record('geographic', {'state': 'ready', 'registered': True}, 1.)
+        self.assertEqual(board.display_frame(1., False), 'odom')
+        self.assertEqual(board.display_frame(1., True), 'map')
+        self.assertEqual(board.planner_frame(1.), 'odom')
+        self.assertFalse(board.view(1.)['navigation'])
+
     def test_receive_after_ui_tick_timestamp_is_still_current(self):
         board = Dashboard()
         board.record('driver', True, 1.01)
