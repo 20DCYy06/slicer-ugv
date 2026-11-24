@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.0.2)
 project(slicer_navigation)
-find_package(catkin REQUIRED COMPONENTS rospy roscpp rviz pluginlib geometry_msgs nav_msgs sensor_msgs visualization_msgs std_msgs std_srvs tf tf2 tf2_geometry_msgs actionlib actionlib_msgs move_base_msgs nav_core global_planner costmap_2d base_local_planner)
+find_package(catkin REQUIRED COMPONENTS rospy roscpp rviz pluginlib geometry_msgs nav_msgs sensor_msgs visualization_msgs std_msgs std_srvs tf tf2 tf2_geometry_msgs actionlib actionlib_msgs move_base_msgs nav_core global_planner costmap_2d base_local_planner dwa_local_planner angles)
 find_package(Qt5 REQUIRED COMPONENTS Widgets)
 catkin_package()
 add_library(slicer_bspline_global_planner src/bspline_global_planner.cpp)
@@ -14,7 +14,18 @@ target_include_directories(slicer_bspline_check PRIVATE include)
 install(TARGETS slicer_bspline_global_planner slicer_bspline_check
   LIBRARY DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
   RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION})
-install(FILES global_planner_plugin.xml DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION})
+add_library(slicer_heading_dwa_planner src/dwa_heading_planner.cpp)
+target_compile_features(slicer_heading_dwa_planner PRIVATE cxx_std_14)
+target_include_directories(slicer_heading_dwa_planner PRIVATE include ${catkin_INCLUDE_DIRS})
+target_link_libraries(slicer_heading_dwa_planner ${catkin_LIBRARIES})
+add_executable(slicer_start_heading_check tests/check_start_heading.cpp)
+target_compile_features(slicer_start_heading_check PRIVATE cxx_std_14)
+target_include_directories(slicer_start_heading_check PRIVATE include)
+install(TARGETS slicer_heading_dwa_planner slicer_start_heading_check
+  LIBRARY DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
+  RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION})
+install(FILES global_planner_plugin.xml local_planner_plugin.xml
+  DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION})
 add_library(slicer_record_waypoint_tool src/record_waypoint_tool.cpp)
 target_compile_features(slicer_record_waypoint_tool PRIVATE cxx_std_11)
 target_include_directories(slicer_record_waypoint_tool PRIVATE ${catkin_INCLUDE_DIRS})

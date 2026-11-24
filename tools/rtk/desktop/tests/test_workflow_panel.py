@@ -28,6 +28,8 @@ class WorkflowPanelTests(unittest.TestCase):
         self.controller.mux = {}
         self.controller.owned = {}
         self.controller.calibrating = False
+        self.controller.startup_calibration_pending = False
+        self.controller.stopping_all = False
         self.controller.switching = False
         self.controller.can_send_wgs84.return_value = True
         self.panel = WorkflowPanel(self.controller)
@@ -92,6 +94,28 @@ class WorkflowPanelTests(unittest.TestCase):
         self.controller.stop_all.assert_called_once_with()
         self.assertIsNone(self.panel.confirmation)
         self.assertEqual(confirmation_states, [True, False, True, False, True, False])
+
+    def test_waypoint_confirmation_sends_only_latest_accepted_selection(self):
+        first = Mock()
+        second = Mock()
+        self.panel.confirm_waypoint('31.1111111, 121.1111111', first)
+        dialog = self.panel.waypoint_dialog
+        self.assertIn('31.1111111, 121.1111111', dialog.text())
+        self.click(dialog.button(QtWidgets.QMessageBox.No))
+        first.assert_not_called()
+
+        self.panel.confirm_waypoint('31.1111111, 121.1111111', first)
+        self.panel.confirm_waypoint('31.2222222, 121.2222222', second)
+        dialog = self.panel.waypoint_dialog
+        self.assertIn('31.2222222, 121.2222222', dialog.text())
+        self.click(dialog.button(QtWidgets.QMessageBox.Yes))
+        first.assert_not_called()
+        second.assert_called_once_with()
+
+        self.panel.confirm_waypoint('', first)
+        self.click(self.panel.stop_button)
+        self.assertIsNone(self.panel.waypoint_dialog)
+        first.assert_not_called()
 
     def test_wgs84_form_calls_shared_sender_and_stop_closes_unsubmitted_form(self):
         self.click(self.panel.buttons['wgs84'])

@@ -10,6 +10,7 @@ import yaml
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import rospy
 import tf
+from actionlib_msgs.msg import GoalStatus, GoalStatusArray
 from geometry_msgs.msg import Twist
 from nav_msgs.msg import OccupancyGrid, Odometry
 from std_msgs.msg import String
@@ -26,6 +27,9 @@ def main():
     allow_patrol_spin = p.get('allow_patrol_spin', True)
     if type(allow_patrol_spin) is not bool:
         raise ValueError('allow_patrol_spin must be a boolean')
+    registration_reverse = p.get('registration_reverse', False)
+    if type(registration_reverse) is not bool:
+        raise ValueError('registration_reverse must be a boolean')
     external_reverse = p.get('external_reverse', False)
     if type(external_reverse) is not bool:
         raise ValueError('external_reverse must be a boolean')
@@ -79,6 +83,7 @@ def main():
     lock, sources = threading.Lock(), {}
     latest_grid, footprint = [None, -math.inf], [None]
     latest_lio = [-math.inf, None, '', None, None]
+    action_status = [None]
     listener = tf.TransformListener()
     pub = rospy.Publisher(p['output_topic'], Twist, queue_size=1)
     reason_pub = rospy.Publisher('~hold_reason', String, queue_size=1, latch=True)
@@ -89,6 +94,29 @@ def main():
         valid = all(math.isfinite(x) for x in value)
         with lock:
             sources[source] = (time.monotonic(), value if valid else (0., 0.), valid)
+
+    def registration_command(msg):
+        header = getattr(msg, '_connection_header', {}) or {}
+        if (header.get('callerid') != '/slicer_geographic_roundtrip'
+                or header.get('latching', '0') != '0'):
+            return
+        v, w = msg.linear.x, msg.angular.z
+        valid = (-.15 <= v < 0. and -.15 <= w <= .15) or (v == 0. and w == 0.)
+        valid = valid and all(x == 0. for x in (msg.linear.y, msg.linear.z, msg.angular.x, msg.angular.y))
+        with lock:
+            sources['registration_reverse'] = time.monotonic(), (v, w) if valid else (0., 0.), valid
+
+    def move_base_status(msg):
+        header = getattr(msg, '_connection_header', {}) or {}
+        # actionlib publishes latched status periodically. Check its origin
+        # here and its ROS stamp and receipt age at every use.
+        if header.get('callerid') != planner_ns:
+            return
+        active = any(item.status in (GoalStatus.PENDING, GoalStatus.ACTIVE,
+                                    GoalStatus.PREEMPTING, GoalStatus.RECALLING)
+                     for item in msg.status_list)
+        with lock:
+            action_status[0] = time.monotonic(), msg.header.stamp, active
 
     def lio(msg):
         received, stamp = time.monotonic(), msg.header.stamp
@@ -168,30 +196,53 @@ def main():
         rospy.Subscriber(p.get('spin_input_topic', '/cmd_vel/patrol_spin_raw'), Twist,
                          receive, callback_args='spin', queue_size=1)
     rospy.Subscriber(p['costmap_topic'], OccupancyGrid, costmap, queue_size=1)
+    if registration_reverse:
+        if planner_ns != '/ugv/move_base' or external_reverse:
+            raise ValueError('registration reverse requires the standard RTK preparation Guard')
+        rospy.Subscriber('/geographic/registration_reverse', Twist, registration_command, queue_size=1)
+        rospy.Subscriber(planner_ns + '/status', GoalStatusArray, move_base_status, queue_size=1)
     previous, previous_at, last_reason, last_note = (0., 0.), time.monotonic(), None, None
+    was_returning = False
     try:
         while not rospy.is_shutdown():
             now = time.monotonic()
             with lock:
                 nav, spin = sources.get('nav'), sources.get('spin')
+                reverse, action = sources.get('registration_reverse'), action_status[0]
                 grid, grid_at = latest_grid
+            returning = reverse is not None and now-reverse[0] <= min(.25, p['command_timeout'])
+            if returning != was_returning:
+                previous = (0., 0.)
+                was_returning = returning
             sample = (spin if spin and now-spin[0] <= p['command_timeout']
                       and spin[1] != (0., 0.) else nav)
+            if returning:
+                # Suppress both sources on a contention or stale status. The
+                # reverse command expires independently if its client exits.
+                sample = reverse
             reason, note, bounded, target = '', '', (0., 0.), (0., 0.)
-            if sample is None or now-sample[0] > p['command_timeout']:
+            reverse_without_idle = returning and (
+                action is None or action[2] or action[1].to_sec() <= 0.
+                or now-action[0] > .6 or not -.1 <= (rospy.Time.now()-action[1]).to_sec() <= .6
+                or (nav and now-nav[0] <= p['command_timeout'] and nav[1] != (0., 0.))
+                or (spin and now-spin[0] <= p['command_timeout'] and spin[1] != (0., 0.)))
+            reverse_cap = .15 if returning else limits['max_reverse']
+            if reverse_without_idle:
+                reason = 'registration return requires fresh idle navigation'
+            elif sample is None or now-sample[0] > p['command_timeout']:
                 reason = 'command missing/stale'
             elif not sample[2]:
                 reason = 'non-finite input'
-            elif limits['max_reverse'] == 0 and sample[1][0] < 0:
+            elif reverse_cap == 0 and sample[1][0] < 0:
                 # A reverse arc is not a pure-spin request. Reject it before any
                 # turn floor or collision fallback can preserve its angular part.
                 reason = 'negative body vx disallowed; full command stopped'
             else:
                 bounded = saturate_twist(*sample[1], limits['max_forward'],
-                                         limits['max_reverse'], limits['max_angular'])
+                                         reverse_cap, limits['max_angular'])
                 target = (compensate_turn(*bounded, min_angular, p['turning_linear_window'],
                                           p['angular_intent_threshold'])
-                          if compensation_enabled else bounded)
+                          if compensation_enabled and not returning else bounded)
                 if target != bounded:
                     note = 'turn-start floor %.0f permille (%.3frad/s)' % (start_pwm, min_angular)
             # Explicit stop and expired commands stop immediately. Nonzero commands

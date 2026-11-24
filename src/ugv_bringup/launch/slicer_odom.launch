@@ -14,6 +14,7 @@
   <!-- Vision experiments keep costmaps alive while separating planner commands. -->
   <arg name="planner_raw_topic" default="$(arg raw_topic)"/>
   <arg name="visual_reverse" default="false"/>
+  <arg name="registration_reverse" default="false"/>
   <arg name="adaptive_forward_speed" default="false"/>
   <arg name="release_owner" default="$(eval '/' + arg('namespace').strip('/') + '/control')"/>
   <include file="$(find ugv_bringup)/launch/odom.launch">
@@ -35,6 +36,7 @@
       <param name="input_topic" value="$(arg raw_topic)"/>
       <param name="planner_output_topic" value="$(arg planner_raw_topic)"/>
       <param name="external_reverse" value="$(arg visual_reverse)"/>
+      <param name="registration_reverse" value="$(arg registration_reverse)"/>
       <param name="adaptive_forward_speed" value="$(arg adaptive_forward_speed)"/>
       <param name="planner_namespace" value="$(eval '/' + arg('namespace').strip('/') + '/move_base')"/>
       <param name="costmap_topic" value="$(eval '/' + arg('namespace').strip('/') + '/move_base/local_costmap/costmap')"/>

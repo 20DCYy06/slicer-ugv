@@ -80,6 +80,8 @@ class ReadoutLine(QtWidgets.QLabel):
 
 
 class Readouts(QtWidgets.QWidget):
+    waypoint_selected = QtCore.pyqtSignal(object, str)
+
     def __init__(self, workflow=None, cancel_pending_goal=None, submit_process_scan=None):
         super().__init__()
         self.setObjectName('Dashboard')
@@ -139,6 +141,13 @@ class Readouts(QtWidgets.QWidget):
                          if workflow is not None else None)
         if self.workflow is not None:
             outer.addWidget(self.workflow)
+
+    def bind_waypoint_confirmation(self, observer):
+        self.waypoint_selected.connect(
+            lambda pose, coordinates: self.workflow.confirm_waypoint(
+                coordinates, lambda: observer.submit_waypoint(pose)),
+            QtCore.Qt.QueuedConnection)
+        observer.waypoint_selected = self.waypoint_selected.emit
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -236,7 +245,7 @@ class DesktopRviz(rviz.VisualizationFrame):
         self.closing.emit()
 
 
-def make_rviz(config_path, app, observer=None):
+def make_rviz(config_path, app):
     window = DesktopRviz()
     window.setSplashPath('')
     window.initialize()
@@ -280,9 +289,6 @@ def make_rviz(config_path, app, observer=None):
         buttons.append((tool, action))
         if index == 0:
             action.setChecked(True)
-    if observer is not None:
-        toolbar.addAction('记录参考点', observer.capture_waypoint_reference)
-        toolbar.addAction('清除参考点', observer.clear_waypoint_references)
     toolbar.addSeparator()
     toolbar.addAction('关闭', app.quit)
     refresh_tools = QtCore.QTimer(toolbar)
@@ -348,7 +354,8 @@ def run_desktop():
     workflow = Workflow(board)
     executor = ThreadPoolExecutor(max_workers=2)
     dashboard = Readouts(workflow, observer.cancel_pending_goal, lambda: executor.submit(process_snapshot))
-    frame, manager = make_rviz(Path(__file__).with_name('rtk_desktop.rviz'), app, observer)
+    dashboard.bind_waypoint_confirmation(observer)
+    frame, manager = make_rviz(Path(__file__).with_name('rtk_desktop.rviz'), app)
     frame.closing.connect(app.quit)
     frame.attach_readouts(dashboard)
     dashboard.workflow.calibration_active.connect(observer.set_calibration_active)
@@ -411,6 +418,7 @@ def run_desktop():
     finally:
         display_timer.stop()
         workflow_timer.stop()
+        observer.waypoint_selected = None
         dashboard.workflow.cancel_pending()
         manager.stopUpdate()
         frame.hide()

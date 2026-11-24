@@ -106,13 +106,74 @@ class WorkflowTests(unittest.TestCase):
         self.graph.subscribers['/ugv/move_base/goal'] = {'/ugv/move_base'}
         self.sample(action=[])
         self.refresh()
-        self.assertEqual(self.color('navigation'), 'green')
+        self.assertEqual(self.workflow.states['navigation'][:2], ('yellow', '等待 RTK Fixed'))
         self.workflow.click('navigation')
         self.starts[-1][3].status = 0
         self.graph.frame = None
         self.graph.subscribers.clear()
         self.refresh()
         self.assertEqual(self.color('navigation'), 'red')
+
+    def test_rtk_start_waits_for_fresh_stationary_inputs_then_runs_roundtrip_once(self):
+        self.workflow.click('navigation')
+        self.prerequisites(fixed=False, held=False)
+        self.assertTrue(self.workflow.startup_calibration_pending)
+        self.sample(lio=True, wheel_still=False)
+        self.refresh()
+        self.assertEqual([entry[0] for entry in self.starts], ['navigation'])
+        self.prerequisites(held=True)
+        self.sample(wheel_still=True)
+        self.refresh()
+        self.assertEqual([entry[0] for entry in self.starts], ['navigation'])
+
+        self.sample(mux=dict(self.workflow.mux, manual_hold=False))
+        self.refresh()
+        command = self.starts[-1][1]
+        self.assertEqual(command, ('rosrun', 'ugv_navigation', 'geographic.py',
+                                   'initialize', '--distance', '2.0', '--return-to-start'))
+        for _ in range(3):
+            self.refresh()
+        self.assertEqual([entry[0] for entry in self.starts], ['navigation', 'calibrate'])
+
+        self.sample(geographic={'state': 'ready', 'registered': True})
+        self.starts[-1][3].status = 0
+        self.refresh()
+        self.assertEqual(self.starts[-1][1], ('rosservice', 'call', '/geographic/navigation_map'))
+        self.starts[-1][3].status = 0
+        self.graph.frame = 'map'
+        self.refresh()
+        self.assertFalse(self.workflow.startup_calibration_pending)
+
+    def test_roundtrip_failure_does_not_restart_or_switch_even_when_outbound_registered(self):
+        self.workflow.click('navigation')
+        self.prerequisites(held=False)
+        self.sample(lio=True, wheel_still=True)
+        self.refresh()
+        self.assertEqual(self.starts[-1][0], 'calibrate')
+        self.sample(geographic={'state': 'ready', 'registered': True})
+        self.starts[-1][3].status = 1
+        for _ in range(3):
+            self.refresh()
+        self.assertEqual([entry[0] for entry in self.starts], ['navigation', 'calibrate'])
+        self.assertIn('未完成', self.workflow.states['navigation'][1])
+        self.assertFalse(self.workflow.startup_calibration_pending)
+
+    def test_observing_external_rtk_does_not_automatically_move(self):
+        self.prerequisites(held=False)
+        self.sample(lio=True, wheel_still=True)
+        self.refresh()
+        self.assertFalse(self.workflow.startup_calibration_pending)
+        self.assertEqual(self.starts, [])
+
+    def test_stop_all_clears_pending_startup_and_does_not_launch_when_fix_arrives(self):
+        self.workflow.click('navigation')
+        self.prerequisites(fixed=False, held=False)
+        self.workflow.stop_all()
+        self.prerequisites(held=False)
+        self.sample(lio=True, wheel_still=True)
+        self.refresh()
+        self.assertFalse(self.workflow.startup_calibration_pending)
+        self.assertEqual([entry[0] for entry in self.starts], ['navigation'])
 
     def test_external_ready_and_stale_owner_both_block_duplicate(self):
         self.prerequisites()

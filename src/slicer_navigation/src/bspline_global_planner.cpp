@@ -1,3 +1,4 @@
+#include <slicer_navigation/clearance_preference.h>
 #include <slicer_navigation/bspline_core.h>
 #include <slicer_navigation/route_continuity.h>
 #include <nav_core/base_global_planner.h>
@@ -12,6 +13,7 @@
 #include <tf2_geometry_msgs/tf2_geometry_msgs.h>
 #include <boost/thread/locks.hpp>
 #include <memory>
+#include <mutex>
 #include <sstream>
 
 namespace slicer_navigation {
@@ -33,13 +35,26 @@ class BSplineGlobalPlanner : public nav_core::BaseGlobalPlanner {
     nh.param("smoothing/observed_prefix", smooth_observed_prefix_, false);
     nh.param("continuity/extra_cost", reuse_cost_, 0.);
     nh.param("continuity/join_distance", join_distance_, .30);
+    nh.param("continuity/preferred_clearance", preferred_clearance_, 0.);
+    ros::NodeHandle private_node("~");
+    private_node.param("global_costmap/inflation_layer/cost_scaling_factor", clearance_decay_, 4.5);
+    int lethal;
+    nh.param("lethal_cost", lethal, 253);
+    preferred_cap_ = std::max(0, std::min(lethal - 2, 252));
     if(!std::isfinite(epsilon_) || epsilon_<0. || !std::isfinite(control_spacing_) ||
        control_spacing_<=0. || !std::isfinite(sample_spacing_) || sample_spacing_<=0. ||
        refinements_<0 || max_cost_<0 || max_cost_>252 || !std::isfinite(reuse_cost_) ||
-       reuse_cost_<0. || !std::isfinite(join_distance_) || join_distance_<=0.)
+       reuse_cost_<0. || !std::isfinite(join_distance_) || join_distance_<=0. ||
+       !std::isfinite(preferred_clearance_) || preferred_clearance_<0. || preferred_clearance_>2. ||
+       !std::isfinite(clearance_decay_) || clearance_decay_<=0.)
       throw std::invalid_argument("invalid GlobalPlanner/smoothing configuration");
     raw_.reset(new global_planner::GlobalPlanner());
-    raw_->initialize("GlobalPlannerRaw",costmap_ros_);
+    if (preferred_clearance_ > 0.) {
+      preferred_grid_ = snapshot();
+      raw_->initialize("GlobalPlannerRaw", &preferred_grid_, costmap_ros_->getGlobalFrameID());
+    } else {
+      raw_->initialize("GlobalPlannerRaw", costmap_ros_);
+    }
     raw_pub_=nh.advertise<nav_msgs::Path>("plan_raw",1);
     smooth_pub_=nh.advertise<nav_msgs::Path>("plan",1);
     status_pub_=nh.advertise<std_msgs::String>("smoothing_status",1,true);
@@ -48,21 +63,27 @@ class BSplineGlobalPlanner : public nav_core::BaseGlobalPlanner {
 
   bool makePlan(const geometry_msgs::PoseStamped& start,const geometry_msgs::PoseStamped& goal,
                 std::vector<geometry_msgs::PoseStamped>& plan) override {
+    std::lock_guard<std::mutex> lock(plan_lock_);
     plan.clear();
+    costmap_2d::Costmap2D grid;
+    if (preferred_clearance_ > 0.) {
+      grid = snapshot();
+      preferred_grid_ = grid;
+      double inscribed, circumscribed;
+      costmap_2d::calculateMinAndMaxDistances(costmap_ros_->getRobotFootprint(), inscribed, circumscribed);
+      preferClearance(preferred_grid_.getCharMap(), preferred_grid_.getSizeInCellsX(),
+                      preferred_grid_.getSizeInCellsY(), preferred_grid_.getResolution(),
+                      preferred_clearance_, inscribed, clearance_decay_, preferred_cap_);
+    }
     std::vector<geometry_msgs::PoseStamped> original;
     if(!raw_ || !raw_->makePlan(start,goal,original) || original.empty()) return false;
     publish(raw_pub_,original);
     if((!enabled_ && reuse_cost_ == 0.) || original.size()<2) {
       plan=original; publish(smooth_pub_,plan); status("raw: disabled or stationary"); return true;
     }
-    // 仅短暂锁住全局地图制作快照，曲线拟合不占用实时代价地图更新线程。
-    costmap_2d::Costmap2D grid;
-    {
-      auto* live=costmap_ros_->getCostmap();
-      boost::unique_lock<costmap_2d::Costmap2D::mutex_t> lock(*live->getMutex());
-      grid=*live;
-    }
-    if (reuse_cost_ > 0.) retainRoute(start, goal, grid, original);
+    if (preferred_clearance_ == 0.) grid = snapshot();
+    if (reuse_cost_ > 0.)
+      retainRoute(start, goal, preferred_clearance_ > 0. ? preferred_grid_ : grid, original);
     if (!enabled_) {
       plan = original;
       publish(smooth_pub_, plan);
@@ -155,6 +176,12 @@ class BSplineGlobalPlanner : public nav_core::BaseGlobalPlanner {
     return true;
   }
  private:
+  costmap_2d::Costmap2D snapshot() const {
+    auto* live = costmap_ros_->getCostmap();
+    boost::unique_lock<costmap_2d::Costmap2D::mutex_t> lock(*live->getMutex());
+    return *live;
+  }
+
   static Point2 point(const geometry_msgs::PoseStamped& pose) {
     return {pose.pose.position.x, pose.pose.position.y};
   }
@@ -206,11 +233,14 @@ class BSplineGlobalPlanner : public nav_core::BaseGlobalPlanner {
     std_msgs::String message; message.data=text; status_pub_.publish(message);
   }
   costmap_2d::Costmap2DROS* costmap_ros_=nullptr;
+  costmap_2d::Costmap2D preferred_grid_;
+  std::mutex plan_lock_;
   std::unique_ptr<global_planner::GlobalPlanner> raw_;
   ros::Publisher raw_pub_,smooth_pub_,status_pub_;
   bool enabled_=true, smooth_observed_prefix_=false;
   double epsilon_=.03,control_spacing_=.2,sample_spacing_=.05;
-  double reuse_cost_=0., join_distance_=.30;
+  double reuse_cost_=0., join_distance_=.30, preferred_clearance_=0., clearance_decay_=4.5;
+  int preferred_cap_=173;
   geometry_msgs::PoseStamped previous_goal_;
   std::vector<geometry_msgs::PoseStamped> previous_path_;
   int refinements_=2,max_cost_=252;

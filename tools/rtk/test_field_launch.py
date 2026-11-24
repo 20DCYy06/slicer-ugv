@@ -60,7 +60,7 @@ class FieldLaunchTests(unittest.TestCase):
         self.assertFalse(any(n.type in ('c30d_driver_node.py', 'move_base', 'slam_gmapping')
                              for n in config.nodes))
 
-    def assert_navigation_chain(self, config, field=True):
+    def assert_navigation_chain(self, config, field=True, heading=False):
         types = [n.type for n in config.nodes]
         for name in ('move_base', 'arc_velocity_guard.py', 'velocity_mux.py'):
             self.assertEqual(types.count(name), 1)
@@ -68,7 +68,8 @@ class FieldLaunchTests(unittest.TestCase):
             self.assertNotIn(name, types)
         params = config.params
         plugin = params['/ugv/move_base/base_local_planner'].value
-        self.assertEqual(plugin, 'dwa_local_planner/DWAPlannerROS')
+        expected = 'slicer_navigation/DWAPlannerROS' if heading else 'dwa_local_planner/DWAPlannerROS'
+        self.assertEqual(plugin, expected)
         prefix = '/ugv/move_base/DWAPlannerROS/'
         planner = {key[len(prefix):]: param.value for key, param in params.items() if key.startswith(prefix)}
         for key in ('max_vel_x', 'max_vel_trans'):
@@ -82,7 +83,8 @@ class FieldLaunchTests(unittest.TestCase):
             self.assertAlmostEqual(effective['max_angular'], math.pi / 4)
             timeout = params['/slicer_nav_arc_guard/command_timeout'].value
             speed = effective['max_forward']
-            travel = speed * (speed / effective['accel_linear'] + timeout)
+            brake = min(effective['brake_linear'], effective['accel_linear'])
+            travel = speed * (speed / brake + timeout)
             local = '/ugv/move_base/local_costmap/'
             radius = max(math.hypot(*vertex) for vertex in params[local + 'footprint'].value)
             grid_period = (1 / params[local + 'update_frequency'].value
@@ -120,7 +122,7 @@ class FieldLaunchTests(unittest.TestCase):
 
     def test_default_geographic_profile_uses_fixed_map_grid_without_static_or_depth(self):
         config = load('slicer_field_navigation.launch')
-        self.assert_navigation_chain(config)
+        self.assert_navigation_chain(config, heading=True)
         self.assert_no_depth(config)
         self.assertIn('/ugv/move_base/', config.clear_params)
         self.assertFalse(any(n.package in ('gmapping', 'realsense2_camera') for n in config.nodes))
@@ -147,6 +149,11 @@ class FieldLaunchTests(unittest.TestCase):
         self.assertEqual(p[prefix + 'GlobalPlanner/smoothing/max_cost'].value, 173)
         self.assertTrue(p[prefix + 'GlobalPlanner/smoothing/observed_prefix'].value)
         self.assertEqual(p[prefix + 'DWAPlannerROS/vx_samples'].value, 7)
+        self.assertEqual(p[prefix + 'DWAPlannerROS/acc_lim_x'].value, .5)
+        self.assertEqual(p[prefix + 'DWAPlannerROS/start_heading_rate'].value, .45)
+        self.assertEqual(p[prefix + 'GlobalPlanner/continuity/preferred_clearance'].value, .45)
+        self.assertEqual(p[prefix + 'DWAPlannerROS/vth_samples'].value, 21)
+        self.assertFalse(p['/slicer_nav_arc_guard/registration_reverse'].value)
         for scope in ('global_costmap', 'local_costmap'):
             costmap = prefix + scope + '/'
             self.assertEqual(p[costmap + 'inflation_layer/inflation_radius'].value, .25)
@@ -158,6 +165,7 @@ class FieldLaunchTests(unittest.TestCase):
         for key in ('max_vel_x', 'max_vel_trans'):
             self.assertEqual(p['/ugv/move_base/DWAPlannerROS/' + key].value, .35)
         self.assertFalse(p['/slicer_nav_arc_guard/adaptive_forward_speed'].value)
+        self.assertTrue(p['/slicer_nav_arc_guard/registration_reverse'].value)
 
     def test_bootstrap_odom_profile_remains_explicit(self):
         config = load('slicer_field_navigation.launch', ['geographic:=false'])

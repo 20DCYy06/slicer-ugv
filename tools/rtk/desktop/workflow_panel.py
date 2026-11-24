@@ -9,7 +9,7 @@ STEPS = {
     'sensors': '1. 启动定位与传感器',
     'driver': '2. 启动底盘驱动',
     'vision': '3. 移动并抓取',
-    'navigation': '4. 启动导航',
+    'navigation': '4. 启动 RTK 导航（自动往返配准）',
     'air': '5. 飞机通信节点',
     'wgs84': 'WGS84 测试目标',
 }
@@ -57,6 +57,7 @@ class WorkflowPanel(QtWidgets.QWidget):
         self.pending_step = None
         self.confirmation = None
         self.target_dialog = None
+        self.waypoint_dialog = None
         self.calibration_blocked = False
         self.scan_timer = QtCore.QTimer(self, interval=40)
         self.scan_timer.timeout.connect(self.finish_scan)
@@ -142,7 +143,7 @@ class WorkflowPanel(QtWidgets.QWidget):
             self.confirmation.raise_()
             self.confirmation.activateWindow()
             return
-        if self.confirmation is not None or key in self.controller.owned:
+        if self.confirmation is not None or self.waypoint_dialog is not None or key in self.controller.owned:
             self.cancel_pending()
         self.request_step(key, self.air_mode.currentData(), confirmed=False)
 
@@ -184,6 +185,33 @@ class WorkflowPanel(QtWidgets.QWidget):
     def _finished_wgs84(self, dialog):
         if self.target_dialog is dialog:
             self.target_dialog = None
+
+    def confirm_waypoint(self, coordinates, navigate):
+        if self.controller.stopping_all is True:
+            return
+        if self.waypoint_dialog is not None:
+            old, self.waypoint_dialog = self.waypoint_dialog, None
+            old.reject()
+        location = f'\nWGS84 经纬度 {coordinates}' if coordinates else '\n等待配准或地图坐标'
+        dialog = QtWidgets.QMessageBox(
+            QtWidgets.QMessageBox.Question, 'Waypoint 导航',
+            '导航到所选位置？' + location,
+            QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No, self)
+        dialog.setWindowModality(QtCore.Qt.NonModal)
+        dialog.button(QtWidgets.QMessageBox.Yes).setText('开始导航')
+        dialog.button(QtWidgets.QMessageBox.No).setText('取消')
+        dialog.setDefaultButton(QtWidgets.QMessageBox.No)
+        dialog.setEscapeButton(QtWidgets.QMessageBox.No)
+        dialog.setAttribute(QtCore.Qt.WA_DeleteOnClose)
+        dialog.finished.connect(lambda answer: self._finished_waypoint(dialog, answer, navigate))
+        self.waypoint_dialog = dialog
+        dialog.show()
+
+    def _finished_waypoint(self, dialog, answer, navigate):
+        if self.waypoint_dialog is dialog:
+            self.waypoint_dialog = None
+            if answer == QtWidgets.QMessageBox.Yes and self.controller.stopping_all is not True:
+                navigate()
 
     def request_step(self, key, mode, confirmed):
         owner = self.controller.owned.get(key)
@@ -259,6 +287,9 @@ class WorkflowPanel(QtWidgets.QWidget):
         if self.target_dialog is not None:
             dialog, self.target_dialog = self.target_dialog, None
             dialog.reject()
+        if self.waypoint_dialog is not None:
+            dialog, self.waypoint_dialog = self.waypoint_dialog, None
+            dialog.reject()
 
     def stop_all(self):
         self.cancel_pending()
@@ -273,7 +304,8 @@ class WorkflowPanel(QtWidgets.QWidget):
         states = self.controller.states
         pending_key = self.pending_step[0] if self.pending_step is not None else None
         calibration_blocked = (pending_key in ('calibrate', 'map') or self.confirmation is not None
-                               or self.controller.calibrating or self.controller.switching)
+                               or self.controller.calibrating or self.controller.switching
+                               or self.controller.startup_calibration_pending)
         if calibration_blocked != self.calibration_blocked:
             self.calibration_blocked = calibration_blocked
             self.calibration_active.emit(calibration_blocked)

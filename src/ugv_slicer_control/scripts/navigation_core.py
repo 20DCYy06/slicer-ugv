@@ -22,8 +22,8 @@ def planner_limits(source, plugin, planner, external_reverse=False):
     """Constrain Guard by the selected planner; never borrow another plugin's caps."""
     if type(external_reverse) is not bool:
         raise ValueError('external_reverse must be a boolean')
-    if plugin not in ('teb_local_planner/TebLocalPlannerROS',
-                      'dwa_local_planner/DWAPlannerROS'):
+    is_dwa = plugin in ('dwa_local_planner/DWAPlannerROS', 'slicer_navigation/DWAPlannerROS')
+    if not is_dwa and plugin != 'teb_local_planner/TebLocalPlannerROS':
         raise ValueError('Unsupported local planner: ' + str(plugin))
     limits = dict(source)
     keys = (('max_forward', 'max_vel_x'), ('max_angular', 'max_vel_theta'),
@@ -38,7 +38,7 @@ def planner_limits(source, plugin, planner, external_reverse=False):
     reverse = finite(source['max_reverse'], 'max_reverse')
     if reverse < 0:
         raise ValueError('max_reverse must be nonnegative')
-    if plugin == 'dwa_local_planner/DWAPlannerROS':
+    if is_dwa:
         if finite(planner['min_vel_x'], 'min_vel_x') != 0:
             raise ValueError('DWA min_vel_x must be zero for forward-only navigation')
         for key, planner_key in (('max_forward', 'max_vel_trans'),

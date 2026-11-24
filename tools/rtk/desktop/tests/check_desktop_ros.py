@@ -25,6 +25,7 @@ DIRECTORY = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(DIRECTORY))
 from desktop import Dashboard, Observer, Readouts, make_rviz, sip
 from ros_observer import WAYPOINT_CLICK
+from workflow import Workflow
 
 
 def main():
@@ -33,7 +34,8 @@ def main():
     rospy.init_node('rtk_desktop_test', disable_signals=True)
     app = QtWidgets.QApplication([])
     observer = Observer(Dashboard())
-    dashboard = Readouts()
+    dashboard = Readouts(Workflow(observer.board))
+    dashboard.bind_waypoint_confirmation(observer)
     window, manager = make_rviz(DIRECTORY/'rtk_desktop.rviz', app)
     screen = app.primaryScreen()
     window.attach_readouts(dashboard)
@@ -187,7 +189,9 @@ def main():
 
         with redirect_stdout(output):
             click('Waypoint 打点')
-            wait(lambda: len(clicks) == 1 and '待配准' in output.getvalue())
+            wait(lambda: len(clicks) == 1 and '等待地理配准' in output.getvalue()
+                 and dashboard.workflow.waypoint_dialog is not None)
+            dashboard.workflow.waypoint_dialog.reject()
             assert clicks[0].header.frame_id == 'odom' and not goals
             # A brief Action heartbeat gap must not reject an otherwise valid click.
             status_delay = .7
@@ -255,7 +259,11 @@ def main():
             click('Waypoint 打点')
             wait(lambda: len(clicks) == 2 and re.search(
                 r'经纬度：3[01]\.\d{7}, 121\.\d{7}\n', output.getvalue()))
+            wait(lambda: dashboard.workflow.waypoint_dialog is not None)
+            dialog = dashboard.workflow.waypoint_dialog
+            assert dashboard.waypoint_coords in dialog.text()
             assert clicks[1].header.frame_id == 'map' and len(goals) == 2
+            dialog.reject()
             observer.set_calibration_active(True)
             click('2D Nav Goal')
             wait(lambda: '正在地理配准' in output.getvalue())
@@ -286,11 +294,18 @@ def main():
             assert dashboard.destination.text() == dashboard.destination.value
             active[:] = [GoalStatus(goal_id=goals[2].goal_id, status=GoalStatus.SUCCEEDED)]
             wait(lambda: dashboard.destination.value == '正在前往：待命')
+            click('Waypoint 打点', position + QtCore.QPoint(50, 0))
+            wait(lambda: len(clicks) == 3 and dashboard.workflow.waypoint_dialog is not None)
+            assert len(goals) == 3
+            dialog = dashboard.workflow.waypoint_dialog
+            QtTest.QTest.mouseClick(dialog.button(QtWidgets.QMessageBox.Yes), QtCore.Qt.LeftButton)
+            wait(lambda: len(goals) == 4)
+            assert goals[3].goal.target_pose.pose.position == clicks[2].pose.position
             status_delay = 2.
             wait(lambda: observer.board.recent('action', time.monotonic(), 1.5) is None)
             click('2D Nav Goal')
             wait(lambda: '等待当前导航坐标系和 move_base 状态' in output.getvalue())
-            assert len(goals) == 3
+            assert len(goals) == 4
         print('RTK_DESKTOP_GUI_PASS split odom map waypoint WGS84 preparation manual goal isolation')
     except AssertionError:
         print(output.getvalue(), file=sys.stderr)

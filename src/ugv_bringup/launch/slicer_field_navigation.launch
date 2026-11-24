@@ -17,6 +17,7 @@
     <arg name="local_planner" value="dwa"/>
     <arg name="connect_control" value="true"/>
     <arg name="adaptive_forward_speed" value="$(arg geographic)"/>
+    <arg name="registration_reverse" value="$(eval arg('preparation') and not arg('geographic'))"/>
     <arg name="source_config" value="$(find ugv_bringup)/config/online_runtime/config/slicer_config.yaml"/>
     <arg name="control_config" value="$(find ugv_bringup)/config/slicer_driver_body_speed.yaml"/>
     <arg name="global_costmap_config"
@@ -60,6 +61,18 @@
   <!-- The Guard reads final planner limits at startup; restart navigation after edits. -->
   <rosparam if="$(eval arg('cruise_config') != '')" command="load"
             ns="ugv/move_base" file="$(arg cruise_config)"/>
+  <rosparam if="$(eval arg('geographic') and not arg('mapping'))" ns="ugv/move_base">
+    base_local_planner: slicer_navigation/DWAPlannerROS
+    GlobalPlanner:
+      continuity:
+        preferred_clearance: 0.45
+    DWAPlannerROS:
+      start_heading_rate: 0.45
+      start_heading_tolerance: 0.12
+      start_heading_settle: 0.25
+      start_heading_timeout: 16.0
+      start_heading_min_distance: 0.20
+  </rosparam>
   <rosparam unless="$(arg mapping)" ns="ugv/move_base">
     base_global_planner: slicer_navigation/BSplineGlobalPlanner
     GlobalPlanner:

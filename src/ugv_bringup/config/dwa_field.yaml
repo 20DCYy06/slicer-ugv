@@ -3,9 +3,13 @@ DWAPlannerROS:
   max_vel_x: 0.8
   max_vel_trans: 0.8
   max_vel_theta: 0.7853981633974483
-  acc_lim_x: 0.4
-  acc_lim_trans: 0.4
+  # Ramp toward cruise speed within the Guard braking checks.
+  acc_lim_x: 0.5
+  acc_lim_trans: 0.5
   # Favor the planned bypass over cutting back toward the final goal at a wall.
   path_distance_bias: 2.4
   # Sample intermediate forward speeds in the same acceleration-limited window.
   vx_samples: 7
+  # Favor progress on a valid bypass and sample zero angular speed as well.
+  goal_distance_bias: 1.2
+  vth_samples: 21

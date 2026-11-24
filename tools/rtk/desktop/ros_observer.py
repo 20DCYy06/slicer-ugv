@@ -1,5 +1,4 @@
 """Observe the existing RTK stack and dispatch only explicit desktop goals."""
-from collections import deque
 from copy import deepcopy
 import json
 import math
@@ -19,12 +18,10 @@ from sensor_msgs.msg import LaserScan, NavSatFix
 from std_msgs.msg import Bool, String
 from slicer_air_ground_msgs.msg import Command
 
-from geographic_core import enu_to_geodetic, interpolate_odom
-from geographic_goal_core import quiet_odom_tail
-from geographic_state import odom_reset, qualified_fix
+from geographic_core import enu_to_geodetic
+from geographic_state import qualified_fix
 from dashboard_model import (ACTIVE_ACTION_STATES, FIX_POSITION_AGE, NAV_STATUS_AGE, coordinates,
                              manual_goal_block, task_destination)
-from waypoint_reference import MIN_BASELINE_M, WaypointReferences
 
 
 ACTION = '/ugv/move_base'
@@ -34,8 +31,7 @@ WAYPOINT_CLICK = 'waypoint'
 GOAL_STATUS_AGE = .5
 GOAL_WAIT = .65
 FIX_BUFFER_SIZE = 64
-WAYPOINT_ODOM_MAX_AGE = .5
-WAYPOINT_PROMPT = '待配准或记录两个 RTK 参考点'
+WAYPOINT_PROMPT = '等待地理配准'
 
 
 def finite(*values):
@@ -75,9 +71,7 @@ class Observer:
         self.fixed_stamp_ns = 0
         self.last_quality_stamp_ns = 0
         self.fixed_session = None
-        self.waypoint_references = WaypointReferences()
-        self.waypoint_fixes = deque(maxlen=16)
-        self.waypoint_odoms = deque(maxlen=256)
+        self.waypoint_selected = None
         self.waypoint_status = f'Waypoint：{WAYPOINT_PROMPT}'
         self.waypoint_coords = ''
         self.goal_pub = rospy.Publisher(ACTION + '/goal', MoveBaseActionGoal, queue_size=1)
@@ -157,11 +151,6 @@ class Observer:
             point = None
             if fix['callerid'] == diag['callerid'] and not qualified_fix(fix, diag, ros_now, FIX_POSITION_AGE):
                 point = {key: fix[key] for key in ('latitude', 'longitude', 'altitude')}
-                origin = dict(latitude=fix['latitude'], longitude=fix['longitude'],
-                              altitude_ellipsoid_m=fix['altitude'])
-                self.waypoint_fixes.append((stamp, origin))
-            else:
-                self.waypoint_fixes.clear()
             self.board.record('fixed_position', point, received-(ros_now-stamp))
 
     @staticmethod
@@ -179,9 +168,6 @@ class Observer:
                 # Prevent a late position from the previous session restoring the readout.
                 self.fixed_session = session
                 self.fixed_qualities.clear()
-                self.waypoint_fixes.clear()
-                if self.waypoint_references.anchor is not None:
-                    self._clear_waypoint_locked('RTK 会话已变更，请重新记录参考点')
                 self.fixed_stamp_ns = stamp_ns - 1
                 self.board.record('fixed_position', None)
         if session != self.fixed_session:
@@ -190,7 +176,6 @@ class Observer:
                   and str(sample.get('fresh_rtk_usable')).lower() == 'true'
                   and str(sample.get('fix_valid')).lower() == 'true')
         if not usable:
-            self.waypoint_fixes.clear()
             self.fixed_stamp_ns = stamp_ns
             self.board.record('fixed_position', None)
             return False
@@ -233,27 +218,6 @@ class Observer:
             return
         self.board.record('odom', (p.x, p.y))
         self.board.record('odom_still', abs(speed.linear.x) <= .02 and abs(speed.angular.z) <= .02)
-        q = message.pose.pose.orientation
-        orient = (q.x, q.y, q.z, q.w)
-        if (message.child_frame_id != 'base_link' or not finite(*orient, speed.linear.y)
-                or not .99 <= sum(v*v for v in orient) <= 1.01):
-            return
-        yaw = math.atan2(2*(q.w*q.z+q.x*q.y), 1-2*(q.y*q.y+q.z*q.z))
-        row = dict(stamp=stamp, received=time.monotonic(), x=p.x, y=p.y, yaw=yaw,
-                   speed=math.hypot(speed.linear.x, speed.linear.y), angular_speed=speed.angular.z)
-        with self.lock:
-            if self.waypoint_odoms:
-                previous = self.waypoint_odoms[-1]
-                if (stamp-previous['stamp'] > WAYPOINT_ODOM_MAX_AGE
-                        or row['received']-previous['received'] > WAYPOINT_ODOM_MAX_AGE
-                        or odom_reset(previous, row)):
-                    self.waypoint_odoms.clear()
-                    self.waypoint_fixes.clear()
-                    if self.waypoint_references.anchor is not None:
-                        self._clear_waypoint_locked('局部里程计已重置，请重新记录参考点')
-                elif stamp == previous['stamp']:
-                    return
-            self.waypoint_odoms.append(row)
 
     def global_odom(self, message):
         p = message.pose.pose.position
@@ -394,55 +358,6 @@ class Observer:
         value.point.x, value.point.y, value.point.z = x, y, z
         return value
 
-    def _clear_waypoint_locked(self, notice):
-        self.waypoint_references.reset()
-        self.waypoint_status, self.waypoint_coords = f'Waypoint：{notice}', ''
-
-    def clear_waypoint_references(self):
-        with self.lock:
-            self._clear_waypoint_locked(WAYPOINT_PROMPT)
-
-    def capture_waypoint_reference(self):
-        with self.lock:
-            self.waypoint_coords = ''
-            self.waypoint_status = 'Waypoint：' + self._capture_waypoint_locked()
-
-    def _capture_waypoint_locked(self):
-        refs = self.waypoint_references
-        if refs.alignment is not None:
-            return '参考点已就绪，可打点或先清除再重录'
-        now = time.monotonic()
-        ros_now = rospy.Time.now().to_sec()
-        quiet = quiet_odom_tail(self.waypoint_odoms, now, ros_now, window=1.,
-                                max_age=WAYPOINT_ODOM_MAX_AGE)
-        if not quiet['confirmed']:
-            return '等待局部里程计，移动到参考点后停稳'
-        geo = self.board.recent('geographic', now, NAV_STATUS_AGE) or {}
-        lever = geo.get('antenna_in_base_link_xy_m')
-        if geo.get('datum') != 'WGS84' or not isinstance(lever, list) or len(lever) != 2 or not finite(*lever):
-            return '等待 WGS84 与天线配置，请启动定位'
-        if not self.board.recent('fixed_position', now, FIX_POSITION_AGE):
-            return '等待新鲜 RTK 固定解'
-        odoms = list(self.waypoint_odoms)
-        for stamp, origin in reversed(self.waypoint_fixes):
-            if not (quiet['window_start_stamp'] <= stamp <= quiet['window_end_stamp']
-                    and 0 <= ros_now-stamp <= FIX_POSITION_AGE):
-                continue
-            if refs.anchor is not None and stamp <= refs.anchor['stamp']:
-                break
-            try:
-                odom = interpolate_odom(odoms, stamp, max_gap=WAYPOINT_ODOM_MAX_AGE)
-            except ValueError:
-                continue
-            try:
-                count = refs.capture(odom, origin, lever)
-            except ValueError:
-                return f'第 2 点无效。请移远至少 {MIN_BASELINE_M:g} m 后停稳再录，或清除重录'
-            if count == 1:
-                return f'已录第 1 点，移远至少 {MIN_BASELINE_M:g} m 后停稳录第 2 点'
-            return '两点已就绪，选 Waypoint 后在图中打点'
-        return '等待停稳后的新鲜固定解，请稍后再录'
-
     def waypoint(self, message):
         p = message.pose.position
         if (message.header.frame_id not in ('odom', 'map') or not finite(p.x, p.y, p.z)
@@ -452,34 +367,17 @@ class Observer:
         now = time.monotonic()
         with self.lock:
             geographic = self.wgs84(point, now)
-            source = 'Waypoint'
-            refs = self.waypoint_references
-            if refs.anchor is not None and not self._fresh_waypoint_odom(now):
-                self._clear_waypoint_locked('局部里程计已中断，请重新记录参考点')
-                if not geographic:
-                    return
-            if not geographic and refs.alignment is not None:
-                local = self.point_in(point, 'odom')
-                if local is not None:
-                    try:
-                        geographic = refs.convert(local.point.x, local.point.y)
-                        source = 'Waypoint（估算）'
-                    except (ValueError, ArithmeticError):
-                        geographic = None
-            self.waypoint_coords = coordinates(geographic) if geographic else ''
-            if geographic:
-                result = self.waypoint_coords
-            elif self.origin(now) is not None or refs.alignment is not None:
-                result = '等待地图 TF'
-            else:
-                result = '请记录第 2 个 RTK 参考点' if refs.anchor is not None else WAYPOINT_PROMPT
-            self.waypoint_status = f'{source}：{result}'
+            text = coordinates(geographic) if geographic else ''
+            result = text or ('等待地图 TF' if self.origin(now) is not None else WAYPOINT_PROMPT)
+            self.waypoint_status, self.waypoint_coords = f'Waypoint：{result}', text
         print(f'Waypoint | 经纬度：{result}', flush=True)
+        if self.waypoint_selected is not None:
+            self.waypoint_selected(deepcopy(message), text)
 
-    def _fresh_waypoint_odom(self, now):
-        return bool(self.waypoint_odoms
-                    and now-self.waypoint_odoms[-1]['received'] <= WAYPOINT_ODOM_MAX_AGE
-                    and recent_stamp(self.waypoint_odoms[-1]['stamp'], WAYPOINT_ODOM_MAX_AGE))
+    def submit_waypoint(self, message):
+        goal = deepcopy(message)
+        goal.header.stamp = rospy.Time.now()
+        self.manual_goal(goal)
 
     def _goal_blocked_locked(self, reason, now):
         self.manual_feedback = reason, now
@@ -604,8 +502,6 @@ class Observer:
             if self.pending_goal is not None and now > self.pending_goal[1]:
                 self._cancel_pending_goal_locked('未收到新的 move_base 状态，请重新点选')
             feedback = self.manual_feedback
-            if self.waypoint_references.anchor is not None and not self._fresh_waypoint_odom(now):
-                self._clear_waypoint_locked('局部里程计已中断，请重新记录参考点')
             waypoint, waypoint_coords = self.waypoint_status, self.waypoint_coords
         view = self.board.view(now)
         view['waypoint'], view['waypoint_coords'] = waypoint, waypoint_coords
