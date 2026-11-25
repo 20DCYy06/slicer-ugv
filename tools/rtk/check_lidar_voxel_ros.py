@@ -8,7 +8,6 @@ from pathlib import Path
 import signal
 import socket
 import subprocess
-import sys
 import time
 
 
@@ -113,7 +112,7 @@ def main():
             transform.transform.rotation.w = 1.
             transforms.append(transform)
         static_tf.sendTransform(transforms)
-        arm = launch('filter', [sys.executable, str(ROOT / 'src/slicer_navigation/scripts/arm_cloud_filter.py')])
+        arm = launch('filter', ['rosrun', 'slicer_navigation', 'arm_cloud_filter.py'])
         costmap = launch('costmap', ['rosrun', 'costmap_2d', 'costmap_2d_node', '__name:=voxel_probe'])
         wait_for(lambda: sensor.get_num_connections() > 0, 'Production arm cloud filter did not subscribe.')
 
