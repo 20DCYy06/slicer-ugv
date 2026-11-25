@@ -4,6 +4,7 @@ import ipaddress
 import os
 from pathlib import Path
 import socket
+import time
 from urllib.parse import urlparse
 from xmlrpc.client import Error, ServerProxy, Transport
 
@@ -32,6 +33,7 @@ class Graph:
     publishers: dict = field(default_factory=dict)
     subscribers: dict = field(default_factory=dict)
     air_mode: str = None
+    started_at: float = None
 
 
 def get_master_uri(env=None):
@@ -168,9 +170,11 @@ def _air_mode(graph):
     return 'v2' if v2 else None
 
 
-def discover(env=None):
-    """Read registrations and the active planner frame from the standard ROS master."""
-    graph = Graph(processes=process_snapshot())
+def discover(env=None, *, started_at=None):
+    """Read registrations and retain the monotonic time when the probe was requested."""
+    if started_at is None:
+        started_at = time.monotonic()
+    graph = Graph(processes=process_snapshot(), started_at=started_at)
     try:
         with ServerProxy(get_master_uri(env), transport=_TimedTransport()) as master:
             code, _, state = master.getSystemState(CALLER_ID)

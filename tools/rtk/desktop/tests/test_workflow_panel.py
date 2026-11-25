@@ -22,7 +22,7 @@ class WorkflowPanelTests(unittest.TestCase):
         self.controller = Mock()
         self.controller.states = {
             key: ('red', '', True)
-            for key in ('rtk', 'base', 'navigation', 'air')
+            for key in ('rtk', 'base', 'navigation', 'air', 'wgs84')
         }
         self.controller.messages = []
         self.controller.mux = {}
@@ -105,6 +105,38 @@ class WorkflowPanelTests(unittest.TestCase):
         self.assertIsNone(self.panel.waypoint_dialog)
         first.assert_not_called()
 
+    def test_manual_wgs84_uses_the_shared_sender_and_cancel_never_sends(self):
+        self.controller.send_wgs84.return_value = True
+        self.click(self.panel.buttons['wgs84'])
+        dialog = self.panel.target_dialog
+        fields = dialog.findChildren(QtWidgets.QLineEdit)
+        self.assertEqual(len(fields), 2)
+        fields[0].setText('31.12')
+        fields[1].setText('121.34')
+        buttons = dialog.findChild(QtWidgets.QDialogButtonBox)
+        self.click(buttons.button(QtWidgets.QDialogButtonBox.Cancel))
+        self.controller.send_wgs84.assert_not_called()
+        self.assertIsNone(self.panel.target_dialog)
+
+        self.click(self.panel.buttons['wgs84'])
+        dialog = self.panel.target_dialog
+        fields = dialog.findChildren(QtWidgets.QLineEdit)
+        fields[0].setText('31.12')
+        fields[1].setText('121.34')
+        send = dialog.findChild(QtWidgets.QDialogButtonBox).button(QtWidgets.QDialogButtonBox.Ok)
+        self.controller.can_send_wgs84.return_value = False
+        self.panel.refresh()
+        self.assertFalse(send.isEnabled())
+        self.click(send)
+        self.controller.send_wgs84.assert_not_called()
+
+        self.controller.can_send_wgs84.return_value = True
+        self.panel.refresh()
+        self.assertTrue(send.isEnabled())
+        self.click(send)
+        self.controller.send_wgs84.assert_called_once_with('31.12', '121.34')
+        self.assertIsNone(self.panel.target_dialog)
+
     def test_waypoint_cannot_submit_without_coordinates(self):
         self.panel.confirm_waypoint('', Mock())
         self.assertIsNone(self.panel.waypoint_dialog)
@@ -177,10 +209,11 @@ class WorkflowPanelTests(unittest.TestCase):
         self.assertLessEqual(self.panel.minimumSizeHint().width(), 260)
         self.assertLessEqual(self.panel.sizeHint().height(), 310)
 
-    def test_only_four_steps_and_stop_are_shown(self):
-        self.assertEqual(list(self.panel.buttons), ['rtk', 'base', 'navigation', 'air'])
+    def test_four_steps_manual_goal_and_stop_are_shown(self):
+        self.assertEqual(list(self.panel.buttons), ['rtk', 'base', 'navigation', 'air', 'wgs84'])
         self.assertEqual({button.objectName() for button in self.panel.findChildren(QtWidgets.QPushButton)},
-                         {'workflow_rtk', 'workflow_base', 'workflow_navigation', 'workflow_air', 'stop_all'})
+                         {'workflow_rtk', 'workflow_base', 'workflow_navigation', 'workflow_air',
+                          'workflow_wgs84', 'stop_all'})
 
 
 if __name__ == '__main__':

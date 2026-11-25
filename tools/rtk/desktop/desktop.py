@@ -360,7 +360,11 @@ def run_desktop():
     frame.closing.connect(app.quit)
     frame.attach_readouts(dashboard)
     dashboard.workflow.calibration_active.connect(observer.set_calibration_active)
-    probe = executor.submit(discover)
+
+    def submit_discovery():
+        return executor.submit(discover, started_at=time.monotonic())
+
+    probe = submit_discovery()
     next_probe = time.monotonic() + PROBE_INTERVAL_S
     next_logs = 0.
     screen = app.primaryScreen()
@@ -396,7 +400,7 @@ def run_desktop():
         else:
             workflow.update(read_logs=read_logs)
         if probe is None and now >= next_probe:
-            probe = executor.submit(discover)
+            probe = submit_discovery()
             next_probe = now + PROBE_INTERVAL_S
 
     def refresh_display():
