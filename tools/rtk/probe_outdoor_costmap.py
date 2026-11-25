@@ -88,6 +88,8 @@ class Probe:
         self.logs = []
         self.sub = rospy.Subscriber('/ugv/move_base/global_costmap/costmap', OccupancyGrid,
                                     self.on_map, queue_size=1, buff_size=32000000)
+        self.local_sub = rospy.Subscriber('/ugv/move_base/local_costmap/costmap', OccupancyGrid,
+                                          self.on_local_map, queue_size=1, buff_size=1000000)
         self.log_sub = rospy.Subscriber('/rosout_agg', Log, self.on_log, queue_size=100)
         self.plant = TestOnlyDifferentialPlant(command_topic='/TEST_ONLY/unused_velocity')
         self.static = tf2_ros.StaticTransformBroadcaster()
@@ -115,6 +117,10 @@ class Probe:
             self.maps['latest'] = message
             self.events.append(dict(wall=time.monotonic(), stamp=message.header.stamp.to_sec()))
 
+    def on_local_map(self, message):
+        with self.lock:
+            self.maps['local'] = message
+
     def on_log(self, message):
         if message.name == '/ugv/move_base' and message.level >= Log.WARN:
             with self.lock:
@@ -124,6 +130,10 @@ class Probe:
     def grid(self):
         with self.lock:
             return self.maps.get('latest')
+
+    def cells(self, x, y):
+        with self.lock:
+            return [cell(self.maps.get(scope), x, y) for scope in ('latest', 'local')]
 
     def reset_maps(self):
         with self.lock:
@@ -185,6 +195,7 @@ class Probe:
         self.thread.join(timeout=2.)
         self.plant.close()
         self.sub.unregister()
+        self.local_sub.unregister()
         self.log_sub.unregister()
         self.scan.unregister()
         self.hits.unregister()
@@ -260,9 +271,9 @@ def main():
         probe.plant.set_scan(False)
         probe.scan_mode = 'missing'
         parent = navigation(uuid)
-        wait_for(lambda: cell(probe.grid(), 1.025, .625) == -1, 'empty projection leaves cell unknown')
+        wait_for(lambda: probe.cells(1.025, .625) == [-1, -1], 'empty projection leaves both cells unknown')
         time.sleep(1.)
-        assert cell(probe.grid(), 1.025, .625) == -1
+        assert probe.cells(1.025, .625) == [-1, -1]
         probe.scan_mode = None
         probe.plant.set_scan(True)
         wait_for(lambda: cell(probe.grid(), 1.025, .625) == 0, 'fresh depth-off grid free at prior depth hit')
@@ -273,18 +284,19 @@ def main():
         assert result['depth_off_restart']['sentinel'] == 'unchanged'
         # Check actual lidar marking and clearing on the rebuilt depth-off grid.
         probe.plant.set_segments([((1.025, -.3), (1.025, .3))])
-        wait_for(lambda: cell(probe.grid(), 1.025, .025) == 100, 'radar marking after depth-off restart')
-        marked = cell(probe.grid(), 1.025, .025)
+        wait_for(lambda: probe.cells(1.025, .025) == [100, 100], 'finite hit marks both grids')
+        marked = probe.cells(1.025, .025)
         probe.plant.set_scan(False)
         probe.scan_mode = 'missing'
         time.sleep(1.)
-        missing = cell(probe.grid(), 1.025, .025)
-        assert missing == 100
+        missing = probe.cells(1.025, .025)
+        assert missing == [100, 100]
         probe.scan_mode = None
         probe.plant.set_segments([])
         probe.plant.set_scan(True)
-        wait_for(lambda: cell(probe.grid(), 1.025, .025) == 0, 'radar clearing after segment removal')
-        result['lidar_after_restart'] = dict(marked=marked, after_missing=missing, cleared=cell(probe.grid(), 1.025, .025))
+        wait_for(lambda: probe.cells(1.025, .025) == [0, 0], 'finite ray clears both grids')
+        result['lidar_after_restart'] = dict(marked=marked, after_missing=missing, cleared=probe.cells(1.025, .025),
+                                             scope=['global', 'local'])
         parent.shutdown()
         parent = None
 
