@@ -106,6 +106,7 @@ RViz 绘制上限为 15 FPS，右栏每 250 毫秒检查显示变化。启动前
 BASE="$HOME/workspace/slicer"
 W="$BASE/releases/20261125-rtk-stability-rc1"
 cd "$W/src/slicer-ugv"
+export SLICER_RUNTIME_DIR="$BASE/data/20261125-rtk-stability-rc1"
 ./tools/rtk_desktop_ui.sh
 ```
 
@@ -130,6 +131,7 @@ python3 -B "$W/src/slicer-ugv/tools/rtk/collect_odom_test.py" \
   --extra-topic /cloud_registered_body \
   --extra-topic /cloud_nav_filtered \
   --extra-topic /ugv/move_base/GlobalPlanner/plan_raw \
+  --extra-topic /ugv/move_base/GlobalPlanner/smoothing_status \
   --output "$BASE/data/rtk-stability-$(date +%Y%m%d-%H%M%S)"
 ```
 
