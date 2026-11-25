@@ -44,6 +44,13 @@ void checkContinuityCosts() {
   require(hard[cell(10,6)]==1 && hard[cell(10,7)]==0, "use Euclidean centre clearance even for unknown");
   require(hard[cell(16,6)]==0 && hard[cell(15,10)]==0, "inflation values do not seed clearance");
 
+  auto preference = measured;
+  preferObstacleDistance(measured.data(), preference.data(), width, height, .1, .23, .60);
+  require(preference[cell(11,5)] > preference[cell(13,5)] && preference[cell(13,5)] > 0 &&
+          preference[cell(15,6)] == 0, "hard-clear cells retain a graded obstacle preference");
+  require(preference[cell(8,5)] == 254 && preference[cell(16,5)] == 253 &&
+          preference[cell(10,6)] == 255 && measured == before, "soft range leaves measured classes and grid intact");
+
   const Point2 origin(-.05,-.05), start(.4,1.);
   const std::vector<Point2> reference{{.4,1.},{2.8,1.}};
   encodeContinuityCosts(measured.data(), hard, width, height, .1, origin, start,

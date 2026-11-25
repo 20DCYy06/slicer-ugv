@@ -11,6 +11,7 @@ struct ContinuityCostOptions {
   double weight = 2.;
   double decay_length_m = 2.;
   double obstacle_weight = .70;
+  double obstacle_soft_radius_m = .60;
   double deviation_cap_m = 1.;
   double min_clearance_m = .23;
   double rejoin_distance_m = .30;
@@ -20,6 +21,7 @@ inline bool validContinuityOptions(const ContinuityCostOptions& options) {
   const auto nonnegative = [](double value) { return std::isfinite(value) && value >= 0.; };
   const double deviation_squared = options.deviation_cap_m * options.deviation_cap_m;
   return nonnegative(options.weight) && nonnegative(options.obstacle_weight) &&
+      nonnegative(options.obstacle_soft_radius_m) &&
       std::isfinite(options.decay_length_m) && options.decay_length_m > 0. &&
       nonnegative(options.deviation_cap_m) && std::isfinite(deviation_squared * options.weight) &&
       nonnegative(options.min_clearance_m) && nonnegative(options.rejoin_distance_m);
@@ -142,6 +144,47 @@ inline std::vector<std::uint8_t> hardContinuityMask(const std::uint8_t* measured
     }
   }
   return hard;
+}
+
+// Add a soft shoulder around measured lethal cells. The source scan's
+// inflation band can be narrower than a full-footprint planning envelope.
+inline void preferObstacleDistance(const std::uint8_t* measured, std::uint8_t* costs,
+                                   int width, int height, double resolution,
+                                   double hard_radius, double soft_radius) {
+  if (soft_radius <= hard_radius) return;
+  struct Offset {
+    int x, y;
+    std::uint8_t cost;
+  };
+  std::vector<Offset> stencil;
+  const double cells = soft_radius / resolution;
+  const int x_radius = static_cast<int>(std::min(cells, static_cast<double>(width - 1)));
+  const int y_radius = static_cast<int>(std::min(cells, static_cast<double>(height - 1)));
+  for (int y = -y_radius; y <= y_radius; ++y) {
+    for (int x = -x_radius; x <= x_radius; ++x) {
+      const double distance = resolution * std::hypot(x, y);
+      if (distance <= hard_radius || distance >= soft_radius) continue;
+      const auto cost = static_cast<std::uint8_t>(std::round(252. * (soft_radius - distance)
+                                                            / (soft_radius - hard_radius)));
+      stencil.push_back({x, y, cost});
+    }
+  }
+  for (int y = 0; y < height; ++y) {
+    for (int x = 0; x < width; ++x) {
+      const auto i = static_cast<std::size_t>(y) * width + x;
+      if (measured[i] != 254) continue;
+      // Interior cells cannot be the nearest obstacle outside a solid block.
+      if (x > 0 && x + 1 < width && y > 0 && y + 1 < height &&
+          measured[i-1] == 254 && measured[i+1] == 254 &&
+          measured[i-width] == 254 && measured[i+width] == 254) continue;
+      for (const auto& offset : stencil) {
+        const int column = x + offset.x, row = y + offset.y;
+        if (column < 0 || column >= width || row < 0 || row >= height) continue;
+        auto& cost = costs[static_cast<std::size_t>(row) * width + column];
+        if (cost < 253) cost = std::max(cost, offset.cost);
+      }
+    }
+  }
 }
 
 inline void encodeContinuityCosts(const std::uint8_t* measured, const std::vector<std::uint8_t>& hard,

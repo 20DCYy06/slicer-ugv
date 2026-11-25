@@ -9,6 +9,9 @@
   <arg name="geographic" default="true"/>
   <arg name="preparation" default="false"/>
   <arg name="enable_depth" default="false"/>
+  <arg name="continuity_weight" default="$(optenv SLICER_RTK_CONTINUITY_WEIGHT 2.0)"/>
+  <arg name="continuity_decay_m" default="$(optenv SLICER_RTK_CONTINUITY_DECAY_M 2.0)"/>
+  <arg name="continuity_obstacle_weight" default="$(optenv SLICER_RTK_CONTINUITY_OBSTACLE_WEIGHT 0.70)"/>
   <!-- RTK field defaults apply to odom bootstrap and geographic map navigation. -->
   <arg name="default_cruise_config" value="$(eval '' if arg('mapping') else dirname() + '/../config/' + ('dwa_registration.yaml' if arg('preparation') and not arg('geographic') else 'dwa_field.yaml'))"/>
   <arg name="cruise_config" default="$(arg default_cruise_config)"/>
@@ -93,9 +96,7 @@
         observed_prefix: true
       continuity_cost:
         enabled: true
-        weight: 2.0
-        decay_length_m: 2.0
-        obstacle_weight: 0.70
+        obstacle_soft_radius_m: 0.60
         deviation_cap_m: 1.0
         min_clearance_m: 0.23
         rejoin_distance_m: 0.30
@@ -113,4 +114,9 @@
       inflation_layer:
         inflation_radius: 0.25
   </rosparam>
+  <group unless="$(arg mapping)" ns="ugv/move_base/GlobalPlanner/continuity_cost">
+    <param name="weight" value="$(arg continuity_weight)" type="double"/>
+    <param name="decay_length_m" value="$(arg continuity_decay_m)" type="double"/>
+    <param name="obstacle_weight" value="$(arg continuity_obstacle_weight)" type="double"/>
+  </group>
 </launch>

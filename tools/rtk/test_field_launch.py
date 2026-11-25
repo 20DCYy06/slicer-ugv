@@ -26,6 +26,15 @@ def load(name, arguments=()):
 
 
 class FieldLaunchTests(unittest.TestCase):
+    def test_continuity_cost_tuning_reaches_the_installed_planner(self):
+        config = load('slicer_field_navigation.launch', [
+            'continuity_weight:=4.0', 'continuity_decay_m:=1.0', 'continuity_obstacle_weight:=0.35'])
+        prefix = '/ugv/move_base/GlobalPlanner/continuity_cost/'
+        self.assertEqual(config.params[prefix + 'weight'].value, 4.)
+        self.assertEqual(config.params[prefix + 'decay_length_m'].value, 1.)
+        self.assertEqual(config.params[prefix + 'obstacle_weight'].value, .35)
+        self.assertEqual(config.params[prefix + 'min_clearance_m'].value, .23)
+
     def test_outdoor_rviz_has_no_default_map_or_camera_dependency(self):
         import yaml
         manager = yaml.safe_load((ROOT / 'src/ugv_bringup/rviz/outdoor_navigation.rviz').read_text())['Visualization Manager']

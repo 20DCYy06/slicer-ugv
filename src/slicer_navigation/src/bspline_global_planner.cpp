@@ -40,6 +40,7 @@ class BSplineGlobalPlanner : public nav_core::BaseGlobalPlanner {
     nh.param("continuity_cost/weight", cost_options_.weight, 2.);
     nh.param("continuity_cost/decay_length_m", cost_options_.decay_length_m, 2.);
     nh.param("continuity_cost/obstacle_weight", cost_options_.obstacle_weight, .70);
+    nh.param("continuity_cost/obstacle_soft_radius_m", cost_options_.obstacle_soft_radius_m, .60);
     nh.param("continuity_cost/deviation_cap_m", cost_options_.deviation_cap_m, 1.);
     nh.param("continuity_cost/min_clearance_m", cost_options_.min_clearance_m, .23);
     nh.param("continuity_cost/rejoin_distance_m", cost_options_.rejoin_distance_m, .30);
@@ -109,9 +110,13 @@ class BSplineGlobalPlanner : public nav_core::BaseGlobalPlanner {
         reference = observedReference(suffix, grid.getResolution() * .5, feasible);
       }
       search_grid_ = grid;
-      encodeContinuityCosts(grid.getCharMap(), hard, grid.getSizeInCellsX(), grid.getSizeInCellsY(),
+      auto* costs = search_grid_.getCharMap();
+      if (cost_options_.obstacle_weight > 0.)
+        preferObstacleDistance(grid.getCharMap(), costs, grid.getSizeInCellsX(), grid.getSizeInCellsY(),
+                               grid.getResolution(), clearance, cost_options_.obstacle_soft_radius_m);
+      encodeContinuityCosts(costs, hard, grid.getSizeInCellsX(), grid.getSizeInCellsY(),
           grid.getResolution(), {grid.getOriginX(), grid.getOriginY()}, point(start),
-          reference, cost_options_, search_grid_.getCharMap());
+          reference, cost_options_, costs);
     }
     std::vector<geometry_msgs::PoseStamped> original;
     if(!raw_ || !raw_->makePlan(start,goal,original) || original.empty())
