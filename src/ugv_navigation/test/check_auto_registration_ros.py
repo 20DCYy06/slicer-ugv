@@ -30,7 +30,7 @@ def wait_until(check, label, timeout=15., diagnostic=lambda: None):
     raise AssertionError(f'Timed out waiting for {label}: {diagnostic()}')
 
 
-def run(protocol, interruption, logs, launch, odom_cruise=False, rear_blocked=False):
+def run(protocol, interruption, logs, launch, odom_cruise=False, rear_blocked=False, front_blocked=False):
     import rosgraph
     import rospkg
     import rospy
@@ -205,6 +205,19 @@ def run(protocol, interruption, logs, launch, odom_cruise=False, rear_blocked=Fa
             from ros_observer import Observer
 
             observer = Observer(Dashboard())
+            if front_blocked:
+                from preparation_path import observed_cell
+
+                # The nominal target intersects the obstacle's inflation
+                # contour. A shorter straight segment stays clear.
+                plant.set_segments((((2.12, .11), (2.12, .45)),))
+                limit = 97 * rospy.get_param('/ugv/move_base/GlobalPlanner/smoothing/max_cost') // 251
+
+                def blocked_endpoint():
+                    grid = plant.grid('global_costmap')
+                    return grid is not None and not observed_cell(grid, 2., 0., max_cost=limit)
+
+                wait_until(blocked_endpoint, 'new obstacle on the nominal endpoint', 6., evidence)
             started = time.monotonic()
             client = launch('roundtrip', 'rosrun', 'ugv_navigation', 'geographic.py',
                             'initialize', '--return-to-start', '--timeout', '25')
@@ -225,15 +238,25 @@ def run(protocol, interruption, logs, launch, odom_cruise=False, rear_blocked=Fa
                 result = dict(case='rear obstacle', peak_reverse=peak, stopped_at=plant.pose()[0])
             else:
                 assert client.returncode == 0, (logs / 'roundtrip.log').read_text()
+                assert len(goals) == 1 and goals[0][0] == 'odom', evidence()
+                outbound = goals[0][1]
+                assert (.75 <= outbound < 2. if front_blocked else outbound == 2.), evidence()
                 assert .795 <= peak <= .80001 and math.hypot(*plant.pose()[:2]) <= .12, (peak, evidence())
                 assert abs(plant.velocity) < .001, evidence()
                 peak_at = min(range(len(trace)), key=lambda i: trace[i][1])
                 assert any(-.35 < row[1] < -.05 for row in trace[peak_at+1:]), evidence()
-                switched = rospy.ServiceProxy('/geographic/navigation_map', Trigger)()
+                switch = rospy.ServiceProxy('/geographic/navigation_map', Trigger)
+
+                def switch_when_ready():
+                    response = switch()
+                    return None if not response.success and response.message.startswith('waiting for ') else response
+
+                switched = wait_until(switch_when_ready, 'fresh geographic inputs for map handoff', 8., evidence)
                 assert switched.success, switched
                 wait_until(lambda: state['runtime']['mode'] == 'map',
                            'planner map handoff after return', 30., evidence)
-                result = dict(case='clear return', peak_reverse=peak, stopped_at=plant.pose()[0])
+                result = dict(case='shortened return' if front_blocked else 'clear return',
+                              outbound_m=outbound, peak_reverse=peak, stopped_at=plant.pose()[0])
             print(f'PASS roundtrip: early map preview, {result}; evidence in {logs}', flush=True)
             return
         if odom_cruise:
@@ -341,11 +364,13 @@ def main():
     parser.add_argument('--interrupt', choices=('pause', 'cancel', 'global-output'))
     parser.add_argument('--odom-cruise', action='store_true',
                         help='start in ordinary odom and enter preparation only for WGS84')
-    parser.add_argument('--rear-blocked', action='store_true', help='insert a rear obstacle in the roundtrip test')
+    obstacles = parser.add_mutually_exclusive_group()
+    obstacles.add_argument('--rear-blocked', action='store_true', help='insert a rear obstacle after departure')
+    obstacles.add_argument('--front-blocked', action='store_true', help='block the nominal roundtrip endpoint')
     args = parser.parse_args()
-    if (args.rear_blocked and args.protocol != 'roundtrip'
+    if ((args.rear_blocked or args.front_blocked) and args.protocol != 'roundtrip'
             or args.odom_cruise and args.protocol == 'roundtrip'):
-        parser.error('the roundtrip test starts in the preparation profile and may add a rear obstacle')
+        parser.error('roundtrip uses the preparation profile and may add an obstacle')
     if args.protocol in ('cli', 'roundtrip') and args.interrupt:
         parser.error('interruption variants apply to a V1 or V2 task')
     with socket.socket() as free:
@@ -372,7 +397,7 @@ def main():
     try:
         launch('core', 'roscore', '-p', str(port))
         wait_until(master_alive, 'private loopback ROS master')
-        run(args.protocol, args.interrupt, logs, launch, args.odom_cruise, args.rear_blocked)
+        run(args.protocol, args.interrupt, logs, launch, args.odom_cruise, args.rear_blocked, args.front_blocked)
     finally:
         for process in reversed(processes):
             if process.poll() is None:
