@@ -37,7 +37,7 @@ class BSplineGlobalPlanner : public nav_core::BaseGlobalPlanner {
     nh.param("smoothing/observed_prefix", smooth_observed_prefix_, false);
     nh.param("continuity_cost/enabled", cost_field_enabled_, false);
     nh.param("allow_unknown", allow_unknown_, true);
-    nh.param("continuity_cost/weight", cost_options_.weight, 2.);
+    nh.param("continuity_cost/weight", cost_options_.weight, 4.);
     nh.param("continuity_cost/decay_length_m", cost_options_.decay_length_m, 2.);
     nh.param("continuity_cost/obstacle_weight", cost_options_.obstacle_weight, .70);
     nh.param("continuity_cost/obstacle_soft_radius_m", cost_options_.obstacle_soft_radius_m, .60);

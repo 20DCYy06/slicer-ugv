@@ -28,9 +28,9 @@ def load(name, arguments=()):
 class FieldLaunchTests(unittest.TestCase):
     def test_continuity_cost_tuning_reaches_the_installed_planner(self):
         config = load('slicer_field_navigation.launch', [
-            'continuity_weight:=4.0', 'continuity_decay_m:=1.0', 'continuity_obstacle_weight:=0.35'])
+            'continuity_weight:=2.0', 'continuity_decay_m:=1.0', 'continuity_obstacle_weight:=0.35'])
         prefix = '/ugv/move_base/GlobalPlanner/continuity_cost/'
-        self.assertEqual(config.params[prefix + 'weight'].value, 4.)
+        self.assertEqual(config.params[prefix + 'weight'].value, 2.)
         self.assertEqual(config.params[prefix + 'decay_length_m'].value, 1.)
         self.assertEqual(config.params[prefix + 'obstacle_weight'].value, .35)
         self.assertEqual(config.params[prefix + 'min_clearance_m'].value, .23)
@@ -179,7 +179,7 @@ class FieldLaunchTests(unittest.TestCase):
         continuity = prefix + 'GlobalPlanner/continuity_cost/'
         self.assertTrue(p[continuity + 'enabled'].value)
         self.assertEqual(p[continuity + 'min_clearance_m'].value, .23)
-        self.assertEqual(p[continuity + 'weight'].value, 2.)
+        self.assertEqual(p[continuity + 'weight'].value, 4.)
         self.assertEqual(p[continuity + 'decay_length_m'].value, 2.)
         self.assertEqual(p[continuity + 'obstacle_weight'].value, .70)
         self.assertFalse(any(k.startswith(prefix + 'GlobalPlanner/continuity/') for k in p))

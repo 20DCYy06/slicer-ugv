@@ -8,7 +8,7 @@
 namespace slicer_navigation {
 
 struct ContinuityCostOptions {
-  double weight = 2.;
+  double weight = 4.;
   double decay_length_m = 2.;
   double obstacle_weight = .70;
   double obstacle_soft_radius_m = .60;

@@ -108,9 +108,9 @@ cd "$W/src/slicer-ugv"
 SLICER_RUNTIME_DIR="$BASE/data/$ID" ./tools/rtk_desktop_ui.sh
 ```
 
-启动雷达、底盘和 RTK，验证 Fixed、配准并进入 `map`。使用同一场地、起点、目标和短程脚本。两种方案都可在第二个终端 source 同一个 `"$W/install/setup.bash"`，用 `rosrun ugv_navigation geographic.py plan --target-file "$TARGET"` 预览，由现场负责人用同一命令改为 `send` 下达。目标文件用已有地理点采集或已核对的 WGS84 目标。A 默认 90 m，B 沿用基线 40 m；正式比较记录尺寸与扫描清除设置。只比较规划器时，沿用任务交接里的共同 40 m 栅格回放。
+启动雷达、底盘和 RTK，验证 Fixed、配准并进入 `map`。使用同一场地、起点、目标和短程脚本。两种方案都可在第二个终端 source 同一个 `"$W/install/setup.bash"`，用 `rosrun ugv_navigation geographic.py plan --target-file "$TARGET"` 预览，由现场负责人用同一命令改为 `send` 下达。目标文件用已有地理点采集或已核对的 WGS84 目标。A 默认 90 m，B 沿用基线 40 m；正式比较记录尺寸与扫描清除设置。只比较规划器时，沿用任务交接里的共同 40 m 栅格回放。B 的软权重可在重启时单独修改，例如 `SLICER_RTK_CONTINUITY_WEIGHT=2.0 ./tools/rtk_desktop_ui.sh`。先记录默认档，再做单变量比较。
 
-在每轮开始前录包，覆盖目标、两级栅格、计划、Guard、速度和里程计，结果保存到独立目录。
+另开录包终端时重复设置本节的 `BASE`、`ID` 和 `W`。在每轮开始前录包，覆盖目标、两级栅格、计划、Guard、速度和里程计，结果保存到独立目录。
 
 ```bash
 source "$W/install/setup.bash"

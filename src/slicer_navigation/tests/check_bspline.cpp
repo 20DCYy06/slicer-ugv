@@ -7,8 +7,9 @@ void require(bool good,const char* message) {
   if(!good) { std::cerr<<"FAIL: "<<message<<std::endl; std::exit(1); }
 }
 void checkContinuityCosts() {
-  const ContinuityCostOptions options;
-  require(validContinuityOptions(options), "default continuity options valid");
+  ContinuityCostOptions options;
+  require(validContinuityOptions(options) && options.weight == 4., "default continuity options valid");
+  options.weight = 2.;  // Check the lower-weight profile against its analytical samples.
   auto invalid = options;
   invalid.decay_length_m = 0.;
   require(!validContinuityOptions(invalid), "positive decay length required");

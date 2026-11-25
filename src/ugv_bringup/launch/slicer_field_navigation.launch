@@ -9,7 +9,7 @@
   <arg name="geographic" default="true"/>
   <arg name="preparation" default="false"/>
   <arg name="enable_depth" default="false"/>
-  <arg name="continuity_weight" default="$(optenv SLICER_RTK_CONTINUITY_WEIGHT 2.0)"/>
+  <arg name="continuity_weight" default="$(optenv SLICER_RTK_CONTINUITY_WEIGHT 4.0)"/>
   <arg name="continuity_decay_m" default="$(optenv SLICER_RTK_CONTINUITY_DECAY_M 2.0)"/>
   <arg name="continuity_obstacle_weight" default="$(optenv SLICER_RTK_CONTINUITY_OBSTACLE_WEIGHT 0.70)"/>
   <!-- RTK field defaults apply to odom bootstrap and geographic map navigation. -->
