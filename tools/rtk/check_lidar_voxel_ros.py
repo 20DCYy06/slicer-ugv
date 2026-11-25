@@ -12,8 +12,6 @@ import sys
 import time
 
 
-ROOT = Path(__file__).resolve().parents[2]
-CONFIG = ROOT / 'src/ugv_bringup/config'
 
 
 def wait_for(predicate, description, timeout=10.):
@@ -58,6 +56,7 @@ def main():
         os.environ.pop(name, None)
 
     import rosgraph
+    import rospkg
     import rospy
     import tf2_ros
     import yaml
@@ -80,10 +79,11 @@ def main():
         rospy.init_node('TEST_ONLY_lidar_voxel', disable_signals=True)
         cleanup.callback(rospy.signal_shutdown, 'TEST_ONLY lidar voxel test ended')
 
-        site = CONFIG / 'online_runtime/config/slicer_config.yaml'
+        installed_config = Path(rospkg.RosPack().get_path('ugv_bringup')) / 'config'
+        site = installed_config / 'online_runtime/config/slicer_config.yaml'
         rospy.set_param('/slicer_arm_cloud_filter/config_file', str(site))
         rospy.set_param('/slicer_arm_cloud_filter/publish_voxel', True)
-        fixture = yaml.safe_load((CONFIG / 'lidar_voxel.yaml').read_text())['global_costmap']
+        fixture = yaml.safe_load((installed_config / 'lidar_voxel.yaml').read_text())['global_costmap']
         fixture.update(global_frame='map', robot_base_frame='base_link', rolling_window=False,
                        track_unknown_space=True, always_send_full_costmap=True, width=8.0, height=8.0,
                        origin_x=-4., origin_y=-4., resolution=.05, update_frequency=10.,
