@@ -30,6 +30,33 @@ int main() {
           "route reuse must respect the active inflation contour");
   require(preferPreviousRoute(4.2, 4., .35), "near equal routes keep direction");
   require(!preferPreviousRoute(4.5, 4., .35), "meaningfully better route replaces old route");
+  const std::vector<Point2> straight{{0,0},{1,0},{4,0}};
+  const auto footprint_free = [](const Point2&, double) { return RouteIssue::None; };
+  const auto far_cost = [](const Point2& p) { return p.x > 2. ? 190 : 0; };
+  const auto late = inspectRoute(straight, .025, .9, 173, true, far_cost, footprint_free);
+  require(late.near.issue == RouteIssue::None && late.far.issue == RouteIssue::Clearance
+              && late.far.distance > 2., "distant inflation permits the safe prefix but requires suffix repair");
+  const auto actual_obstacle = [](const Point2& p) { return p.x > 0.4 ? 254 : 0; };
+  const auto blocked_prefix = inspectRoute(straight, .025, .9, 173, true, actual_obstacle, footprint_free);
+  require(blocked_prefix.near.issue == RouteIssue::Collision, "true obstruction stops the executable prefix");
+  const auto unknown_far = [](const Point2& p) { return p.x > 2. ? 255 : 0; };
+  const auto provisional = inspectRoute(straight, .025, .9, 173, true, unknown_far, footprint_free);
+  require(provisional.valid() && provisional.observed < 2.05, "unknown suffix remains provisional");
+  require(inspectRoute(straight, .025, 2.5, 173, true, unknown_far, footprint_free).near.issue
+              == RouteIssue::Unknown, "an executable prefix may not run through unknown cells");
+  const auto blocked_footprint = [](const Point2& p, double) {
+    return p.x > .5 ? RouteIssue::Collision : RouteIssue::None;
+  };
+  const auto clear_cells = [](const Point2&) { return 0; };
+  require(inspectRoute(straight, .025, .9, 173, true, clear_cells, blocked_footprint).near.issue
+              == RouteIssue::Collision, "clear centers cannot waive the executable footprint");
+  require(checkedHorizon(.8, 1.05, 0., .8, .5, .2) > .8
+              && checkedHorizon(.8, 1.05, .8, .8, .5, .2) > 3.5,
+          "local tracking and in-motion braking both extend the checked horizon");
+  const std::vector<Point2> prior{{0,0},{.5,0},{1,0},{4,0}};
+  const std::vector<Point2> other{{0,0},{0,.5},{0,1},{4,0}};
+  require(!sameCorridor(prior, other, .8, .3), "crossing to the other branch changes the current corridor");
+  require(sameCorridor(prior, straight, .8, .3), "different sampling keeps the same corridor");
   const auto free=[](const PathSample&) { return true; };
   std::vector<Point2> stairs;
   for(int i=0;i<21;++i) stairs.emplace_back(i*.05, .002*(i%2));

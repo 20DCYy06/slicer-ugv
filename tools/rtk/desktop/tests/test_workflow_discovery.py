@@ -42,6 +42,13 @@ class DiscoveryTests(unittest.TestCase):
         self.assertEqual(graph.processes, {'vision': {32}})
         self.assertEqual(server.call_args.args[0], 'http://jetson:11311')
 
+    @patch('workflow_discovery.process_snapshot', return_value={})
+    @patch('workflow_discovery.ServerProxy', return_value=Master())
+    def test_graph_keeps_probe_submission_time_when_discovery_runs_later(self, _server, _processes):
+        graph = discover({}, started_at=3.0)
+        self.assertTrue(graph.online)
+        self.assertEqual(graph.started_at, 3.0)
+
     @patch('workflow_discovery.process_snapshot', return_value={'vision': {32}})
     @patch('workflow_discovery.ServerProxy', side_effect=TimeoutError)
     def test_master_timeout_retains_local_processes(self, _server, _processes):

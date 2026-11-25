@@ -10,6 +10,7 @@ STEPS = {
     'base': '2. 启动雷达与底盘',
     'navigation': '3. 启动导航',
     'air': '4. 飞机通信节点',
+    'wgs84': 'WGS84 测试目标',
 }
 STATUS = {'red': '未启动', 'yellow': '进行中', 'green': '已就绪'}
 STYLES = """
@@ -50,6 +51,7 @@ class WorkflowPanel(QtWidgets.QWidget):
         self.scan = None
         self.pending_step = None
         self.waypoint_dialog = None
+        self.target_dialog = None
         self.calibration_blocked = False
         self.scan_timer = QtCore.QTimer(self, interval=40)
         self.scan_timer.timeout.connect(self.finish_scan)
@@ -73,7 +75,7 @@ class WorkflowPanel(QtWidgets.QWidget):
             button.setSizePolicy(QtWidgets.QSizePolicy.Ignored, QtWidgets.QSizePolicy.Fixed)
             button.clicked.connect(lambda _checked=False, item=key: self.click(item))
             self.buttons[key] = button
-            if key != 'air':
+            if key not in ('air', 'wgs84'):
                 layout.addWidget(button)
 
         options = QtWidgets.QHBoxLayout()
@@ -87,6 +89,8 @@ class WorkflowPanel(QtWidgets.QWidget):
         options.addWidget(self.buttons['air'], 1)
         options.addWidget(self.air_mode)
         layout.addLayout(options)
+
+        layout.addWidget(self.buttons['wgs84'])
 
         self.stop_button = QtWidgets.QPushButton('一键全部停止', objectName='stop_all')
         self.stop_button.setFixedHeight(23)
@@ -107,15 +111,70 @@ class WorkflowPanel(QtWidgets.QWidget):
     def click(self, key):
         if self.cancel_pending_goal is not None:
             self.cancel_pending_goal()
+        if key == 'wgs84':
+            if key in self.controller.owned:
+                self.controller.stop(key)
+            else:
+                self.open_wgs84()
+            self.refresh()
+            return
         if self.pending_step is not None and key == self.pending_step[0]:
             return
-        if self.waypoint_dialog is not None or key in self.controller.owned:
+        if self.waypoint_dialog is not None or self.target_dialog is not None or key in self.controller.owned:
             self.cancel_pending()
         self.request_step(key, self.air_mode.currentData(), confirmed=False)
+
+    def open_wgs84(self):
+        if self.target_dialog is not None:
+            self.target_dialog.raise_()
+            self.target_dialog.activateWindow()
+            return
+        if not self.controller.can_send_wgs84():
+            return
+        if self.waypoint_dialog is not None:
+            self.waypoint_dialog.reject()
+        dialog = QtWidgets.QDialog(self)
+        dialog.setWindowTitle('发送 WGS84 测试目标')
+        dialog.setAttribute(QtCore.Qt.WA_DeleteOnClose)
+        form = QtWidgets.QFormLayout(dialog)
+        fields = []
+        for label in ('纬度 (°)', '经度 (°)'):
+            entry = QtWidgets.QLineEdit()
+            entry.setAccessibleName(label)
+            form.addRow(label, entry)
+            fields.append(entry)
+        hint = QtWidgets.QLabel('发送时使用当前 Fixed 的椭球高。车辆可能先执行自动配准准备运动。')
+        hint.setWordWrap(True)
+        form.addRow(hint)
+        buttons = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel)
+        buttons.button(QtWidgets.QDialogButtonBox.Ok).setText('发送任务')
+        buttons.button(QtWidgets.QDialogButtonBox.Cancel).setText('取消')
+        form.addRow(buttons)
+
+        def submit():
+            if self.target_dialog is not dialog or not self.controller.can_send_wgs84():
+                return
+            if self.cancel_pending_goal is not None:
+                self.cancel_pending_goal()
+            if self.controller.send_wgs84(*(entry.text() for entry in fields)):
+                dialog.accept()
+            self.refresh()
+
+        buttons.accepted.connect(submit)
+        buttons.rejected.connect(dialog.reject)
+        dialog.finished.connect(lambda _answer: self._finished_wgs84(dialog))
+        self.target_dialog = dialog
+        dialog.show()
+
+    def _finished_wgs84(self, dialog):
+        if self.target_dialog is dialog:
+            self.target_dialog = None
 
     def confirm_waypoint(self, coordinates, navigate):
         if self.controller.stopping_all is True or not coordinates:
             return
+        if self.target_dialog is not None:
+            self.target_dialog.reject()
         if self.waypoint_dialog is not None:
             old, self.waypoint_dialog = self.waypoint_dialog, None
             old.reject()
@@ -195,6 +254,8 @@ class WorkflowPanel(QtWidgets.QWidget):
         self.pending_step = None
         if self.scan is not None:
             self.scan.cancel()
+        if self.target_dialog is not None:
+            self.target_dialog.reject()
         if self.waypoint_dialog is not None:
             dialog, self.waypoint_dialog = self.waypoint_dialog, None
             dialog.reject()
@@ -241,6 +302,9 @@ class WorkflowPanel(QtWidgets.QWidget):
             if button.isEnabled() != clickable:
                 button.setEnabled(clickable)
         self.air_mode.setEnabled(pending_key != 'air' and states['air'][0] == 'red' and states['air'][2])
+        if self.target_dialog is not None:
+            buttons = self.target_dialog.findChild(QtWidgets.QDialogButtonBox)
+            buttons.button(QtWidgets.QDialogButtonBox.Ok).setEnabled(self.controller.can_send_wgs84())
         messages = list(self.controller.messages)[-3:]
         text = '\n'.join(str(line).strip().replace('\n', ' ') for line in messages)
         if self.log.toPlainText() != text:

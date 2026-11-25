@@ -147,10 +147,10 @@ class FieldLaunchTests(unittest.TestCase):
         self.assertEqual(p[prefix + 'global_costmap/global_frame'].value, 'map')
         self.assertFalse(p[prefix + 'global_costmap/rolling_window'].value)
         self.assertFalse(p[prefix + 'global_costmap/static_map'].value)
-        self.assertEqual(p[prefix + 'global_costmap/width'].value, 40.0)
-        self.assertEqual(p[prefix + 'global_costmap/height'].value, 40.0)
-        self.assertEqual(p[prefix + 'global_costmap/origin_x'].value, -20.0)
-        self.assertEqual(p[prefix + 'global_costmap/origin_y'].value, -20.0)
+        self.assertEqual(p[prefix + 'global_costmap/width'].value, 90.0)
+        self.assertEqual(p[prefix + 'global_costmap/height'].value, 90.0)
+        self.assertEqual(p[prefix + 'global_costmap/origin_x'].value, -45.0)
+        self.assertEqual(p[prefix + 'global_costmap/origin_y'].value, -45.0)
         self.assertEqual(p[prefix + 'global_costmap/resolution'].value, .05)
         self.assertNotIn('static_layer', [layer['name'] for layer in
                          p[prefix + 'global_costmap/plugins'].value])
@@ -176,6 +176,15 @@ class FieldLaunchTests(unittest.TestCase):
             self.assertEqual(p[costmap + 'inflation_layer/inflation_radius'].value, .25)
             self.assertEqual(p[costmap + 'obstacle_layer/scan/obstacle_range'].value, 4.5)
             self.assertEqual(p[costmap + 'obstacle_layer/scan/raytrace_range'].value, 4.5)
+            self.assertFalse(p[costmap + 'obstacle_layer/scan/inf_is_valid'].value)
+        self.assertTrue(p[prefix + 'DWAPlannerROS/start_heading_enabled'].value)
+
+    def test_heading_can_be_disabled_without_switching_local_planner(self):
+        p = load('slicer_field_navigation.launch', ['start_heading_enabled:=false']).params
+        prefix = '/ugv/move_base/'
+        self.assertFalse(p[prefix + 'DWAPlannerROS/start_heading_enabled'].value)
+        self.assertEqual(p[prefix + 'base_local_planner'].value, 'slicer_navigation/DWAPlannerROS')
+
 
     def test_preparation_uses_separate_speed_profile_without_adaptive_guard(self):
         p = load('slicer_field_navigation.launch', ['geographic:=false', 'preparation:=true']).params

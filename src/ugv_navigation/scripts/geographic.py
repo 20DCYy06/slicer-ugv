@@ -21,6 +21,7 @@ import uuid
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from navigation_preparation import PreparationClient
+from preparation_path import observed_path, straight_roundtrip_goal
 from geographic_goal_core import (arrival_review, capture_sample, capture_target, finite, origin_record,
                                   quiet_odom_tail, registration_observation_problem,
                                   resolve_target, status_problem)
@@ -89,7 +90,7 @@ def arguments(argv=None):
     commands.add_parser('status', help='print one fresh manager status JSON')
     initialize = commands.add_parser('initialize', help='one bounded forward odom goal between stationary windows')
     initialize.add_argument('--distance', type=positive,
-                            help='metres forward; defaults to 2.5, or 2 with a guarded return')
+                            help='metres forward; guarded return may select a shorter observed corridor (default 2 m)')
     initialize.add_argument('--return-to-start', action='store_true',
                             help='after registration, reverse to the recorded odom start with the preparation Guard')
     initialize.add_argument('--timeout', type=positive, default=120.)
@@ -144,7 +145,7 @@ class GeographicClient:
         from actionlib_msgs.msg import GoalStatusArray
         from geometry_msgs.msg import PoseStamped, Twist
         from move_base_msgs.msg import MoveBaseAction, MoveBaseGoal
-        from nav_msgs.msg import Odometry
+        from nav_msgs.msg import OccupancyGrid, Odometry
         from nav_msgs.srv import GetPlan, GetPlanRequest
         import rospy
         from std_msgs.msg import String
@@ -174,9 +175,14 @@ class GeographicClient:
         self.preparation = PreparationClient(rospy, String, args.action)
         self.capture_subs = []
         self.return_pub = None
+        self.roundtrip_grids = {}
         if getattr(args, 'return_to_start', False):
             self.Twist = Twist
             self.return_pub = rospy.Publisher(RETURN_TOPIC, Twist, queue_size=1, latch=False)
+            self.roundtrip_subs = [
+                rospy.Subscriber(args.action.rstrip('/') + f'/{scope}_costmap/costmap',
+                                 OccupancyGrid, self._roundtrip_grid, callback_args=scope, queue_size=1)
+                for scope in ('global', 'local')]
         self.action_sample, self.mux_sample = None, None
         if args.command in ('send', 'initialize'):
             self.action_sub = rospy.Subscriber(args.action.rstrip('/') + '/status', GoalStatusArray,
@@ -189,6 +195,55 @@ class GeographicClient:
                 rospy.Subscriber('/gnss/fix', NavSatFix, self._fix, queue_size=100),
                 rospy.Subscriber('/gnss/fix_quality', DiagnosticArray, self._quality, queue_size=100),
                 rospy.Subscriber('/global/odom', Odometry, self._global, queue_size=100)]
+
+    def _roundtrip_grid(self, message, scope):
+        with self.lock:
+            self.roundtrip_grids[scope] = (time.monotonic(), message)
+
+    def _observed_roundtrip_grids(self):
+        deadline = time.monotonic() + 2.
+        while not self.ros.is_shutdown() and time.monotonic() < deadline:
+            with self.lock:
+                maps = tuple(self.roundtrip_grids.values())
+            now, stamp = time.monotonic(), self.ros.Time.now().to_sec()
+            if len(maps) == 2 and all(
+                    now - received <= 1. and grid.header.frame_id == 'odom'
+                    and grid.header.stamp.to_sec() > 0.
+                    and -.1 <= stamp - grid.header.stamp.to_sec() <= 1.
+                    for received, grid in maps):
+                return [grid for _, grid in maps]
+            time.sleep(.025)
+        raise ValueError('roundtrip requires fresh global and local odom costmaps; no goal sent')
+
+    def _roundtrip_route(self, start):
+        action = self.args.action.rstrip('/')
+        minimum = self.ros.get_param('/geographic/min_alignment_displacement_m', .75)
+        tolerance = self.ros.get_param(action + '/DWAPlannerROS/xy_goal_tolerance', .15)
+        cost_limit = self.ros.get_param(action + '/GlobalPlanner/smoothing/max_cost', 252)
+        if (not finite(minimum) or minimum <= 0. or not finite(tolerance) or tolerance < 0.
+                or type(cost_limit) is not int or not 0 <= cost_limit <= 252):
+            raise ValueError('invalid roundtrip path configuration')
+        # With compressed OccupancyGrid costs, reject the bin containing the
+        # first disallowed raw cell instead of accepting an ambiguous boundary.
+        published_limit = 98 if cost_limit == 252 else 97 * cost_limit // 251
+        service = action + '/make_plan'
+        self.ros.wait_for_service(service, timeout=2.)
+        get_plan = self.ros.ServiceProxy(service, self.GetPlan)
+        start_pose = self.pose(start, start[2], 'odom')
+
+        def plan(goal):
+            response = get_plan(self.GetPlanRequest(start=start_pose,
+                                                    goal=self.pose(goal, goal[2], 'odom'), tolerance=0.))
+            poses = response.plan.poses
+            if any(p.header.frame_id not in ('', 'odom') for p in poses):
+                return []
+            return [(p.pose.position.x, p.pose.position.y) for p in poses]
+
+        def known(points):
+            return all(observed_path(grid, points, self.args.distance + .05, max_cost=published_limit) is not None
+                       for grid in self._observed_roundtrip_grids())
+
+        return straight_roundtrip_goal(start, self.args.distance, minimum + tolerance, plan, known)
 
     def _action_status(self, message):
         expected = self.args.action.rstrip('/')
@@ -320,6 +375,22 @@ class GeographicClient:
         actual = self.ros.get_param(key, None)
         if actual != expected:
             raise ValueError('{} must be {}; actual={!r}'.format(key, expected, actual))
+
+    def fixed_map_bounds(self):
+        prefix = self.args.action.rstrip('/') + '/global_costmap'
+        config = self.ros.get_param(prefix, {})
+        if (not isinstance(config, dict) or config.get('global_frame') != 'map'
+                or config.get('rolling_window') is not False):
+            return None
+        x, y, width, height, resolution = (config.get(key) for key in
+                                          ('origin_x', 'origin_y', 'width', 'height', 'resolution'))
+        if not all(finite(value) for value in (x, y, width, height, resolution)) or resolution <= 0.:
+            return None
+        if width < resolution or height < resolution:
+            return None
+        # costmap_2d allocates whole cells and treats the upper edge as outside.
+        return dict(min_x=x, min_y=y, max_x=x + int(width / resolution) * resolution,
+                    max_y=y + int(height / resolution) * resolution)
 
     def publish(self, publisher, record):
         publisher.publish(self.String(data=json.dumps(record, ensure_ascii=False, allow_nan=False)))
@@ -494,9 +565,30 @@ class GeographicClient:
         if problem:
             return dict(command='initialize', begin=began, initial_stop=initial_stop, reason=problem), 1
         x, y, yaw = self.current_pose('odom')
-        xyz = [x+self.args.distance*math.cos(yaw), y+self.args.distance*math.sin(yaw), 0.]
+        distance = self.args.distance
+        xyz = [x+distance*math.cos(yaw), y+distance*math.sin(yaw), 0.]
+        if self.return_pub is not None:
+            goal = self._roundtrip_route((x, y, yaw))
+            if goal is None:
+                return dict(command='initialize', begin=began, initial_stop=initial_stop,
+                            reason='no observed straight roundtrip corridor meeting the fit baseline; no goal sent'), 1
+            live_x, live_y, live_yaw = self.current_pose('odom')
+            heading_change = math.atan2(math.sin(live_yaw-yaw), math.cos(live_yaw-yaw))
+            status, _, rows = self.observation()
+            still_stopped = quiet_odom_tail(rows, time.monotonic(), self.ros.Time.now().to_sec(),
+                                           window=initial_stop['window_s'])
+            if (not still_stopped['confirmed'] or math.hypot(live_x-x, live_y-y) > .05
+                    or abs(heading_change) > .10):
+                return dict(command='initialize', begin=began, initial_stop=still_stopped,
+                            reason='stationary start changed while checking the corridor; no goal sent'), 1
+            problem = self.initializing_problem(generation) or registration_observation_problem(
+                status, self.ros.Time.now().to_sec(), self.fix_age)
+            if problem:
+                return dict(command='initialize', begin=began, initial_stop=still_stopped, reason=problem), 1
+            xyz = [goal[0], goal[1], 0.]
+            distance = math.hypot(goal[0]-x, goal[1]-y)
         record = dict(id=str(uuid.uuid4()), command='initialize', frame='odom', map_xyz=None,
-                      odom_xyz=xyz, yaw=yaw, distance_m=self.args.distance, generation=generation,
+                      odom_xyz=xyz, yaw=yaw, distance_m=distance, generation=generation,
                       physical_point='base_link', stamp=self.ros.Time.now().to_sec())
         self.goal_record = record
         self.publish(self.goal_pub, record)
@@ -516,7 +608,7 @@ class GeographicClient:
         complete = outbound_succeeded and finished and finished['success']
         if self.return_pub is not None and complete:
             try:
-                result['return_to_start'] = self._return_to_start((x, y, yaw), generation)
+                result['return_to_start'] = self._return_to_start((x, y, yaw), generation, distance)
             except (ValueError, self.ros.ROSException) as error:
                 result['return_to_start'] = dict(confirmed=False, reason=str(error))
             complete = result['return_to_start']['confirmed']
@@ -531,7 +623,7 @@ class GeographicClient:
         return status_problem(status, received, time.monotonic(), self.ros.Time.now().to_sec(),
                               generation=generation, max_age=self.status_age)
 
-    def _return_to_start(self, origin, generation):
+    def _return_to_start(self, origin, generation, distance):
         # Finishing the fit resets observation history. Wait at rest for the
         # first fresh registered status before starting the return.
         ready_deadline = time.monotonic() + 5.
@@ -565,7 +657,7 @@ class GeographicClient:
                 if problem:
                     raise ValueError(problem)
                 pose = self.current_pose('odom')
-                v, w = registration_return_command(origin, pose, self.args.distance, max_speed)
+                v, w = registration_return_command(origin, pose, distance, max_speed)
                 if v == 0.:
                     arrived = True
                     break
@@ -636,6 +728,15 @@ class GeographicClient:
         target = resolve_target(self.args, status, self.current_pose('map'), file_intent=intent)
         target.update(id=goal_id, generation=status['generation'], stamp=self.ros.Time.now().to_sec())
         self.goal_record = target
+        diagnostic = {}
+        bounds = self.fixed_map_bounds()
+        if bounds is not None:
+            x, y = target['map_xyz'][:2]
+            inside = bounds['min_x'] <= x < bounds['max_x'] and bounds['min_y'] <= y < bounds['max_y']
+            diagnostic = dict(map_bounds=bounds, target_in_bounds=inside)
+            if not inside:
+                return dict(command=self.args.command, target=target, poses=0, action_goal_sent=False,
+                            reason='target outside configured global map bounds', **diagnostic), 1
         pose = self.pose(target['map_xyz'], target['yaw'])
         if self.args.command == 'send':
             self.publish(self.goal_pub, target)
@@ -647,13 +748,13 @@ class GeographicClient:
             plan = self.ros.ServiceProxy(service, self.GetPlan)(self.GetPlanRequest(
                 start=self.pose([start[0], start[1], 0.], start[2]), goal=pose, tolerance=0.))
             result = dict(command='plan', target=target, poses=len(plan.plan.poses),
-                          elapsed_s=time.monotonic()-before, action_goal_sent=False)
+                          elapsed_s=time.monotonic()-before, action_goal_sent=False, **diagnostic)
             return result, 0 if plan.plan.poses else 1
         action = self.run_action(pose, target['generation'])
         since = time.monotonic()
         self.quiet(since)
         result = self.arrival_after_stop(target, action, since)
-        result.update(command='send', move_base=action)
+        result.update(command='send', move_base=action, **diagnostic)
         return result, 0 if result['geographic']['confirmed'] and not action['reason'] else 1
 
     def arrival_after_stop(self, target, action, since):

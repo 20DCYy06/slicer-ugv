@@ -8,7 +8,7 @@ from unittest.mock import Mock, patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[4] / 'src/ugv_navigation/scripts'))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from dashboard_model import Dashboard
-from workflow import OwnedProcess, Workflow
+from workflow import MAP_HANDOFF_TIMEOUT, OwnedProcess, Workflow
 from workflow_discovery import Graph
 
 
@@ -151,6 +151,105 @@ class WorkflowTests(unittest.TestCase):
         self.graph.frame = 'map'
         self.refresh()
         self.assertFalse(self.workflow.startup_calibration_pending)
+
+    def _finish_roundtrip_with_hold(self):
+        self.workflow.click('rtk')
+        self.sample(fixed_position={'latitude': 19., 'longitude': 119., 'altitude': 7.})
+        self.workflow.click('navigation')
+        self.prerequisites(held=False)
+        self.sample(lio=True, wheel_still=True,
+                    mux=dict(self.workflow.mux, mux_instance_id='mux-a', takeover_generation=0))
+        self.refresh()
+        self.assertEqual(self.starts[-1][0], 'calibrate')
+        self.starts[-1][3].status = 0
+        self.sample(geographic={'state': 'ready', 'registered': True})
+        self.refresh()
+        key, _, _, hold = self.starts[-1]
+        self.assertEqual(key, 'calibration_hold')
+        ack = dict(self.workflow.mux, manual_hold=True, takeover_generation=1,
+                   last_intent_action='takeover', last_intent_accepted=True)
+        hold.log_lines = [json.dumps(ack)]
+        hold.status = 0
+        self.sample(mux=ack)
+        return ack
+
+    def test_roundtrip_waits_for_discovery_started_after_calibration_hold_exits(self):
+        self._finish_roundtrip_with_hold()
+        self.graph.started_at = self.clock - 0.1
+        self.graph.nodes.add('/ugv/control')
+        self.refresh()
+        self.assertEqual(self.workflow.startup_calibration, 'awaiting_map')
+        self.assertIn('配准已完成', self.workflow.states['rtk'][1])
+        self.assertEqual(self.starts[-1][0], 'calibration_hold')
+
+        self.clock += 0.2
+        # This snapshot returned after exit, but the probe started earlier.
+        self.graph.nodes.discard('/ugv/control')
+        self.refresh()
+        self.assertEqual(self.starts[-1][0], 'calibration_hold')
+        self.assertEqual(self.workflow.startup_calibration, 'awaiting_map')
+
+        # A genuinely fresh registration indicates an active control console.
+        self.graph.started_at = self.clock
+        self.graph.nodes.add('/ugv/control')
+        self.refresh()
+        self.assertEqual(self.starts[-1][0], 'calibration_hold')
+        self.assertIn('控制台', self.workflow.states['rtk'][1])
+
+        self.clock += 0.2
+        self.graph.started_at = self.clock
+        self.graph.nodes.discard('/ugv/control')
+        self.refresh()
+        self.assertEqual(self.starts[-1][0], 'map_release')
+        self.assertEqual(self.starts[-1][1][-4:],
+                         ('--expected-mux-instance', 'mux-a', '--expected-generation', '1'))
+
+    def test_roundtrip_does_not_handoff_after_mux_restart(self):
+        ack = self._finish_roundtrip_with_hold()
+        self.graph.started_at = self.clock - 0.1
+        self.refresh()
+        self.clock += 0.2
+        self.graph.started_at = self.clock
+        self.sample(mux=dict(ack, mux_instance_id='mux-restarted', manual_hold=False))
+        self.refresh()
+        self.assertEqual(self.starts[-1][0], 'calibration_hold')
+        self.assertIn('Mux', self.workflow.states['rtk'][1])
+        self.assertTrue(self.workflow.ready('calibrate'))
+
+        self.clock += MAP_HANDOFF_TIMEOUT
+        self.graph.started_at = self.clock
+        self.sample(lidar=True, odom=(0., 0.), driver=True, odom_still=True, action=[],
+                    geographic={'state': 'ready', 'registered': True},
+                    mux=dict(ack, mux_instance_id='mux-restarted', manual_hold=False))
+        self.refresh()
+        self.assertEqual(self.workflow.startup_calibration, 'map_failed')
+        self.assertIn('配准已完成 · 切图失败', self.workflow.states['rtk'][1])
+        self.assertIn('Mux', self.workflow.states['rtk'][1])
+        self.assertEqual(self.starts[-1][0], 'calibration_hold')
+
+    def test_roundtrip_needs_the_hold_ack_even_if_mux_now_reports_nav(self):
+        ack = self._finish_roundtrip_with_hold()
+        self.starts[-1][3].log_lines = []
+        self.sample(mux=dict(ack, manual_hold=False))
+        self.refresh()
+        self.clock += 0.2
+        self.graph.started_at = self.clock
+        self.refresh()
+        self.assertEqual(self.workflow.startup_calibration, 'map_failed')
+        self.assertIn('未确认配准停车回执', self.workflow.states['rtk'][1])
+        self.assertEqual(self.starts[-1][0], 'calibration_hold')
+        self.assertTrue(self.workflow.ready('calibrate'))
+
+    def test_roundtrip_does_not_handoff_while_stop_is_latched(self):
+        ack = self._finish_roundtrip_with_hold()
+        self.refresh()
+        self.clock += 0.2
+        self.graph.started_at = self.clock
+        self.sample(mux=dict(ack, emergency_stop_latched=True))
+        self.refresh()
+        self.assertEqual(self.workflow.startup_calibration, 'awaiting_map')
+        self.assertEqual(self.starts[-1][0], 'calibration_hold')
+        self.assertTrue(self.workflow.ready('calibrate'))
 
     def test_roundtrip_failure_does_not_restart_or_switch_even_when_outbound_registered(self):
         self.workflow.click('rtk')
@@ -316,6 +415,9 @@ class WorkflowTests(unittest.TestCase):
         self.workflow.click('map')
         self.assertIs(self.starts[-1][3], hold)
         self.sample(mux=ack)
+        self.clock += .1
+        self.graph.started_at = self.clock
+        self.refresh()
         self.workflow.click('map')
         step, command, _, release = self.starts[-1]
         self.assertEqual(step, 'map_release')
