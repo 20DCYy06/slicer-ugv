@@ -53,14 +53,23 @@ class BSplineGlobalPlanner : public nav_core::BaseGlobalPlanner {
     if (cost_field_enabled_) {
       // Noetic's Dijkstra reserves < lethal_cost-1 for known traversable
       // cells and adds neutral_cost + cost_factor*byte to the potential.
-      raw_nh.setParam("lethal_cost", 254);
-      raw_nh.setParam("neutral_cost", 50);
-      raw_nh.setParam("cost_factor", .8);
-      raw_nh.setParam("use_dijkstra", true);
-      raw_nh.setParam("use_grid_path", true);
-      raw_nh.setParam("old_navfn_behavior", true);
+      const auto configure = [](ros::NodeHandle& planner, bool grid_traceback) {
+        planner.setParam("lethal_cost", 254);
+        planner.setParam("neutral_cost", 50);
+        planner.setParam("cost_factor", .8);
+        planner.setParam("use_dijkstra", true);
+        planner.setParam("use_grid_path", grid_traceback);
+        planner.setParam("old_navfn_behavior", true);
+      };
+      ros::NodeHandle grid_nh("~/GlobalPlannerGridFallback");
+      if (parameters.valid()) grid_nh.setParam("", parameters);
+      configure(raw_nh, false);
+      configure(grid_nh, true);
       search_grid_ = snapshot();
-      raw_->initialize("GlobalPlannerRaw", &search_grid_, costmap_ros_->getGlobalFrameID());
+      const auto frame = costmap_ros_->getGlobalFrameID();
+      raw_->initialize("GlobalPlannerRaw", &search_grid_, frame);
+      grid_fallback_.reset(new global_planner::GlobalPlanner());
+      grid_fallback_->initialize("GlobalPlannerGridFallback", &search_grid_, frame);
       ros::NodeHandle node("~");
       goals_ = node.subscribe<geometry_msgs::PoseStamped>("current_goal", 1,
           [this](const geometry_msgs::PoseStamped::ConstPtr&) { ++reference_epoch_; });
@@ -119,22 +128,38 @@ class BSplineGlobalPlanner : public nav_core::BaseGlobalPlanner {
           reference, cost_options_, costs);
     }
     std::vector<geometry_msgs::PoseStamped> original;
-    if(!raw_ || !raw_->makePlan(start,goal,original) || original.empty())
-      return cost_field_enabled_ ? reject(goal, "no path on the current cost field") : false;
+    bool found = raw_ && raw_->makePlan(start, goal, original) && !original.empty();
     if (cost_field_enabled_) {
-      // With old_navfn_behavior the grid traceback emits cell corners,
-      // followed by two copies of the exact goal. Use the encoded cell
-      // centres, while keeping the actual start and exact goal poses.
-      const auto terminal = original.back();
-      original.resize(original.size() > 2 ? original.size() - 2 : 0);
-      for (auto& pose : original) {
-        pose.pose.position.x += grid.getResolution() * .5;
-        pose.pose.position.y += grid.getResolution() * .5;
+      const auto checked = [&] {
+        // In old Navfn coordinates the traceback indexes cell centres from
+        // the map origin and appends the exact goal twice. Avoid gratuitous
+        // subcell turns at both real poses when a checked shortcut exists.
+        const auto terminal = original.back();
+        original.resize(original.size() > 2 ? original.size() - 2 : 0);
+        const double half_cell = grid.getResolution() * .5;
+        for (auto& pose : original) {
+          pose.pose.position.x += half_cell;
+          pose.pose.position.y += half_cell;
+        }
+        const auto can_connect = [&](const auto& a, const auto& b) {
+          return segmentFeasible(point(a), point(b), half_cell, allow_unknown_, feasible);
+        };
+        if (!original.empty() && can_connect(start, original.size() > 1 ? original[1] : terminal))
+          original.erase(original.begin());
+        original.insert(original.begin(), start);
+        if (original.size() > 1 && can_connect(original[original.size()-2], terminal))
+          original.pop_back();
+        original.push_back(terminal);
+        return pathFeasible(original, half_cell, feasible);
+      };
+      if (!found || !checked()) {
+        // Retry the identical objective once with cell-centre traceback
+        // when interpolation crossed the hard mask. No older route is reused.
+        found = grid_fallback_->makePlan(start, goal, original) && !original.empty() && checked();
       }
-      original.insert(original.begin(), start);
-      original.push_back(terminal);
-      if (!pathFeasible(original, grid.getResolution() * .5, feasible))
-        return reject(goal, "grid traceback crosses hard geometry");
+      if (!found) return reject(goal, "no valid traceback on the current cost field");
+    } else if (!found) {
+      return false;
     }
     publish(raw_pub_,original);
     if(!enabled_ || original.size()<2) {
@@ -339,7 +364,7 @@ class BSplineGlobalPlanner : public nav_core::BaseGlobalPlanner {
   costmap_2d::Costmap2DROS* costmap_ros_=nullptr;
   costmap_2d::Costmap2D search_grid_;
   std::mutex plan_lock_, registration_lock_;
-  std::unique_ptr<global_planner::GlobalPlanner> raw_;
+  std::unique_ptr<global_planner::GlobalPlanner> raw_, grid_fallback_;
   ros::Publisher raw_pub_,smooth_pub_,status_pub_;
   bool enabled_=true, smooth_observed_prefix_=false;
   double epsilon_=.03,control_spacing_=.2,sample_spacing_=.05;

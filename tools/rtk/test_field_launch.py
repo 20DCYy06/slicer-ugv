@@ -170,7 +170,7 @@ class FieldLaunchTests(unittest.TestCase):
         self.assertEqual(p[prefix + 'base_global_planner'].value, 'slicer_navigation/BSplineGlobalPlanner')
         self.assertTrue(p['/slicer_nav_arc_guard/adaptive_forward_speed'].value)
         self.assertEqual(p[prefix + 'GlobalPlanner/lethal_cost'].value, 254)
-        self.assertTrue(p[prefix + 'GlobalPlanner/use_grid_path'].value)
+        self.assertFalse(p[prefix + 'GlobalPlanner/use_grid_path'].value)
         self.assertTrue(p[prefix + 'GlobalPlanner/smoothing/observed_prefix'].value)
         self.assertEqual(p[prefix + 'DWAPlannerROS/vx_samples'].value, 9)
         self.assertEqual(p[prefix + 'DWAPlannerROS/start_heading_rate'].value, .45)

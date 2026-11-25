@@ -85,9 +85,9 @@
       # Same provisional routing policy as NoRTK. The Guard still rejects
       # unobserved local footprint sweeps, and preparation validates its route.
       allow_unknown: true
-      # Noetic Dijkstra consumes the private cost field. Grid-centre traceback
-      # avoids gradient interpolation across the hard geometric contour.
-      use_grid_path: true
+      # Noetic Dijkstra consumes one private cost field, with gradient
+      # traceback and a checked grid-centre fallback for the same objective.
+      use_grid_path: false
       old_navfn_behavior: true
       lethal_cost: 254
       neutral_cost: 50
