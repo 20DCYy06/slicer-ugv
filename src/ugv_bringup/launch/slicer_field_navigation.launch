@@ -9,6 +9,8 @@
   <arg name="geographic" default="true"/>
   <arg name="preparation" default="false"/>
   <arg name="enable_depth" default="false"/>
+  <arg name="start_heading_enabled" default="$(optenv SLICER_START_HEADING_ENABLED true)"/>
+  <arg name="outdoor_map_config" default="$(eval optenv('SLICER_RTK_OUTDOOR_MAP_CONFIG', find('ugv_bringup') + '/config/outdoor_map.yaml'))"/>
   <!-- RTK field defaults apply to odom bootstrap and geographic map navigation. -->
   <arg name="default_cruise_config" value="$(eval '' if arg('mapping') else dirname() + '/../config/' + ('dwa_registration.yaml' if arg('preparation') and not arg('geographic') else 'dwa_field.yaml'))"/>
   <arg name="cruise_config" default="$(arg default_cruise_config)"/>
@@ -22,7 +24,7 @@
     <arg name="source_config" value="$(find ugv_bringup)/config/online_runtime/config/slicer_config.yaml"/>
     <arg name="control_config" value="$(find ugv_bringup)/config/slicer_driver_body_speed.yaml"/>
     <arg name="global_costmap_config"
-         value="$(eval find('ugv_bringup') + '/config/' + ('outdoor_map.yaml' if arg('geographic') else 'field_odom_map.yaml'))"/>
+         value="$(eval arg('outdoor_map_config') if arg('geographic') else find('ugv_bringup') + '/config/field_odom_map.yaml')"/>
   </include>
   <include if="$(arg mapping)" file="$(find ugv_bringup)/launch/slicer_online.launch">
     <arg name="local_planner" value="dwa"/>
@@ -58,12 +60,18 @@
       scan:
         obstacle_range: 4.5
         raytrace_range: 4.5
+        # /scan comes from a projected cloud. Empty angle bins are unknown;
+        # clearing uses finite measurements only.
+        inf_is_valid: false
   </rosparam>
   <!-- The Guard reads final planner limits at startup; restart navigation after edits. -->
   <rosparam if="$(eval arg('cruise_config') != '' and arg('default_cruise_config') != '' and arg('cruise_config') != arg('default_cruise_config'))"
             command="load" ns="ugv/move_base" file="$(arg default_cruise_config)"/>
   <rosparam if="$(eval arg('cruise_config') != '')" command="load"
             ns="ugv/move_base" file="$(arg cruise_config)"/>
+  <param if="$(eval not arg('mapping') and (arg('geographic') or not arg('preparation')))"
+         name="/ugv/move_base/DWAPlannerROS/start_heading_enabled" type="bool"
+         value="$(arg start_heading_enabled)"/>
   <rosparam if="$(eval not arg('mapping') and (arg('geographic') or not arg('preparation')))" ns="ugv/move_base">
     base_local_planner: slicer_navigation/DWAPlannerROS
     GlobalPlanner:
@@ -106,6 +114,8 @@
           # Replan as soon as the local layer sees a new obstacle.
           obstacle_range: 4.5
           raytrace_range: 4.5
+          # Match the local layer's finite-return clearing policy.
+          inf_is_valid: false
       inflation_layer:
         inflation_radius: 0.25
     local_costmap:

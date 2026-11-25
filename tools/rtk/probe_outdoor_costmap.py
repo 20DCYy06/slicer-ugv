@@ -115,14 +115,15 @@ class Probe:
             if self.publish_depth:
                 header = Header(stamp=rospy.Time.now(), frame_id='online_depth_optical')
                 self.hits.publish(point_cloud2.create_cloud_xyz32(header, [(1.025, .625, .2)]))
-            if self.scan_mode == 'ring':
+            if self.scan_mode in ('ring', 'missing'):
                 scan = LaserScan()
                 scan.header.stamp = rospy.Time.now()
-                scan.header.frame_id = 'TEST_ONLY_ring_sensor'
+                ring = self.scan_mode == 'ring'
+                scan.header.frame_id = 'TEST_ONLY_ring_sensor' if ring else 'base_link'
                 scan.angle_min, scan.angle_increment = -math.pi, 2. * math.pi / 720
                 scan.angle_max = scan.angle_min + 719 * scan.angle_increment
                 scan.scan_time, scan.range_min, scan.range_max = .05, .05, 3.5
-                scan.ranges = [.55] * 720
+                scan.ranges = [.55 if ring else float('inf')] * 720
                 self.scan.publish(scan)
 
     def phase(self, label, goals=(), repetitions=3, settle=2.):
@@ -166,20 +167,21 @@ class Probe:
         self.hits.unregister()
 
 
-def navigation(uuid, extent=40., depth=False):
+def navigation(uuid, extent=None, depth=False):
     # Roslaunch merges this final extent override before move_base starts. All
     # other parameters come from the real field entry, including lidar layers.
     launch = ROOT / 'src/ugv_bringup/launch/slicer_field_navigation.launch'
+    override = '' if extent is None else ''.join(
+        '<param name="/ugv/move_base/global_costmap/{}" value="{}" type="double"/>'.format(key, value)
+        for key, value in (('width', extent), ('height', extent),
+                           ('origin_x', -extent/2.), ('origin_y', -extent/2.)))
     text = '''<launch>
       <include file="{launch}">
         <arg name="enable_depth" value="{depth}"/>
         <arg name="start_camera" value="false"/>
       </include>
-      <param name="/ugv/move_base/global_costmap/width" value="{extent}" type="double"/>
-      <param name="/ugv/move_base/global_costmap/height" value="{extent}" type="double"/>
-      <param name="/ugv/move_base/global_costmap/origin_x" value="{origin}" type="double"/>
-      <param name="/ugv/move_base/global_costmap/origin_y" value="{origin}" type="double"/>
-    </launch>'''.format(launch=launch, depth=str(depth).lower(), extent=extent, origin=-extent/2.)
+      {override}
+    </launch>'''.format(launch=launch, depth=str(depth).lower(), override=override)
     with tempfile.NamedTemporaryFile(mode='w', suffix='.launch') as file:
         file.write(text)
         file.flush()
@@ -224,7 +226,14 @@ def main():
         parent.shutdown()
         parent = None
         probe.reset_maps()
+        probe.plant.set_scan(False)
+        probe.scan_mode = 'missing'
         parent = navigation(uuid)
+        wait_for(lambda: cell(probe.grid(), 1.025, .625) == -1, 'empty projection leaves cell unknown')
+        time.sleep(1.)
+        assert cell(probe.grid(), 1.025, .625) == -1
+        probe.scan_mode = None
+        probe.plant.set_scan(True)
         wait_for(lambda: cell(probe.grid(), 1.025, .625) == 0, 'fresh depth-off grid free at prior depth hit')
         result['depth_off_restart'] = dict(cell=cell(probe.grid(), 1.025, .625),
             depth_params_present=rospy.has_param('/ugv/move_base/global_costmap/depth_layer'),
@@ -235,20 +244,29 @@ def main():
         probe.plant.set_segments([((1.025, -.3), (1.025, .3))])
         wait_for(lambda: cell(probe.grid(), 1.025, .025) == 100, 'radar marking after depth-off restart')
         marked = cell(probe.grid(), 1.025, .025)
+        probe.plant.set_scan(False)
+        probe.scan_mode = 'missing'
+        time.sleep(1.)
+        missing = cell(probe.grid(), 1.025, .025)
+        assert missing == 100
+        probe.scan_mode = None
         probe.plant.set_segments([])
+        probe.plant.set_scan(True)
         wait_for(lambda: cell(probe.grid(), 1.025, .025) == 0, 'radar clearing after segment removal')
-        result['lidar_after_restart'] = dict(marked=marked, cleared=cell(probe.grid(), 1.025, .025))
+        result['lidar_after_restart'] = dict(marked=marked, after_missing=missing, cleared=cell(probe.grid(), 1.025, .025))
         parent.shutdown()
         parent = None
 
-        for extent in (40., 120.):
+        for extent in (40., 70., 90.):
             probe.plant.set_scan(True)
             probe.scan_mode = None
             probe.reset_maps()
             parent = navigation(uuid, extent=extent)
             wait_for(lambda: cell(probe.grid(), .8, 0.) == 0, 'free reachable target')
             grid = probe.grid()
-            profile = dict(extent_m=extent, cells=[grid.info.width, grid.info.height],
+            profile = dict(extent_m=extent,
+                           full_grid_payload_bytes=grid.info.width * grid.info.height,
+                           cells=[grid.info.width, grid.info.height],
                            frame=grid.header.frame_id,
                            global_parameters=rospy.get_param('/ugv/move_base/global_costmap'),
                            phases=[])

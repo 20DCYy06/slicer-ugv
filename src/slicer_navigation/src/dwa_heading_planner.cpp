@@ -27,6 +27,7 @@ class HeadingDWAPlanner : public nav_core::BaseLocalPlanner {
     tf_ = tf;
     costmap_ = costmap;
     ros::NodeHandle nh("~/" + name);
+    nh.param("start_heading_enabled", heading_enabled_, true);
     double rate, tolerance, settle, timeout, kp, kd;
     nh.param("start_heading_rate", rate, .45);
     nh.param("start_heading_tolerance", tolerance, .12);
@@ -63,11 +64,12 @@ class HeadingDWAPlanner : public nav_core::BaseLocalPlanner {
       goal_ = target;
       has_goal_ = true;
       plan_epoch_ = epoch;
-      aimed_ = aligned_ = false;
+      aimed_ = false;
+      aligned_ = !heading_enabled_;
       last_drive_ = geometry_msgs::Twist();
       last_forward_output_ = 0.;
     }
-    if (!aimed_) start_path_ = plan;
+    if (heading_enabled_ && !aimed_) start_path_ = plan;
     return true;
   }
 
@@ -239,7 +241,7 @@ class HeadingDWAPlanner : public nav_core::BaseLocalPlanner {
   unsigned plan_epoch_ = 0;
   double min_distance_ = .2, lookahead_ = .2, bearing_ = 0.;
   double approach_decel_ = .60, approach_response_ = .25;
-  bool has_goal_ = false, aimed_ = false, aligned_ = false;
+  bool heading_enabled_ = true, has_goal_ = false, aimed_ = false, aligned_ = false;
 };
 
 }  // namespace slicer_navigation
