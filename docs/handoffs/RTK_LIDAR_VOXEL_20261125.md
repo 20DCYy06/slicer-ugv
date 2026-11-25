@@ -1,6 +1,6 @@
 # RTK MID360 体素障碍候选
 
-独立分支为 `feat/rtk-lidar-voxel`，基于 RTK 路线连续性及固定地图修复。车端候选为 `~/workspace/slicer/releases/20261125-rtk-voxel-rc1`。以该目录的 `release.json` 核对安装对应的完整源码版本。候选软件已通过隔离测试，现场点云、控制负载与绕障效果待验收。
+独立分支为 `feat/rtk-lidar-voxel`，基于 RTK 路线连续性及固定地图修复。车端候选为 `~/workspace/slicer/releases/20261125-rtk-voxel-rc1`。以该目录的 `release.json` 核对安装对应的完整源码版本。候选在 Jetson ARM64 / Focal / Noetic 独立构建并安装，现场点云、控制负载与绕障效果待验收。
 
 ## 感知与地图
 
@@ -43,5 +43,5 @@ mkdir -p "$BASE/data/rtk-voxel"
 ## 软件验证
 
 - 机械臂过滤单测 2 项通过，覆盖 scan 原输出、车身与机械臂回波移除、非有限输入与地面回波。用独立生成配置运行 RTK launch 检查 15 项通过，覆盖两级体素层、准备阶段、默认 scan、Gmapping 和深度开关。
-- `tools/rtk/check_lidar_voxel_ros.py` 启动专用 loopback ROS Master，仅启动实际自体过滤器和系统安装的 `costmap_2d_node`。真实插件接受合成 `PointCloud2` 后确认低障碍被标记、漏观测不擦除、高射线不擦除低障碍、实测低射线可清除、射线之外保持未知。证据见 `~/workspace/slicer/dev/rtk-lidar-voxel/logs/voxel-synthetic.log` 与 `voxel-synthetic/`。
+- `tools/rtk/check_lidar_voxel_ros.py` 启动专用 loopback ROS Master，仅启动实际自体过滤器和系统安装的 `costmap_2d_node`。真实插件接受合成 `PointCloud2` 后确认低障碍被标记、漏观测不擦除、高射线不擦除低障碍、实测低射线可清除、射线之外保持未知。实际发布的安装配置与过滤器测试通过，证据见候选的 `logs/voxel-synthetic-installed.log` 与 `logs/voxel-synthetic-installed/`。两个代价地图的发布接线由正式 launch 检查覆盖。
 - 11 月 25 日的绕行录包无法提供原始三维回波。下一步在同一路线补采真实单帧点云，比较两图的标记、清除、负载和低速闭环行为。
