@@ -5,6 +5,8 @@
 车端入口见 `~/workspace/slicer/START_HERE.md`。日常 `~/workspace/slicer/run` 由 `current` 选择，当前为 `releases/20261123-rtk-fixed-a7a64c7`。
 RTK 主线交付见 [RTK 导航优化](docs/handoffs/RTK_NAVIGATION_OPTIMIZATION_20261124.md)。新桌面将前进段配准、地图显示与返程停稳分开，开阔回环仿真的倒车指令峰值为 0.8 m/s。软件检查与实车验收记录见对应交接和[操作手册](docs/OPERATIONS.md)。
 
+导航软连续性成本的实现、候选验证与主线合入规则核对见[任务交接](docs/handoffs/RTK_CONTINUITY_COST_20261125.md)。主线合入遵守[协作规则](AGENTS.md#主线合入规则)。
+
 - 在现场复测快速返程、停车净空、RTK Fixed 全局纠偏、WGS84 到点与飞机联合任务。
 - 补键盘实车、正式抓取工件与看门狗故障锁存恢复。底盘启动若再次超时，保留握手日志。
 - 与飞机团队确认集成 V2 JSON 和独立 AG_Client typed V2 的消息归属与互通方案。[V2 协议](src/ag_uav_client/docs/protocol_v2.md)

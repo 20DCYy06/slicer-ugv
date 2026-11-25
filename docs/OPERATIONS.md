@@ -95,6 +95,33 @@ RViz 绘制上限为 15 FPS，右栏每 250 毫秒检查显示变化。启动前
 - **Waypoint 打点** 在地图地面平面选点，将 WGS84 纬度、经度打印到启动终端，并在桌面询问是否导航到这里。确认后通过共享 WGS84 入口提交，取消时只保留坐标。具备有效地理配准时可以直接打点。普通和正式导航收到新目标后，先对准 DWA 局部跟踪路径的起点方向，确认停稳后再前进。
 - **一键全部停止** 依次关闭面板启动的进程，并反馈停止状态。点击工具栏的 **关闭** 或按 **Esc** 也会清理这些进程。可用 `SLICER_NATIVE_WS` 选择与现有导航一致的 ROS 安装目录。
 
+### 全局规划 A/B 候选对照
+
+现场负责人选定一套候选并确认旧导航、传感器和底盘进程已退出。两套都有独立安装。分别使用下列路径的桌面入口，正式 `current` 可以继续指向原稳定版本。
+
+```bash
+BASE="$HOME/workspace/slicer"
+ID=20261125-rtk-stability-rc1       # A
+# ID=20261125-rtk-continuity-cost-rc1  # B
+W="$BASE/releases/$ID"
+cd "$W/src/slicer-ugv"
+SLICER_RUNTIME_DIR="$BASE/data/$ID" ./tools/rtk_desktop_ui.sh
+```
+
+启动雷达、底盘和 RTK，验证 Fixed、配准并进入 `map`。使用同一场地、起点、目标和短程脚本。两种方案都可在第二个终端 source 同一个 `"$W/install/setup.bash"`，用 `rosrun ugv_navigation geographic.py plan --target-file "$TARGET"` 预览，由现场负责人用同一命令改为 `send` 下达。目标文件用已有地理点采集或已核对的 WGS84 目标。A 默认 90 m，B 沿用基线 40 m；正式比较记录尺寸与扫描清除设置。只比较规划器时，沿用任务交接里的共同 40 m 栅格回放。
+
+在每轮开始前录包，覆盖目标、两级栅格、计划、Guard、速度和里程计，结果保存到独立目录。
+
+```bash
+source "$W/install/setup.bash"
+python3 -B "$W/src/slicer-ugv/tools/rtk/collect_odom_test.py" \
+  --duration 60 --navigation --extra-topic /ugv/move_base/GlobalPlanner/plan_raw \
+  --extra-topic /ugv/move_base/GlobalPlanner/smoothing_status \
+  --output "$BASE/data/rtk-ab-$ID-$(date +%Y%m%d-%H%M%S)"
+```
+
+候选异常时取消目标、停车并 **一键全部停止**，确认进程退出后切另一候选。结束对照时执行 `"$BASE/run" status`、`"$BASE/run" rtk` 回到所选正式发布。小范围参数对照和证据见[连续性成本交接](handoffs/RTK_CONTINUITY_COST_20261125.md)。
+
 ## 底盘通信锁存恢复与测试
 
 使用 C30D v1.7 固件和本节配套 ROS 安装。无 RTK 和 RTK 都按正常入口启动。12 V 接通且 Motor ON 时，驱动检测到 MCU 的 UART、速度指令看门狗或测试锁存后保持零输出，并在固件确认四轮静止、零 PWM 持续 250 ms 后自动运行 `unlock.py --unlock`。驱动确认清锁后丢弃故障期间的速度指令，等待新的 `/cmd_vel`。编码器异常、堵转、转向错误或控制周期异常仍按故障停车。
