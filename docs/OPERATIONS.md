@@ -84,7 +84,7 @@ RViz 绘制上限为 15 FPS，右栏每 250 毫秒检查显示变化。启动前
 
 共享 RTK 导航的准备配置限速 0.35 m/s，配准返程最高 0.8 m/s，Guard 按后方制动净空放行或降速；返程起步按 1.0 m/s² 限加速度，接近起点按剩余距离减速。普通 `odom` 与正式 `map` 导航上限均为 0.8 m/s、45°/s（0.785398 rad/s），前进加速度上限为 1.00 m/s²。DWA 轨迹预测时长为 1.05 s，末段按剩余距离、0.60 m/s² 的到点减速预算和 0.25 s 的响应预算限制速度。局部代价地图为 9×9 m，供 Guard 检查全速制动扫掠范围。两种导航的保护距离均继续按 0.20 m/s² 制动减速度计算。现有 C30D 固件的 PWM 使用整数档，900‰ 上限对应最高可用档 1429/1600 ticks（89.31% 占空比）。重启导航和底盘驱动后使用新参数。DWA 参数在 `src/ugv_bringup/config/dwa_field.yaml`，PWM 档位在 `src/ugv_bringup/config/slicer_driver_body_speed.yaml`。
 
-- **1. 启动 RTK 与配准** 启动 GNSS 和全局定位，并安排自动配准。配置默认读取 `~/.config/slicer/gnss.yaml`，可用 `SLICER_GNSS_CONFIG` 指定。确认有直行和倒回空间，再启动后续两步。收到新鲜 Fixed，且雷达、底盘、导航与 Mux 就绪并确认车辆停稳后，才执行前进约 2 m、停车拟合、倒回起点。拟合和 TF 就绪后 RViz 立即显示配准地图，返程停稳后开放正式导航。已有有效配准可直接切换。
+- **1. 启动 RTK 与配准** 启动 GNSS 和全局定位，并安排自动配准。配置默认读取 `~/.config/slicer/gnss.yaml`，可用 `SLICER_GNSS_CONFIG` 指定。确认有直行和倒回空间，再启动后续两步。收到新鲜 Fixed，且雷达、底盘、导航与 Mux 就绪并确认车辆停稳后，才检查前方已观测的直线往返走廊，选择可行的前进段（上限约 2 m），停车拟合并倒回起点。距离不足时界面提示原因并保持停车。拟合和 TF 就绪后 RViz 立即显示配准地图，返程停稳后开放正式导航。已有有效配准可直接切换。
 - **2. 启动雷达与底盘** 启动 MID360、本地定位和底盘驱动。车端实际就绪后显示 **已完成**。
 - **3. 启动导航** 启用 RViz 的 2D Nav Goal 和共享 WGS84 任务入口。只用普通导航时可直接操作第 2、3 步。等待 Fixed 时也可在 `odom` 中发送 2D Nav Goal。若已安排自动配准，收到 Fixed 后会等待当前任务结束和车辆停稳，再切入配准档。
 - **当前位置** 显示 WGS84 纬度、经度，可在看板右键复制。配准前显示新鲜 RTK Fixed 天线坐标，具备新鲜的配准定位时优先显示车体参考点。没有可用坐标时显示「—」。
@@ -93,7 +93,47 @@ RViz 绘制上限为 15 FPS，右栏每 250 毫秒检查显示变化。启动前
 - 已从其他终端启动的步骤同样显示实际就绪状态。点击该步骤会提示其来源，需要重启时在原终端停止。完整的子进程日志保存在 `ROS_LOG_DIR`（开发时默认位于 `W/logs/ros`）。
 - **2D Nav Goal** 在 RViz 平面按住并拖动指定位置和朝向。同一桌面发送的新目标立即交给 `move_base` 替换上一目标。「正在前往」一行显示最新目标的 WGS84 纬度、经度。配准或 TF 尚不可用时显示等待提示。Mux 保持停车、急停、配准采集或其他控制端占用导航时，右侧显示当前阻塞原因。
 - **Waypoint 打点** 在地图地面平面选点，将 WGS84 纬度、经度打印到启动终端，并在桌面询问是否导航到这里。确认后通过共享 WGS84 入口提交，取消时只保留坐标。具备有效地理配准时可以直接打点。普通和正式导航收到新目标后，先对准 DWA 局部跟踪路径的起点方向，确认停稳后再前进。
+- **WGS84 测试目标** 在界面可发送时打开经纬度输入窗。提交时采用新鲜 Fixed 的有效椭球高，并通过和 Waypoint 相同的后端发送。取消窗口不发送。
 - **一键全部停止** 依次关闭面板启动的进程，并反馈停止状态。点击工具栏的 **关闭** 或按 **Esc** 也会清理这些进程。可用 `SLICER_NATIVE_WS` 选择与现有导航一致的 ROS 安装目录。
+
+### RTK 导航稳定性候选
+
+`20261125-rtk-stability-rc1` 使用固定 90×90 m 的 `map` 全局网格，原点 (-45,-45)，分辨率 5 cm。局部仍是 `odom` 下 9×9 m 滚动图。网格尺寸集中在安装包的 `ugv_bringup/config/outdoor_map.yaml`。现场需要调整时复制该文件到现场目录，编辑 `global_costmap` 的范围后，把 `SLICER_RTK_OUTDOOR_MAP_CONFIG` 指向副本，停车重启。地理目标预览会报告所加载的地图边界。图外目标需核对 ENU 原点、目标坐标和配置范围。
+
+候选启动前结束旧任务、停车并关闭旧 UI。现场负责人确认底盘和导航进程已退出后，可从候选版本直接进行对比。下列命令使用独立工作区安装，不改变正式 `current`。
+
+```bash
+BASE="$HOME/workspace/slicer"
+W="$BASE/releases/20261125-rtk-stability-rc1"
+cd "$W/src/slicer-ugv"
+./tools/rtk_desktop_ui.sh
+```
+
+依次完成 RTK、雷达与底盘、导航三个步骤。在开阔直线位置确认 Fixed、前进采样、拟合状态和返程停稳，等待进入 `map`。随后用 **WGS84 测试目标**填纬度、经度，或用 **Waypoint 打点**选择同一个已确认的地面目标。对账时同时查看 `/ugv/move_base/status`、`/geographic/status`、`/geographic/goal_result` 和 Guard 状态。任务开始换边且车辆明显反复转向时，结束任务并保留录包。行驶过程使用同一套导航与 Guard/Mux。
+
+主线能稳定完成后，再结束任务并关闭桌面。从同一候选重开，只改变起步转向：
+
+```bash
+SLICER_START_HEADING_ENABLED=false ./tools/rtk_desktop_ui.sh
+```
+
+恢复默认时退出后按原命令启动。已正式选择候选的车可在对应命令前使用同一环境变量，例如 `SLICER_START_HEADING_ENABLED=false "$BASE/run" rtk`。
+
+用另一个终端的同一发布环境启动被动录制。记录一次短程，Ctrl+C 可提前收尾。点云数据较大，现场可先试录几秒检查空间：
+
+```bash
+BASE="$HOME/workspace/slicer"
+W="$BASE/releases/20261125-rtk-stability-rc1"
+source "$W/install/setup.bash"
+python3 -B "$W/src/slicer-ugv/tools/rtk/collect_odom_test.py" \
+  --duration 45 --navigation \
+  --extra-topic /cloud_registered_body \
+  --extra-topic /cloud_nav_filtered \
+  --extra-topic /ugv/move_base/GlobalPlanner/plan_raw \
+  --output "$BASE/data/rtk-stability-$(date +%Y%m%d-%H%M%S)"
+```
+
+录包包含 scan、TF、两级地图及更新话题、规划、目标与回执、速度链和 odom。点云话题覆盖 FAST-LIO 发布的去畸变单帧。回退先停车、在候选界面一键全部停止并退出。若采用直接候选启动，核对 `"$BASE/run" status` 后用 `"$BASE/run" rtk` 即可返回原正式发布。若现场已切换 `current`，按[维护说明](MAINTENANCE.md#候选发布与切换)用事前记录的旧链接恢复，检查状态和安装路径后再启动。
 
 ## 底盘通信锁存恢复与测试
 

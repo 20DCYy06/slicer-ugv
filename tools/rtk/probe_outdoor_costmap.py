@@ -1,22 +1,25 @@
 #!/usr/bin/env python3
 """TEST_ONLY real Noetic costmap/GetPlan probe on a fresh isolated master.
 
-Run only in a no-device Noetic container with --network none. Reuses the existing
-ideal lidar/odometry plant, never sends goals, releases control or publishes
-velocity. The closed-ring scan is an explicit synthetic unreachable fixture,
+Starts a new loopback Noetic master and an ideal lidar/odometry plant.
+Never sends goals, releases control or publishes velocity. The closed-ring scan is an explicit synthetic unreachable fixture,
 not a replay or a claim about field sensor geometry. Service wall time includes
 transport/planning/possible mutex waits; this probe cannot separate those waits.
 """
 import argparse
 import json
 import math
+import os
 from pathlib import Path
+import socket
 import statistics
 import sys
 import tempfile
 import threading
 import time
+import xmlrpc.client
 
+import rosgraph
 import roslaunch
 import rospy
 import tf2_ros
@@ -59,6 +62,22 @@ def summary(samples):
     return dict(count=len(samples), min=min(samples), median=statistics.median(samples),
                 p95=ordered[min(len(ordered) - 1, math.ceil(.95 * len(ordered)) - 1)],
                 max=max(samples))
+
+
+def planner_process():
+    uri = rosgraph.Master(rospy.get_name()).lookupNode('/ugv/move_base')
+    with xmlrpc.client.ServerProxy(uri) as node:
+        status, _, pid = node.getPid(rospy.get_name())
+    if status != 1:
+        raise RuntimeError('Could not identify isolated move_base process')
+    return Path('/proc') / str(pid)
+
+
+def process_usage(proc):
+    fields = (proc / 'stat').read_text().split(') ', 1)[1].split()
+    seconds = (int(fields[11]) + int(fields[12])) / os.sysconf('SC_CLK_TCK')
+    resident = int((proc / 'statm').read_text().split()[1]) * os.sysconf('SC_PAGE_SIZE')
+    return seconds, resident
 
 
 class Probe:
@@ -127,7 +146,9 @@ class Probe:
                 self.scan.publish(scan)
 
     def phase(self, label, goals=(), repetitions=3, settle=2.):
+        proc = planner_process()
         start = time.monotonic()
+        cpu_before, _ = process_usage(proc)
         time.sleep(settle)
         calls = []
         service = rospy.ServiceProxy('/ugv/move_base/make_plan', GetPlan)
@@ -146,6 +167,7 @@ class Probe:
                                   end_wall=after, wall_s=after-before,
                                   poses=len(response.plan.poses)))
         time.sleep(2.)
+        cpu_after, rss = process_usage(proc)
         end = time.monotonic()
         with self.lock:
             events = [entry for entry in self.events if start <= entry['wall'] <= end]
@@ -155,7 +177,8 @@ class Probe:
         return dict(label=label, start_wall=start, end_wall=end, calls=calls,
                     get_plan_wall_s=summary([call['wall_s'] for call in calls]),
                     costmap_header_gap_s=summary(gaps), callback_wall_gap_s=summary(wall_gaps),
-                    costmap_events=events, move_base_warnings=warnings)
+                    move_base_process_cpu_percent=100. * (cpu_after - cpu_before) / (end - start),
+                    move_base_resident_bytes=rss, costmap_events=events, move_base_warnings=warnings)
 
     def close(self):
         self.stop.set()
@@ -195,10 +218,18 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output', type=Path, required=True)
     args = parser.parse_args()
-    result = dict(TEST_ONLY=True, platform=__import__('platform').machine()+' Noetic container', network='none',
+    with socket.socket() as listener:
+        listener.bind(('127.0.0.1', 0))
+        port = listener.getsockname()[1]
+    log_dir = args.output.resolve().parent / 'ros-outdoor-probe'
+    log_dir.mkdir(parents=True, exist_ok=True)
+    os.environ.update(ROS_MASTER_URI=f'http://127.0.0.1:{port}', ROS_IP='127.0.0.1',
+                      ROS_HOME=str(log_dir), ROS_LOG_DIR=str(log_dir))
+    os.environ.pop('ROS_HOSTNAME', None)
+    result = dict(TEST_ONLY=True, platform=__import__('platform').machine()+' Noetic', network='loopback',
                   devices='none', sends_goals=False, sends_velocity=False,
-                  measurements='GetPlan service wall time and global costmap header/callback gaps',
-                  limitation='No Jetson timing, depth image processing, physical motion, or lock-wait attribution',
+                  measurements='GetPlan service wall time, global costmap gaps and move_base process CPU/RSS',
+                  limitation='No real sensor processing, motion, or lock-wait attribution',
                   status='starting', profiles=[])
 
     def save():
@@ -207,7 +238,7 @@ def main():
 
     uuid = roslaunch.rlutil.get_or_generate_uuid(None, False)
     roslaunch.configure_logging(uuid)
-    core = roslaunch.parent.ROSLaunchParent(uuid, [], is_core=True)
+    core = roslaunch.parent.ROSLaunchParent(uuid, [], is_core=True, port=port)
     parent = probe = None
     save()
     try:
