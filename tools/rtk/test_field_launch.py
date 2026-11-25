@@ -36,6 +36,38 @@ class FieldLaunchTests(unittest.TestCase):
         self.assertTrue(displays['/scan']['Enabled'])
         self.assertTrue(displays['/ugv/move_base/global_costmap/costmap']['Enabled'])
 
+    def test_lidar_voxel_replaces_scan_layers_in_both_rtk_costmaps(self):
+        for args in ([], ['geographic:=false', 'preparation:=true']):
+            config = load('slicer_field_navigation.launch', [*args, 'lidar_mode:=voxel'])
+            for scope in ('global', 'local'):
+                root = f'/ugv/move_base/{scope}_costmap'
+                self.assertEqual(config.params[root + '/plugins'].value, [
+                    {'name': 'voxel_layer', 'type': 'costmap_2d::VoxelLayer'},
+                    {'name': 'inflation_layer', 'type': 'costmap_2d::InflationLayer'},
+                ])
+                for source in ('hits', 'rays'):
+                    prefix = root + '/voxel_layer/' + source
+                    self.assertEqual(config.params[prefix + '/topic'].value, '/cloud_nav_voxel')
+                    self.assertEqual(config.params[prefix + '/sensor_frame'].value, 'laser_link')
+                    self.assertEqual(config.params[prefix + '/marking'].value, source == 'hits')
+                    self.assertEqual(config.params[prefix + '/clearing'].value, source == 'rays')
+        sensors = load('slicer_field_sensors.launch', ['geographic:=false', 'lidar_mode:=voxel'])
+        self.assertTrue(sensors.params['/slicer_arm_cloud_filter/publish_voxel'].value)
+
+    def test_scan_default_and_existing_mapping_depth_are_preserved(self):
+        scan = load('slicer_field_navigation.launch')
+        self.assertEqual(scan.params['/ugv/move_base/global_costmap/plugins'].value[0]['type'],
+                         'costmap_2d::ObstacleLayer')
+        voxel_depth = load('slicer_field_navigation.launch', ['lidar_mode:=voxel', 'enable_depth:=true'])
+        for scope in ('global', 'local'):
+            plugins = voxel_depth.params[f'/ugv/move_base/{scope}_costmap/plugins'].value
+            self.assertEqual([entry['name'] for entry in plugins], ['voxel_layer', 'depth_layer', 'inflation_layer'])
+        mapping = load('slicer_field_navigation.launch', ['lidar_mode:=voxel', 'mapping:=true'])
+        self.assertFalse(any(entry['type'] == 'costmap_2d::VoxelLayer'
+                             for entry in mapping.params['/ugv/move_base/global_costmap/plugins'].value))
+        sensors = load('slicer_field_sensors.launch', ['geographic:=false'])
+        self.assertFalse(sensors.params['/slicer_arm_cloud_filter/publish_voxel'].value)
+
     def test_rtk_receiver_and_local_sensor_steps_start_disjoint_nodes(self):
         rtk = load('slicer_field_sensors.launch', ['start_local_sensors:=false'])
         local = load('slicer_field_sensors.launch', ['geographic:=false'])

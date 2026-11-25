@@ -1,6 +1,7 @@
 <launch>
   <arg name="geographic" default="true"/>
   <arg name="start_local_sensors" default="true"/>
+  <arg name="lidar_mode" default="$(optenv SLICER_RTK_LIDAR_MODE scan)"/>
   <arg name="start_gnss" default="true"/>
   <arg name="config_file" default="$(find ugv_bringup)/config/slicer_gnss.yaml"/>
   <arg name="site_config" default="$(find ugv_bringup)/config/gnss_site.yaml"/>
@@ -11,6 +12,7 @@
     <arg name="root" value="$(find ugv_bringup)/config/online_runtime"/>
     <arg name="rviz" value="false"/>
     <arg name="tune_ekf" value="true"/>
+    <arg name="publish_voxel" value="$(eval {'scan': False, 'voxel': True}[arg('lidar_mode')])"/>
   </include>
   <include if="$(arg geographic)" file="$(find ugv_bringup)/launch/slicer_geographic.launch">
     <arg name="site_config" value="$(arg site_config)"/>

@@ -1,6 +1,7 @@
 <launch>
   <arg name="root" default="$(eval optenv('SLICER_NO_RTK_RUNTIME', find('slicer_bringup') + '/../../runtime/no_rtk'))"/>
   <arg name="rviz" default="false"/>
+  <arg name="publish_voxel" default="false"/>
   <!-- No chassis driver here: mapping may be hand-pushed with factory MCU firmware. -->
   <node pkg="slicer_bringup" type="sensor_geometry.py" name="slicer_geometry" output="screen" required="true">
     <param name="config_file" value="$(arg root)/config/slicer_config.yaml"/>
@@ -25,6 +26,7 @@
   </node>
   <node pkg="slicer_navigation" type="arm_cloud_filter.py" name="slicer_arm_cloud_filter" output="screen" required="true">
     <param name="config_file" value="$(arg root)/config/slicer_config.yaml"/>
+    <param name="publish_voxel" type="bool" value="$(arg publish_voxel)"/>
   </node>
   <node pkg="pointcloud_to_laserscan" type="pointcloud_to_laserscan_node" name="slicer_cloud_to_scan" output="screen" required="true">
     <remap from="cloud_in" to="/cloud_nav_filtered"/><remap from="scan" to="/scan_raw"/>
