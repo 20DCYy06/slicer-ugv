@@ -51,6 +51,34 @@ class GeographicClientTests(unittest.TestCase):
             with self.subTest(distance=distance), self.assertRaises(SystemExit):
                 cli.arguments(['initialize', '--distance', distance])
 
+    def test_fixed_map_preview_bounds_are_half_open(self):
+        client = object.__new__(cli.GeographicClient)
+        client.args = SimpleNamespace(action='/ugv/move_base')
+        config = dict(global_frame='map', rolling_window=False, origin_x=-45., origin_y=-45.,
+                      width=90., height=90., resolution=.05)
+        client.ros = SimpleNamespace(get_param=lambda _name, _default: config)
+        bounds = client.fixed_map_bounds()
+        self.assertEqual(bounds, {'min_x': -45., 'max_x': 45., 'min_y': -45., 'max_y': 45.})
+        config.update(rolling_window=True)
+        self.assertIsNone(client.fixed_map_bounds())
+
+    def test_preview_reports_an_outside_target_without_calling_planner(self):
+        client = object.__new__(cli.GeographicClient)
+        client.args = cli.arguments(['plan', '--east', '45', '--north', '3', '--session-enu'])
+        client.preparation_active = lambda: False
+        client.frame_check = lambda _: None
+        client.fresh_status = self.status
+        client.current_pose = lambda _: (0., 0., 0.)
+        client.fixed_map_bounds = lambda: dict(min_x=-45., max_x=45., min_y=-45., max_y=45.)
+        client.ros = SimpleNamespace(Time=SimpleNamespace(now=lambda: SimpleNamespace(to_sec=lambda: 100.)))
+        client.publish = lambda *_: self.fail('preview must not publish a goal')
+        client.pose = lambda *_: self.fail('out-of-bounds preview must not plan')
+        result, code = client.target()
+        self.assertEqual(code, 1)
+        self.assertFalse(result['target_in_bounds'])
+        self.assertFalse(result['action_goal_sent'])
+        self.assertEqual(result['map_bounds'], client.fixed_map_bounds())
+
     def test_startup_roundtrip_is_limited_to_two_meters(self):
         args = cli.arguments(['initialize', '--return-to-start'])
         self.assertTrue(args.return_to_start)
