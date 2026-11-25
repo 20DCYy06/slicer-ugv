@@ -1,0 +1,39 @@
+# Optional RTK MID360 profile. Keep /scan for the Guard and its operator display.
+# Each column spans [0.00, 0.80) m above the planar map/odom ground reference.
+# Finite ground returns can clear along the ray without marking ground.
+global_costmap: &costmap
+  plugins:
+    - {name: voxel_layer, type: 'costmap_2d::VoxelLayer'}
+    - {name: inflation_layer, type: 'costmap_2d::InflationLayer'}
+  voxel_layer:
+    enabled: true
+    combination_method: 1
+    track_unknown_space: true
+    footprint_clearing_enabled: true
+    publish_voxel_map: false
+    origin_z: 0.0
+    z_resolution: 0.05
+    z_voxels: 16
+    unknown_threshold: 15
+    mark_threshold: 0
+    max_obstacle_height: 0.79
+    observation_sources: hits rays
+    hits: &source
+      topic: /cloud_nav_voxel
+      sensor_frame: laser_link
+      data_type: PointCloud2
+      marking: true
+      clearing: false
+      min_obstacle_height: 0.05
+      max_obstacle_height: 0.50
+      obstacle_range: 4.5
+      raytrace_range: 4.5
+      observation_persistence: 0.0
+      expected_update_rate: 0.20
+    rays:
+      <<: *source
+      marking: false
+      clearing: true
+      min_obstacle_height: -0.15
+      max_obstacle_height: 0.80
+local_costmap: *costmap

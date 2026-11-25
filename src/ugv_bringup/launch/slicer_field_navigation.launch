@@ -9,6 +9,8 @@
   <arg name="geographic" default="true"/>
   <arg name="preparation" default="false"/>
   <arg name="enable_depth" default="false"/>
+  <arg name="lidar_mode" default="$(optenv SLICER_RTK_LIDAR_MODE scan)"/>
+  <arg name="use_voxel" value="$(eval {'scan': False, 'voxel': True}[arg('lidar_mode')] and not arg('mapping'))"/>
   <arg name="start_heading_enabled" default="$(optenv SLICER_START_HEADING_ENABLED true)"/>
   <arg name="outdoor_map_config" default="$(eval optenv('SLICER_RTK_OUTDOOR_MAP_CONFIG', find('ugv_bringup') + '/config/outdoor_map.yaml'))"/>
   <!-- RTK field defaults apply to odom bootstrap and geographic map navigation. -->
@@ -44,11 +46,28 @@
     </include>
     <rosparam command="load" ns="ugv/move_base"
               file="$(find ugv_bringup)/config/depth_costmap.yaml"/>
-    <rosparam ns="ugv/move_base/global_costmap/plugins">
+    <rosparam unless="$(arg use_voxel)" ns="ugv/move_base/global_costmap/plugins">
       - {name: obstacle_layer, type: 'costmap_2d::ObstacleLayer'}
       - {name: depth_layer, type: 'costmap_2d::ObstacleLayer'}
       - {name: inflation_layer, type: 'costmap_2d::InflationLayer'}
     </rosparam>
+  </group>
+  <!-- Replace the lidar layer in both maps. Depth is a separate camera
+       source and still shares the single final inflation layer when enabled. -->
+  <group if="$(arg use_voxel)">
+    <rosparam command="load" ns="ugv/move_base" file="$(find ugv_bringup)/config/lidar_voxel.yaml"/>
+    <group if="$(arg enable_depth)">
+      <rosparam ns="ugv/move_base/global_costmap/plugins">
+        - {name: voxel_layer, type: 'costmap_2d::VoxelLayer'}
+        - {name: depth_layer, type: 'costmap_2d::ObstacleLayer'}
+        - {name: inflation_layer, type: 'costmap_2d::InflationLayer'}
+      </rosparam>
+      <rosparam ns="ugv/move_base/local_costmap/plugins">
+        - {name: voxel_layer, type: 'costmap_2d::VoxelLayer'}
+        - {name: depth_layer, type: 'costmap_2d::ObstacleLayer'}
+        - {name: inflation_layer, type: 'costmap_2d::InflationLayer'}
+      </rosparam>
+    </group>
   </group>
   <!-- At 0.8 m/s the Guard checks 3.6 m of travel plus the footprint.
        Allow room for rolling grid updates and publication between checks.
