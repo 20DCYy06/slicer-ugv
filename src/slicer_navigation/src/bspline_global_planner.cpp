@@ -71,6 +71,15 @@ class BSplineGlobalPlanner : public nav_core::BaseGlobalPlanner {
     if (copyPlanningGrid()) {
       preferred_grid_ = snapshot();
       raw_->initialize("GlobalPlannerRaw", &preferred_grid_, costmap_ros_->getGlobalFrameID());
+      bool use_grid_path;
+      nh.param("use_grid_path", use_grid_path, false);
+      if (reuse_cost_ > 0. && !use_grid_path) {
+        ros::NodeHandle grid_nh("~/GlobalPlannerGridFallback");
+        if (parameters.valid()) grid_nh.setParam("", parameters);
+        grid_nh.setParam("use_grid_path", true);
+        grid_fallback_.reset(new global_planner::GlobalPlanner());
+        grid_fallback_->initialize("GlobalPlannerGridFallback", &preferred_grid_, costmap_ros_->getGlobalFrameID());
+      }
     } else {
       raw_->initialize("GlobalPlannerRaw", costmap_ros_);
     }
@@ -169,10 +178,7 @@ class BSplineGlobalPlanner : public nav_core::BaseGlobalPlanner {
                           max_cost_, allow_unknown_, center_cost, footprint_issue);
     };
     if (reuse_cost_ > 0.) {
-      if (!original.empty()) {
-        if (original.size() == 1) original.insert(original.begin(), start);
-        else original.front() = start;
-      }
+      normalizeStart(start, original);
       const bool reused = selectRoute(start, goal, horizon, grid.getResolution(), assess, original);
       if (original.empty()) {
         previous_path_.clear();
@@ -259,6 +265,11 @@ class BSplineGlobalPlanner : public nav_core::BaseGlobalPlanner {
   }
 
   using Plan = std::vector<geometry_msgs::PoseStamped>;
+
+  static void normalizeStart(const geometry_msgs::PoseStamped& start, Plan& path) {
+    if (path.size() == 1) path.insert(path.begin(), start);
+    else if (!path.empty()) path.front() = start;
+  }
 
   bool copyPlanningGrid() const { return preferred_clearance_ > 0. || reuse_cost_ > 0.; }
 
@@ -423,7 +434,21 @@ class BSplineGlobalPlanner : public nav_core::BaseGlobalPlanner {
         }
       }
     }
-    if (!new_route.valid()) candidate.clear();
+    if (!new_route.valid()) {
+      candidate.clear();
+      // Continuous traceback sometimes crosses an excluded cell between valid
+      // potential samples. Retry once with the upstream cell-center traceback.
+      if (grid_fallback_ && grid_fallback_->makePlan(start, goal, candidate)) {
+        normalizeStart(start, candidate);
+        const auto grid_route = assess(candidate);
+        if (grid_route.valid()) {
+          ROS_INFO_THROTTLE(2., "B-spline: using a checked grid traceback after gradient failure");
+          return false;
+        }
+        explain("grid traceback rejected", grid_route);
+      }
+      candidate.clear();
+    }
     return false;
   }
 
@@ -449,7 +474,7 @@ class BSplineGlobalPlanner : public nav_core::BaseGlobalPlanner {
   ros::Subscriber odometry_;
   ros::Time odom_stamp_;
   double observed_speed_ = 0.;
-  std::unique_ptr<global_planner::GlobalPlanner> raw_;
+  std::unique_ptr<global_planner::GlobalPlanner> raw_, grid_fallback_;
   ros::Publisher raw_pub_,smooth_pub_,status_pub_;
   bool enabled_=true, smooth_observed_prefix_=false;
   double epsilon_=.03,control_spacing_=.2,sample_spacing_=.05;
