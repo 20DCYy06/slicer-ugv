@@ -1,17 +1,19 @@
-#include <slicer_navigation/clearance_preference.h>
 #include <slicer_navigation/bspline_core.h>
-#include <slicer_navigation/route_continuity.h>
+#include <slicer_navigation/continuity_cost.h>
 #include <nav_core/base_global_planner.h>
 #include <global_planner/planner_core.h>
 #include <base_local_planner/costmap_model.h>
 #include <costmap_2d/costmap_2d_ros.h>
 #include <costmap_2d/cost_values.h>
+#include <actionlib_msgs/GoalID.h>
 #include <nav_msgs/Path.h>
 #include <std_msgs/String.h>
 #include <pluginlib/class_list_macros.h>
 #include <tf2/utils.h>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.h>
+#include <boost/property_tree/json_parser.hpp>
 #include <boost/thread/locks.hpp>
+#include <atomic>
 #include <memory>
 #include <mutex>
 #include <sstream>
@@ -33,25 +35,37 @@ class BSplineGlobalPlanner : public nav_core::BaseGlobalPlanner {
     nh.param("smoothing/max_refinements",refinements_,2);
     nh.param("smoothing/max_cost",max_cost_,252);
     nh.param("smoothing/observed_prefix", smooth_observed_prefix_, false);
-    nh.param("continuity/extra_cost", reuse_cost_, 0.);
-    nh.param("continuity/join_distance", join_distance_, .30);
-    nh.param("continuity/preferred_clearance", preferred_clearance_, 0.);
-    ros::NodeHandle private_node("~");
-    private_node.param("global_costmap/inflation_layer/cost_scaling_factor", clearance_decay_, 4.5);
-    int lethal;
-    nh.param("lethal_cost", lethal, 253);
-    preferred_cap_ = std::max(0, std::min(lethal - 2, 252));
+    nh.param("continuity_cost/enabled", cost_field_enabled_, false);
+    nh.param("allow_unknown", allow_unknown_, true);
+    nh.param("continuity_cost/weight", cost_options_.weight, 2.);
+    nh.param("continuity_cost/decay_length_m", cost_options_.decay_length_m, 2.);
+    nh.param("continuity_cost/obstacle_weight", cost_options_.obstacle_weight, .70);
+    nh.param("continuity_cost/deviation_cap_m", cost_options_.deviation_cap_m, 1.);
+    nh.param("continuity_cost/min_clearance_m", cost_options_.min_clearance_m, .23);
+    nh.param("continuity_cost/rejoin_distance_m", cost_options_.rejoin_distance_m, .30);
     if(!std::isfinite(epsilon_) || epsilon_<0. || !std::isfinite(control_spacing_) ||
        control_spacing_<=0. || !std::isfinite(sample_spacing_) || sample_spacing_<=0. ||
-       refinements_<0 || max_cost_<0 || max_cost_>252 || !std::isfinite(reuse_cost_) ||
-       reuse_cost_<0. || !std::isfinite(join_distance_) || join_distance_<=0. ||
-       !std::isfinite(preferred_clearance_) || preferred_clearance_<0. || preferred_clearance_>2. ||
-       !std::isfinite(clearance_decay_) || clearance_decay_<=0.)
-      throw std::invalid_argument("invalid GlobalPlanner/smoothing configuration");
+       refinements_<0 || max_cost_<0 || max_cost_>252 ||
+       (cost_field_enabled_ && !validContinuityOptions(cost_options_)))
+      throw std::invalid_argument("invalid GlobalPlanner smoothing or continuity cost configuration");
     raw_.reset(new global_planner::GlobalPlanner());
-    if (preferred_clearance_ > 0.) {
-      preferred_grid_ = snapshot();
-      raw_->initialize("GlobalPlannerRaw", &preferred_grid_, costmap_ros_->getGlobalFrameID());
+    if (cost_field_enabled_) {
+      // Noetic's Dijkstra reserves < lethal_cost-1 for known traversable
+      // cells and adds neutral_cost + cost_factor*byte to the potential.
+      raw_nh.setParam("lethal_cost", 254);
+      raw_nh.setParam("neutral_cost", 50);
+      raw_nh.setParam("cost_factor", .8);
+      raw_nh.setParam("use_dijkstra", true);
+      raw_nh.setParam("use_grid_path", true);
+      raw_nh.setParam("old_navfn_behavior", true);
+      search_grid_ = snapshot();
+      raw_->initialize("GlobalPlannerRaw", &search_grid_, costmap_ros_->getGlobalFrameID());
+      ros::NodeHandle node("~");
+      goals_ = node.subscribe<geometry_msgs::PoseStamped>("current_goal", 1,
+          [this](const geometry_msgs::PoseStamped::ConstPtr&) { ++reference_epoch_; });
+      cancels_ = node.subscribe<actionlib_msgs::GoalID>("cancel", 1,
+          [this](const actionlib_msgs::GoalID::ConstPtr&) { ++reference_epoch_; });
+      registration_ = node.subscribe("/geographic/status", 1, &BSplineGlobalPlanner::registrationState, this);
     } else {
       raw_->initialize("GlobalPlannerRaw", costmap_ros_);
     }
@@ -66,34 +80,73 @@ class BSplineGlobalPlanner : public nav_core::BaseGlobalPlanner {
     std::lock_guard<std::mutex> lock(plan_lock_);
     plan.clear();
     costmap_2d::Costmap2D grid;
-    if (preferred_clearance_ > 0.) {
+    std::vector<std::uint8_t> hard;
+    const auto epoch = reference_epoch_.load();
+    const auto frame = costmap_ros_->getGlobalFrameID();
+    const auto feasible = [&](const Point2& p, bool provisional) {
+      unsigned int x, y;
+      return std::isfinite(p.x) && std::isfinite(p.y) && grid.worldToMap(p.x, p.y, x, y)
+          && !hard[y * grid.getSizeInCellsX() + x]
+          && (provisional || grid.getCost(x, y) != costmap_2d::NO_INFORMATION);
+    };
+    if (cost_field_enabled_) {
       grid = snapshot();
-      preferred_grid_ = grid;
       double inscribed, circumscribed;
       costmap_2d::calculateMinAndMaxDistances(costmap_ros_->getRobotFootprint(), inscribed, circumscribed);
-      preferClearance(preferred_grid_.getCharMap(), preferred_grid_.getSizeInCellsX(),
-                      preferred_grid_.getSizeInCellsY(), preferred_grid_.getResolution(),
-                      preferred_clearance_, inscribed, clearance_decay_, preferred_cap_);
+      // Reserve half a cell diagonal so a pose within an admissible cell
+      // has the required centre-to-hit clearance, not only at its centre.
+      const double clearance = std::max(cost_options_.min_clearance_m, circumscribed)
+                             + grid.getResolution() * std::sqrt(.5);
+      hard = hardContinuityMask(grid.getCharMap(), grid.getSizeInCellsX(), grid.getSizeInCellsY(),
+                                grid.getResolution(), clearance);
+      if (start.header.frame_id != frame || goal.header.frame_id != frame ||
+          !feasible(point(start), allow_unknown_) || !feasible(point(goal), allow_unknown_))
+        return reject(goal, "blocked or out-of-bounds start/goal");
+      std::vector<Point2> reference;
+      if (epoch == previous_epoch_ && sameGoal(goal)
+          && (frame != "map" || map_reference_valid_.load())) {
+        auto suffix = remainingRoute(previous_path_, point(start), cost_options_.rejoin_distance_m);
+        reference = observedReference(suffix, grid.getResolution() * .5, feasible);
+      }
+      search_grid_ = grid;
+      encodeContinuityCosts(grid.getCharMap(), hard, grid.getSizeInCellsX(), grid.getSizeInCellsY(),
+          grid.getResolution(), {grid.getOriginX(), grid.getOriginY()}, point(start),
+          reference, cost_options_, search_grid_.getCharMap());
     }
     std::vector<geometry_msgs::PoseStamped> original;
-    if(!raw_ || !raw_->makePlan(start,goal,original) || original.empty()) return false;
+    if(!raw_ || !raw_->makePlan(start,goal,original) || original.empty())
+      return cost_field_enabled_ ? reject(goal, "no path on the current cost field") : false;
+    if (cost_field_enabled_) {
+      // With old_navfn_behavior the grid traceback emits cell corners,
+      // followed by two copies of the exact goal. Use the encoded cell
+      // centres, while keeping the actual start and exact goal poses.
+      const auto terminal = original.back();
+      original.resize(original.size() > 2 ? original.size() - 2 : 0);
+      for (auto& pose : original) {
+        pose.pose.position.x += grid.getResolution() * .5;
+        pose.pose.position.y += grid.getResolution() * .5;
+      }
+      original.insert(original.begin(), start);
+      original.push_back(terminal);
+      if (!pathFeasible(original, grid.getResolution() * .5, feasible))
+        return reject(goal, "grid traceback crosses hard geometry");
+    }
     publish(raw_pub_,original);
-    if((!enabled_ && reuse_cost_ == 0.) || original.size()<2) {
-      plan=original; publish(smooth_pub_,plan); status("raw: disabled or stationary"); return true;
+    if(!enabled_ || original.size()<2) {
+      plan=original;
+      status("raw: disabled or stationary");
+      return deliver(goal, plan, epoch);
     }
-    if (preferred_clearance_ == 0.) grid = snapshot();
-    if (reuse_cost_ > 0.)
-      retainRoute(start, goal, preferred_clearance_ > 0. ? preferred_grid_ : grid, original);
-    if (!enabled_) {
-      plan = original;
-      publish(smooth_pub_, plan);
-      return true;
-    }
-    auto footprint=costmap_ros_->getRobotFootprint();
+    if (!cost_field_enabled_) grid = snapshot();
+    const auto footprint = cost_field_enabled_ ? std::vector<geometry_msgs::Point>{} : costmap_ros_->getRobotFootprint();
     base_local_planner::CostmapModel model(grid);
     double inscribed=0.,circumscribed=0.;
-    costmap_2d::calculateMinAndMaxDistances(footprint,inscribed,circumscribed);
+    if (!cost_field_enabled_)
+      costmap_2d::calculateMinAndMaxDistances(footprint,inscribed,circumscribed);
     auto safe=[&](const PathSample& s) {
+      // The field's circumscribed envelope is already heading-independent.
+      // Smooth observed space and preserve the provisional raw tail.
+      if (cost_field_enabled_) return feasible(s.position, false);
       unsigned int mx,my;
       if(!grid.worldToMap(s.position.x,s.position.y,mx,my) || grid.getCost(mx,my)>max_cost_) return false;
       // 使用既有实车足迹，不再增加额外padding。密集检查不是速度出口的二次拦截。
@@ -172,8 +225,11 @@ class BSplineGlobalPlanner : public nav_core::BaseGlobalPlanner {
       status("raw fallback: spline corner/footprint collision or nonregular curve");
       ROS_INFO_THROTTLE(5.,"B-spline: retaining original global path where smoothing is unsafe");
     }
-    publish(smooth_pub_,plan);
-    return true;
+    if (cost_field_enabled_ && !pathFeasible(plan, grid.getResolution() * .5, feasible)) {
+      plan = original;
+      status("raw fallback: smoothed splice crossed hard geometry");
+    }
+    return deliver(goal, plan, epoch);
   }
  private:
   costmap_2d::Costmap2D snapshot() const {
@@ -186,63 +242,112 @@ class BSplineGlobalPlanner : public nav_core::BaseGlobalPlanner {
     return {pose.pose.position.x, pose.pose.position.y};
   }
 
-  void retainRoute(const geometry_msgs::PoseStamped& start, const geometry_msgs::PoseStamped& goal,
-                   const costmap_2d::Costmap2D& grid,
-                   std::vector<geometry_msgs::PoseStamped>& current) {
-    // A newer destination never inherits the route or terminal orientation of an older goal.
-    if (!previous_path_.empty() && goal.header.frame_id == previous_goal_.header.frame_id &&
+  bool sameGoal(const geometry_msgs::PoseStamped& goal) const {
+    return goal.header.frame_id == previous_goal_.header.frame_id &&
+        goal.header.stamp == previous_goal_.header.stamp &&
         norm(point(goal) - point(previous_goal_)) < 1e-6 &&
-        std::abs(std::remainder(tf2::getYaw(previous_goal_.pose.orientation) -
-                               tf2::getYaw(goal.pose.orientation), 2. * std::acos(-1.))) < 1e-6) {
-      const auto nearest = std::min_element(previous_path_.begin(), previous_path_.end(),
-          [&](const auto& a, const auto& b) {
-            return norm(point(a) - point(start)) < norm(point(b) - point(start));
-          });
-      const double gap = norm(point(*nearest) - point(start));
-      if (gap <= join_distance_) {
-        const auto cost_at = [&](const Point2& p) -> int {
-          unsigned int x, y;
-          return grid.worldToMap(p.x, p.y, x, y) ? grid.getCost(x, y) : -1;
-        };
-        std::vector<Point2> retained{point(start)}, alternative;
-        for (auto it = nearest; it != previous_path_.end(); ++it) retained.push_back(point(*it));
-        for (const auto& pose : current) alternative.push_back(point(pose));
-        const double spacing = grid.getResolution() * .5;
-        if (preferPreviousRoute(routeCost(retained, spacing, gap, cost_at, max_cost_),
-                                routeCost(alternative, spacing, -1., cost_at, max_cost_), reuse_cost_)) {
-          std::vector<geometry_msgs::PoseStamped> joined{start};
-          if (gap > 1e-6) joined.insert(joined.end(), nearest, previous_path_.end());
-          else joined.insert(joined.end(), nearest + 1, previous_path_.end());
-          if (joined.size() >= 2) {
-            for (auto& pose : joined) pose.header.stamp = start.header.stamp;
-            current = std::move(joined);
-            ROS_DEBUG("Retaining the validated route around the same side of the obstacle");
-          }
-        }
-      }
-    }
-    previous_goal_ = goal;
-    previous_path_ = current;
+        std::abs(std::remainder(tf2::getYaw(goal.pose.orientation) -
+            tf2::getYaw(previous_goal_.pose.orientation), 2. * std::acos(-1.))) < 1e-6;
   }
 
-  void publish(ros::Publisher& pub,const std::vector<geometry_msgs::PoseStamped>& poses) {
-    nav_msgs::Path message; message.header=poses.front().header;
+  void registrationState(const std_msgs::String::ConstPtr& message) {
+    try {
+      std::istringstream stream(message->data);
+      boost::property_tree::ptree status;
+      boost::property_tree::read_json(stream, status);
+      const auto generation = status.get<unsigned long>("generation");
+      const auto registered = status.get<bool>("registered");
+      const auto rebuild = status.get("costmap_rebuild_recommended", false);
+      std::lock_guard<std::mutex> lock(registration_lock_);
+      if (generation != generation_ || registered != registered_ || rebuild != rebuild_) ++reference_epoch_;
+      generation_ = generation;
+      registered_ = registered;
+      rebuild_ = rebuild;
+      map_reference_valid_ = registered && !rebuild;
+    } catch (const boost::property_tree::ptree_error&) {
+      ROS_WARN_THROTTLE(5., "Continuity-cost received unreadable registration status");
+      map_reference_valid_ = false;
+      ++reference_epoch_;
+    }
+  }
+
+  template<class Feasible>
+  static bool segmentFeasible(const Point2& a, const Point2& b, double spacing,
+                              bool provisional, Feasible feasible) {
+    const Point2 delta = b - a;
+    const int steps = std::max(1, static_cast<int>(std::ceil(norm(delta) / spacing)));
+    for (int i = 0; i <= steps; ++i)
+      if (!feasible(a + delta * (static_cast<double>(i) / steps), provisional)) return false;
+    return true;
+  }
+
+  template<class Feasible>
+  bool pathFeasible(const std::vector<geometry_msgs::PoseStamped>& path,
+                    double spacing, Feasible feasible) const {
+    if (path.size() < 2) return false;
+    for (std::size_t i = 1; i < path.size(); ++i)
+      if (!segmentFeasible(point(path[i-1]), point(path[i]), spacing, allow_unknown_, feasible)) return false;
+    return true;
+  }
+
+  template<class Feasible>
+  static std::vector<Point2> observedReference(const std::vector<Point2>& path,
+                                               double spacing, Feasible feasible) {
+    if (path.size() < 2 || !feasible(path.front(), false)) return {};
+    std::vector<Point2> reference{path.front()};
+    for (std::size_t i = 1; i < path.size(); ++i) {
+      if (!segmentFeasible(path[i-1], path[i], spacing, false, feasible)) break;
+      reference.push_back(path[i]);
+    }
+    return reference.size() >= 2 ? reference : std::vector<Point2>{};
+  }
+
+  bool reject(const geometry_msgs::PoseStamped& goal, const std::string& reason) {
+    previous_path_.clear();
+    publish(smooth_pub_, {}, goal.header);
+    status("no plan: " + reason);
+    ROS_WARN_STREAM_THROTTLE(2., "Continuity-cost rejected: " << reason);
+    return false;
+  }
+
+  bool deliver(const geometry_msgs::PoseStamped& goal,
+               const std::vector<geometry_msgs::PoseStamped>& path, std::uint64_t epoch) {
+    if (cost_field_enabled_) {
+      previous_epoch_ = epoch;
+      previous_goal_ = goal;
+      previous_path_.clear();
+      for (const auto& pose : path) previous_path_.push_back(point(pose));
+    }
+    publish(smooth_pub_, path);
+    return true;
+  }
+
+  void publish(ros::Publisher& pub, const std::vector<geometry_msgs::PoseStamped>& poses,
+               const std_msgs::Header& empty_header = {}) {
+    nav_msgs::Path message;
+    message.header = poses.empty() ? empty_header : poses.front().header;
     message.header.stamp=ros::Time::now(); message.poses=poses; pub.publish(message);
   }
   void status(const std::string& text) {
     std_msgs::String message; message.data=text; status_pub_.publish(message);
   }
   costmap_2d::Costmap2DROS* costmap_ros_=nullptr;
-  costmap_2d::Costmap2D preferred_grid_;
-  std::mutex plan_lock_;
+  costmap_2d::Costmap2D search_grid_;
+  std::mutex plan_lock_, registration_lock_;
   std::unique_ptr<global_planner::GlobalPlanner> raw_;
   ros::Publisher raw_pub_,smooth_pub_,status_pub_;
   bool enabled_=true, smooth_observed_prefix_=false;
   double epsilon_=.03,control_spacing_=.2,sample_spacing_=.05;
-  double reuse_cost_=0., join_distance_=.30, preferred_clearance_=0., clearance_decay_=4.5;
-  int preferred_cap_=173;
+  ContinuityCostOptions cost_options_;
+  bool cost_field_enabled_=false, allow_unknown_=true;
+  std::atomic<std::uint64_t> reference_epoch_{0};
+  std::atomic<bool> map_reference_valid_{true};
+  std::uint64_t previous_epoch_=0;
+  unsigned long generation_=0;
+  bool registered_=false, rebuild_=false;
+  ros::Subscriber goals_, cancels_, registration_;
   geometry_msgs::PoseStamped previous_goal_;
-  std::vector<geometry_msgs::PoseStamped> previous_path_;
+  std::vector<Point2> previous_path_;
   int refinements_=2,max_cost_=252;
 };
 }  // namespace slicer_navigation

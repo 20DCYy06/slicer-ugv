@@ -1,35 +1,70 @@
-#include <slicer_navigation/clearance_preference.h>
+#include <slicer_navigation/continuity_cost.h>
 #include <slicer_navigation/bspline_core.h>
-#include <slicer_navigation/route_continuity.h>
 #include <cstdlib>
 #include <iostream>
 using namespace slicer_navigation;
 void require(bool good,const char* message) {
   if(!good) { std::cerr<<"FAIL: "<<message<<std::endl; std::exit(1); }
 }
+void checkContinuityCosts() {
+  const ContinuityCostOptions options;
+  require(validContinuityOptions(options), "default continuity options valid");
+  auto invalid = options;
+  invalid.decay_length_m = 0.;
+  require(!validContinuityOptions(invalid), "positive decay length required");
+  invalid = options;
+  invalid.weight = std::numeric_limits<double>::quiet_NaN();
+  require(!validContinuityOptions(invalid), "nonfinite cost rejected");
+
+  const std::vector<Point2> previous{{0,0},{2,0},{2,1},{0,1},{0,0},{2,0}};
+  const auto suffix = remainingRoute(previous, {1.,.1}, .3);
+  require(suffix.size()==6 && norm(suffix[0]-Point2(1.,0.))<1e-12 &&
+          norm(suffix[1]-Point2(2.,0.))<1e-12, "trim at earliest equal projection");
+  const auto turn = remainingRoute({{0,0},{1,0},{1,1}}, {1.1,.5}, .3);
+  require(turn.size()==2 && norm(turn[0]-Point2(1.,.5))<1e-12,
+          "remaining route excludes passed corner");
+  require(remainingRoute({{0,0},{1,0}}, {.7,.31}, .3).empty(),
+          "discard old bias outside rejoin distance");
+  require(remainingRoute(previous, {2.,0.}, .3).size()==5, "no duplicate at projected vertex");
+
+  constexpr int width = 31, height = 21;
+  std::vector<std::uint8_t> measured(width*height, 0), search(measured.size());
+  const auto cell = [](int x, int y) { return y*width+x; };
+  measured[cell(8,5)] = 254;
+  measured[cell(16,5)] = 253;
+  measured[cell(10,6)] = 255;
+  measured[cell(20,5)] = 255;
+  measured[cell(15,10)] = 186;
+  measured[cell(16,10)] = 252;
+  const auto before = measured;
+  const auto hard = hardContinuityMask(measured.data(), width, height, .1, options.min_clearance_m);
+  require(hard[cell(0,6)]==1 && hard[cell(30,6)]==1 && hard[cell(8,20)]==1,
+          "hard mask outlines the grid");
+  require(hard[cell(8,5)]==1 && hard[cell(16,5)]==1, "physical lethal and inscribed cells block");
+  require(hard[cell(10,6)]==1 && hard[cell(10,7)]==0, "use Euclidean centre clearance even for unknown");
+  require(hard[cell(16,6)]==0 && hard[cell(15,10)]==0, "inflation values do not seed clearance");
+
+  const Point2 origin(-.05,-.05), start(.4,1.);
+  const std::vector<Point2> reference{{.4,1.},{2.8,1.}};
+  encodeContinuityCosts(measured.data(), hard, width, height, .1, origin, start,
+                        reference, options, search.data());
+  require(measured == before, "source safety costmap remains unchanged");
+  require(search[cell(8,5)]==254 && search[cell(16,5)]==253 && search[cell(10,6)]==254 &&
+          search[cell(20,5)]==255, "preserve hard classes and unblocked unknown");
+  require(search[cell(15,10)]==32 && search[cell(16,10)]==44, "186 and 252 remain soft");
+  require(search[cell(6,10)]==0 && search[cell(6,14)]==16 && search[cell(25,14)]==7,
+          "meters-based lateral bias decays with distance from start");
+  require(search[cell(6,1)]==search[cell(6,19)], "equal lateral magnitudes produce equal bias");
+
+  auto no_preference = options;
+  no_preference.weight = 0.;
+  encodeContinuityCosts(measured.data(), hard, width, height, .1, origin, start,
+                        reference, no_preference, search.data());
+  require(search[cell(6,14)]==0 && search[cell(15,10)]==32, "zero continuity still encodes obstacle cost");
+}
+
 int main() {
-  std::vector<std::uint8_t> map(21*21, 0);
-  const auto at = [&](int x, int y) -> std::uint8_t& { return map[y*21+x]; };
-  at(10,10) = 254;
-  at(12,10) = 255;
-  at(13,10) = 171;
-  preferClearance(map.data(), 21, 21, .05, .45, .14, 4.5, 173);
-  require(at(10,10)==254 && at(12,10)==255, "preference preserves lethal and unknown");
-  require(at(13,10)>=171 && at(13,10)<=173, "preference respects the traversable threshold");
-  require(at(16,10)>at(18,10) && at(18,10)>0 && at(20,10)==0,
-          "wider planning preference decays to no extra cost");
-  const auto observed=[](const Point2& p) { return p.x < .6 ? 0 : 255; };
-  const std::vector<Point2> route{{0,0},{.3,0},{1,0}};
-  require(std::isfinite(routeCost(route, .025, 0., observed)), "route may reach an unknown goal");
-  require(std::isfinite(routeCost(route, .025, .3, observed)), "connector entirely observed");
-  require(!std::isfinite(routeCost(route, .025, .7, observed)), "reuse cannot reconnect through unknown space");
-  const auto obstruction=[](const Point2& p) { return p.x>.4 && p.x<.48 ? 254 : 0; };
-  require(!std::isfinite(routeCost(route, .025, 0., obstruction)), "new obstacle invalidates old route");
-  const auto near_obstacle = [](const Point2& p) { return p.x > .4 ? 200 : 0; };
-  require(!std::isfinite(routeCost(route, .025, 0., near_obstacle, 173)),
-          "route reuse must respect the active inflation contour");
-  require(preferPreviousRoute(4.2, 4., .35), "near equal routes keep direction");
-  require(!preferPreviousRoute(4.5, 4., .35), "meaningfully better route replaces old route");
+  checkContinuityCosts();
   const auto free=[](const PathSample&) { return true; };
   std::vector<Point2> stairs;
   for(int i=0;i<21;++i) stairs.emplace_back(i*.05, .002*(i%2));
