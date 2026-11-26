@@ -21,7 +21,7 @@ from slicer_air_ground_msgs.msg import Command
 from geographic_core import enu_to_geodetic
 from geographic_state import qualified_fix
 from dashboard_model import (ACTIVE_ACTION_STATES, FIX_POSITION_AGE, NAV_STATUS_AGE, coordinates,
-                             manual_goal_block, task_destination)
+                             manual_goal_block, preemptible_navigation_goal, task_destination)
 
 
 ACTION = '/ugv/move_base'
@@ -409,9 +409,7 @@ class Observer:
             self._dispatch_goal_locked(message, time.monotonic(), may_wait=True)
 
     def _dispatch_goal_locked(self, message, now, may_wait=False):
-        if self.board.local_target() is not None:
-            self._goal_blocked_locked('正在执行本地 WGS84 任务', now)
-            return
+        issued = message.header.stamp
         if self.calibration_active:
             self._goal_blocked_locked('正在地理配准，等待配准动作结束', now)
             return
@@ -426,6 +424,7 @@ class Observer:
         if reason is None:
             reported = dict(status)
             if any(now - seen <= GOAL_STATUS_AGE and goal not in reported and goal not in self.desktop_goals
+                   and not preemptible_navigation_goal(goal)
                    for goal, (_, seen) in self.action_goals.items()):
                 reason = 'move_base 有其他控制端的目标，当前目标优先'
         configured = self.board.recent('configured_frame', now, NAV_STATUS_AGE)
@@ -451,11 +450,15 @@ class Observer:
                 self._goal_blocked_locked('未收到新的 move_base 状态，请重新点选', now)
             return
         request = MoveBaseActionGoal()
-        request.header.stamp = request.goal_id.stamp = rospy.Time.now()
+        request.header.stamp = rospy.Time.now()
+        request.goal_id.stamp = issued
         request.goal_id.id = 'slicer_rtk_desktop-' + uuid.uuid4().hex
         request.goal.target_pose = deepcopy(message)
         request.goal.target_pose.header.stamp = request.header.stamp
         self.goal_pub.publish(request)
+        self.board.record('manual_goal_sent', now, now)
+        self.board.record('wgs84', None, now)
+        self.board.record('wgs84_failure', None, now)
         self.goal_id, self.goal_sent = request.goal_id.id, now
         self.desktop_goals[self.goal_id] = now
         p = message.pose.position

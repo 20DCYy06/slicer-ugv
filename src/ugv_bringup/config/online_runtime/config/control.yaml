@@ -19,11 +19,11 @@ counts_per_revolution: 60000
 encoder_signs:
 - -1
 - 1
-- 1
 - -1
+- 1
 serial_number: 5CF0016377
 wheel_ports:
-  left_front: D
-  right_front: C
+  left_front: C
+  right_front: D
   left_rear: A
   right_rear: B

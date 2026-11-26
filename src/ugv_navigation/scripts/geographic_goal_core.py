@@ -231,3 +231,9 @@ def arrival_review(target, status, received, now, ros_now, generation, action_st
     geographic['reason'] = problem or ''
     return dict(target=target, generation=generation, evaluated_stamp=ros_now,
                 move_base={'state': action_state}, stop=stop, geographic=geographic)
+
+
+def preemptible_navigation_goal(goal_id):
+    """Ordinary desktop and geographic Action goals use native move_base preemption."""
+    name = goal_id.rsplit('/', 1)[-1] if isinstance(goal_id, str) else ''
+    return name.startswith(('slicer_rtk_desktop-', 'slicer_geographic_client_'))

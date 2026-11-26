@@ -12,9 +12,9 @@ import rospy
 import tf
 from actionlib_msgs.msg import GoalStatus, GoalStatusArray
 from geometry_msgs.msg import Twist
-from nav_msgs.msg import OccupancyGrid, Odometry
-from std_msgs.msg import String
-from navigation_core import (body_twist_between, compensate_turn, guarded_forward_twist,
+from nav_msgs.msg import OccupancyGrid, Odometry, Path as RosPath
+from std_msgs.msg import String, Time
+from navigation_core import (body_twist_between, compensate_turn, footprint_clear, guarded_forward_twist,
                              parse_footprint, planner_limits, saturate_twist, slew_arc, swept_clear)
 
 
@@ -94,6 +94,42 @@ def main():
     pub = rospy.Publisher(p['output_topic'], Twist, queue_size=1)
     reason_pub = rospy.Publisher('~hold_reason', String, queue_size=1, latch=True)
     adjustment_pub = rospy.Publisher('~adjustment', String, queue_size=1, latch=True)
+    committed = [None]
+    commitment_stop = None
+    if planner.get('start_commitment') is True:
+        commitment_stop = rospy.Publisher('~commitment_stop', Time, queue_size=1)
+
+    def commitment_path(message):
+        if message._connection_header.get('callerid') != planner_ns:
+            return
+        poses = []
+        for item in message.poses[:64]:
+            p, q = item.pose.position, item.pose.orientation
+            values = (p.x, p.y, q.z, q.w)
+            if not all(math.isfinite(v) for v in values):
+                return
+            poses.append((p.x, p.y, 2. * math.atan2(q.z, q.w)))
+        committed[0] = message.header.frame_id, message.header.stamp, poses
+
+    def committed_block(grid, grid_at, now):
+        sample = committed[0]
+        if sample is None or grid is None or now-grid_at > p['costmap_timeout']:
+            return rospy.Time()
+        frame, stamp, poses = sample
+        if frame != grid['frame'] or not 0. <= (rospy.Time.now()-stamp).to_sec() <= .35:
+            return rospy.Time()
+        if footprint[0] is None:
+            try:
+                footprint[0] = parse_footprint(rospy.get_param(planner_ns + '/local_costmap/footprint'))
+            except (KeyError, TypeError, ValueError):
+                return rospy.Time()
+        # Only a measured lethal cell can justify abandoning the locked side.
+        # Other Guard tests still stop for unknown cells and map boundaries.
+        for pose in poses:
+            if not footprint_clear(pose, footprint[0], grid, unknown=False, outside_is_blocked=False):
+                return stamp
+        return rospy.Time()
+
 
     def receive(msg, source):
         value = (msg.linear.x, msg.angular.z)
@@ -227,6 +263,10 @@ def main():
         rospy.Subscriber(p.get('spin_input_topic', '/cmd_vel/patrol_spin_raw'), Twist,
                          receive, callback_args='spin', queue_size=1)
     rospy.Subscriber(p['costmap_topic'], OccupancyGrid, costmap, queue_size=1)
+    if commitment_stop is not None:
+        rospy.Subscriber(planner_ns + '/' + plugin.rsplit('/', 1)[-1] + '/commitment_path',
+                         RosPath, commitment_path, queue_size=1)
+
     if registration_reverse:
         if planner_ns != '/ugv/move_base' or external_reverse:
             raise ValueError('registration reverse requires the standard RTK preparation Guard')
@@ -301,6 +341,11 @@ def main():
                         output = reduced
                         direction = 'registration reverse' if returning else 'forward'
                         note = direction + ' speed reduced within observed braking envelope'
+            if commitment_stop is not None:
+                stopped_path = committed_block(grid, grid_at, now)
+                if not stopped_path.is_zero():
+                    output, reason = (0., 0.), 'committed path has a hard obstacle within 1.2 m'
+                commitment_stop.publish(Time(data=stopped_path))
             msg = Twist()
             msg.linear.x, msg.angular.z = output
             pub.publish(msg)

@@ -10,7 +10,7 @@ repositories:
   deps/slicer_ugv_hardware:
     type: git
     url: https://github.com/20DCYy06/slicer_ugv_hardware.git
-    version: a377b45c48c4be91add25b73eacedabdb8c264de
+    version: 0373548750bb3daf7332936652f2c5bb78cb89c7
   deps/Livox-SDK2:
     type: git
     url: https://github.com/Livox-SDK/Livox-SDK2.git

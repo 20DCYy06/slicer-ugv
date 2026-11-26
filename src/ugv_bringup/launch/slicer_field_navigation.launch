@@ -1,6 +1,6 @@
 <launch>
   <!-- Operator-started field presets, reusing the existing navigation chain.
-       Default: fixed geographic map grid; field_sensors owns map -> odom.
+       Default: rolling geographic map grid; field_sensors owns map -> odom.
        geographic:=false is the local odom bootstrap. mapping:=true explicitly
        selects the retained Gmapping candidate instead of geographic navigation.
        Start field_sensors separately; neither branch starts a chassis driver.
@@ -75,9 +75,12 @@
       start_heading_settle: 0.25
       start_heading_timeout: 16.0
       start_heading_min_distance: 0.20
-      start_heading_lookahead: 0.20
+      start_heading_lookahead: 1.35
       start_heading_kp: 1.6
       start_heading_kd: 0.25
+  </rosparam>
+  <rosparam if="$(eval not arg('mapping') and arg('geographic'))" ns="ugv/move_base/DWAPlannerROS">
+    goal_approach_decel: 0.75
   </rosparam>
   <rosparam unless="$(arg mapping)" ns="ugv/move_base">
     base_global_planner: slicer_navigation/BSplineGlobalPlanner
@@ -103,16 +106,18 @@
     global_costmap:
       track_unknown_space: true
       always_send_full_costmap: true
-      obstacle_layer:
-        scan:
-          # Replan as soon as the local layer sees a new obstacle.
-          obstacle_range: 4.5
-          raytrace_range: 4.5
-      inflation_layer:
-        inflation_radius: 0.25
     local_costmap:
       inflation_layer:
         inflation_radius: 0.25
+  </rosparam>
+  <!-- Geographic mode sets its global ranges and inflation in outdoor_map.yaml. -->
+  <rosparam if="$(eval not arg('mapping') and not arg('geographic'))" ns="ugv/move_base/global_costmap">
+    obstacle_layer:
+      scan:
+        obstacle_range: 4.5
+        raytrace_range: 4.5
+    inflation_layer:
+      inflation_radius: 0.25
   </rosparam>
   <group unless="$(arg mapping)" ns="ugv/move_base/GlobalPlanner/continuity_cost">
     <param name="weight" value="$(arg continuity_weight)" type="double"/>

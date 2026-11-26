@@ -20,9 +20,10 @@ class MigrationTests(unittest.TestCase):
         c=yaml.safe_load((ROOT/'src/ugv_bringup/config/slicer_driver_body_speed.yaml').read_text())
         self.assertEqual(c['control_mode'],'body_speed')
         self.assertEqual((c['serial_port'],c['serial_number']),('/dev/c30d','5CF0016377'))
-        self.assertEqual(c['pwm_signs'],[-1,1,-1,-1]);self.assertEqual(c['encoder_signs'],[-1,1,1,-1])
+        self.assertEqual(c['pwm_signs'],[-1,1,1,1]);self.assertEqual(c['encoder_signs'],[-1,1,-1,1])
+        self.assertEqual(c['wheel_ports'], dict(left_front='C',right_front='D',left_rear='A',right_rear='B'))
         self.assertEqual((c['wheel_diameter'],c['track_width'],c['wheelbase']),(.065,.179,.13))
-        self.assertEqual((c['motor_output_limit_percent'],c['mcu_pwm_accept_max_permille']),(100,982))
+        self.assertEqual((c['motor_output_limit_percent'],c['mcu_pwm_accept_max_permille']),(91,982))
     def test_new_lidar_mount_and_antenna(self):
         c=yaml.safe_load((ROOT/'src/ugv_bringup/config/online_runtime/config/slicer_config.yaml').read_text())
         self.assertEqual(c['sensors']['base_to_laser']['xyz'],[.065,0.,.095]);self.assertEqual(c['sensors']['scan_min_height'],.05)
@@ -45,13 +46,15 @@ class MigrationTests(unittest.TestCase):
     def test_native_runtime_generator_uses_canonical_parameters(self):
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory)
-            generator = Path(__file__).with_name('prepare_workspace.py')
+            generator = ROOT / 'tools/rtk/prepare_workspace.py'
             subprocess.run([sys.executable, '-B', str(generator), '--config-dir', str(output)],
                            cwd=output, check=True, capture_output=True, text=True)
             config = ROOT / 'src/ugv_bringup/config'
             generated_sensors = output / 'online_runtime/config/slicer_config.yaml'
             expected = yaml.safe_load((config / 'no_rtk/slicer_config.yaml').read_text())
-            expected['navigation']['max_forward'] = .8
+            dwa = yaml.safe_load((config / 'dwa_field.yaml').read_text())['DWAPlannerROS']
+            expected['navigation']['max_forward'] = dwa['max_vel_x']
+            expected['navigation']['accel_linear'] = dwa['acc_lim_x']
             self.assertEqual(yaml.safe_load(generated_sensors.read_text()), expected)
             for name in ('footprint.yaml', 'slicer_driver_body_speed.yaml'):
                 self.assertEqual(yaml.safe_load((output / name).read_text()),

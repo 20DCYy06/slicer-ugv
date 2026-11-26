@@ -1,5 +1,5 @@
 #include <slicer_navigation/bspline_core.h>
-#include <slicer_navigation/continuity_cost.h>
+#include <slicer_navigation/field_commitment.h>
 #include <nav_core/base_global_planner.h>
 #include <global_planner/planner_core.h>
 #include <base_local_planner/costmap_model.h>
@@ -44,6 +44,7 @@ class BSplineGlobalPlanner : public nav_core::BaseGlobalPlanner {
     nh.param("continuity_cost/deviation_cap_m", cost_options_.deviation_cap_m, 1.);
     nh.param("continuity_cost/min_clearance_m", cost_options_.min_clearance_m, .23);
     nh.param("continuity_cost/rejoin_distance_m", cost_options_.rejoin_distance_m, .30);
+    nh.param("task_side_hysteresis", side_enabled_, false);
     if(!std::isfinite(epsilon_) || epsilon_<0. || !std::isfinite(control_spacing_) ||
        control_spacing_<=0. || !std::isfinite(sample_spacing_) || sample_spacing_<=0. ||
        refinements_<0 || max_cost_<0 || max_cost_>252 ||
@@ -99,6 +100,7 @@ class BSplineGlobalPlanner : public nav_core::BaseGlobalPlanner {
           && !hard[y * grid.getSizeInCellsX() + x]
           && (provisional || grid.getCost(x, y) != costmap_2d::NO_INFORMATION);
     };
+    std::vector<Point2> retained_suffix;
     if (cost_field_enabled_) {
       grid = snapshot();
       double inscribed, circumscribed;
@@ -115,8 +117,10 @@ class BSplineGlobalPlanner : public nav_core::BaseGlobalPlanner {
       std::vector<Point2> reference;
       if (epoch == previous_epoch_ && sameGoal(goal)
           && (frame != "map" || map_reference_valid_.load())) {
-        auto suffix = remainingRoute(previous_path_, point(start), cost_options_.rejoin_distance_m);
-        reference = observedReference(suffix, grid.getResolution() * .5, feasible);
+        retained_suffix = remainingRoute(previous_path_, point(start), cost_options_.rejoin_distance_m);
+        reference = observedReference(retained_suffix, grid.getResolution() * .5, feasible);
+      } else if (side_enabled_) {
+        task_side_.reset(point(start), point(goal));
       }
       search_grid_ = grid;
       auto* costs = search_grid_.getCharMap();
@@ -162,6 +166,30 @@ class BSplineGlobalPlanner : public nav_core::BaseGlobalPlanner {
       return false;
     }
     publish(raw_pub_,original);
+    if (cost_field_enabled_ && side_enabled_) {
+      std::vector<Point2> candidate;
+      for (const auto& pose : original) candidate.push_back(point(pose));
+      if (retained_suffix.size() >= 2) {
+        retained_suffix.insert(retained_suffix.begin(), point(start));
+        if (task_side_.keep(candidate, routeLength(retained_suffix))) {
+          std::vector<geometry_msgs::PoseStamped> retained;
+          retained.reserve(retained_suffix.size());
+          for (const auto& p : retained_suffix) {
+            auto pose = start;
+            pose.pose.position.x = p.x;
+            pose.pose.position.y = p.y;
+            retained.push_back(pose);
+          }
+          retained.back() = original.back();
+          if (pathFeasible(retained, grid.getResolution() * .5, feasible)) {
+            plan = std::move(retained);
+            status("task side retained: opposite path below 25% advantage");
+            return deliver(goal, plan, epoch);
+          }
+        }
+      }
+      task_side_.accept(candidate);
+    }
     if(!enabled_ || original.size()<2) {
       plan=original;
       status("raw: disabled or stationary");
@@ -369,7 +397,8 @@ class BSplineGlobalPlanner : public nav_core::BaseGlobalPlanner {
   bool enabled_=true, smooth_observed_prefix_=false;
   double epsilon_=.03,control_spacing_=.2,sample_spacing_=.05;
   ContinuityCostOptions cost_options_;
-  bool cost_field_enabled_=false, allow_unknown_=true;
+  bool cost_field_enabled_=false, allow_unknown_=true, side_enabled_=false;
+  SideHysteresis task_side_;
   std::atomic<std::uint64_t> reference_epoch_{0};
   std::atomic<bool> map_reference_valid_{true};
   std::uint64_t previous_epoch_=0;

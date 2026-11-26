@@ -49,6 +49,7 @@ class Runtime:
         self.holding = False
         self.pump_needs_release = False
         self.travel_unknown = False
+        self.transport_ready = False
         self.recovery_path = None
         self.pump_lock = threading.Lock()
 
@@ -61,12 +62,16 @@ class Runtime:
         try:
             state = json.loads(self.recovery_path.read_text(encoding='utf-8'))
             lowered = state['lowered_s']
+            transport_ready = state.get('transport_ready', False)
             flags = ('holding', 'pump_needs_release', 'travel_unknown')
             if (type(lowered) not in (float, int) or not math.isfinite(lowered) or lowered < 0
+                    or type(transport_ready) != bool
                     or any(type(state[key]) != bool for key in flags)):
                 raise ValueError('无效的恢复记录')
             self.lowered_s = lowered
             self.holding, self.pump_needs_release, self.travel_unknown = (state[key] for key in flags)
+            self.transport_ready = (transport_ready and self.holding and not self.travel_unknown
+                                    and not self.pump_needs_release)
         except FileNotFoundError:
             return
         except (OSError, ValueError, KeyError, TypeError, OverflowError) as exc:
@@ -78,6 +83,7 @@ class Runtime:
             save_json(self.recovery_path, {
                 'lowered_s': self.lowered_s,
                 'holding': self.holding,
+                'transport_ready': self.transport_ready,
                 'pump_needs_release': self.pump_needs_release,
                 'travel_unknown': self.travel_unknown if travel_unknown is None else travel_unknown,
             }, durable=True)
@@ -326,6 +332,8 @@ class Runtime:
             if pump.close(release=requested and not attached):
                 self.holding = self.pump_needs_release = False
                 self.checkpoint()
+        self.transport_ready = True
+        self.checkpoint()
 
     def servo_settings(self):
         cfg = json.loads(device_config(self.cfg, self.root, 'servo_config').read_text())
@@ -389,14 +397,19 @@ class Runtime:
                     self.checkpoint()
 
     def pump_off(self):
-        cfg = json.loads(device_config(self.cfg, self.root, 'airgrip_config').read_text())
         from airgrip.keyboard import AirGrip
         with self.pump_lock:
+            # A failed release may leave the pump or payload in an unknown state.
+            self.transport_ready = False
+            self.pump_needs_release = True
+            self.checkpoint()
+            cfg = json.loads(device_config(self.cfg, self.root, 'airgrip_config').read_text())
             dev = AirGrip(cfg)
             try:
                 time.sleep(self.cfg['grasp']['open_settle_s'])
                 result = dev.set_pump(False)
                 self.holding = self.pump_needs_release = False
+                self.transport_ready = False
                 self.checkpoint()
                 return result
             finally:

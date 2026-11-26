@@ -188,6 +188,15 @@ class GeographicClientTests(unittest.TestCase):
         self.assertIn('initialization invalidated: TEST invalidation', result['reason'])
         self.assertLessEqual(elapsed, .55)
 
+    def test_outdoor_arrival_accepts_19cm_and_rejects_21cm(self):
+        target = dict(map_xyz=[0., 0., 0.])
+        stopped = dict(confirmed=True, window_start_stamp=99., window_end_stamp=100.1)
+        for distance, expected in ((.19, True), (.21, False)):
+            status = self.status(latest_observation=dict(
+                stamp=100., base_xy=[distance, 0.], gga_quality=4, fresh_rtk_usable=True))
+            reviewed = core.arrival_review(target, status, 10., 10.1, 100.1, 7, 3, stopped, tolerance=.20)
+            self.assertEqual(reviewed['geographic']['confirmed'], expected)
+
     def test_arrival_uses_qualified_original_gnss_and_keeps_action_and_stop_separate(self):
         target = dict(map_xyz=[0., 0., 0.], original={'latitude': 0., 'longitude': 0.})
         review = core.arrival_review(target, self.status(), 10., 10.1, 100.1,
