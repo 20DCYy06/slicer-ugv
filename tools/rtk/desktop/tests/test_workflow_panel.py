@@ -22,7 +22,7 @@ class WorkflowPanelTests(unittest.TestCase):
         self.controller = Mock()
         self.controller.states = {
             key: ('red', '', True)
-            for key in ('rtk', 'base', 'navigation', 'air')
+            for key in ('rtk', 'base', 'navigation', 'vision', 'air')
         }
         self.controller.messages = []
         self.controller.mux = {}
@@ -178,9 +178,9 @@ class WorkflowPanelTests(unittest.TestCase):
         self.assertLessEqual(self.panel.sizeHint().height(), 310)
 
     def test_only_four_steps_and_stop_are_shown(self):
-        self.assertEqual(list(self.panel.buttons), ['rtk', 'base', 'navigation', 'air'])
+        self.assertEqual(list(self.panel.buttons), ['rtk', 'base', 'navigation', 'vision', 'air'])
         self.assertEqual({button.objectName() for button in self.panel.findChildren(QtWidgets.QPushButton)},
-                         {'workflow_rtk', 'workflow_base', 'workflow_navigation', 'workflow_air', 'stop_all'})
+                         {'workflow_rtk', 'workflow_base', 'workflow_navigation', 'workflow_vision', 'workflow_air', 'stop_all'})
 
 
 if __name__ == '__main__':

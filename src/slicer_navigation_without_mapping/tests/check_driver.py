@@ -145,8 +145,8 @@ class DriverChecks(unittest.TestCase):
         self.assertAlmostEqual(value[3],math.pi*.065,places=8);self.assertAlmostEqual(value[2],.05);self.assertEqual(value[4],.5)
     def test_rear_axle_mapping_keeps_positive_encoder_yaw_without_imu(self):
         c=self.config()
-        c['wheel_ports']=dict(left_front='D',left_rear='A',right_front='C',right_rear='B')
-        c['encoder_signs']=[-1,1,1,-1]
+        c['wheel_ports']=dict(left_front='C',left_rear='A',right_front='D',right_rear='B')
+        c['encoder_signs']=[-1,1,-1,1]
         odom=Odometry(c)
         self.assertIsNone(odom.update((0,[0]*4),None))
         result=odom.update((100000,[6000]*4),None)
@@ -156,6 +156,6 @@ class DriverChecks(unittest.TestCase):
     def test_new_board_identity_and_verified_polarities(self):
         c=yaml.safe_load((HARDWARE / 'config.yaml').read_text())
         self.assertEqual((c['serial']['port'],c['serial']['serial_number']),('/dev/c30d','5CF0016377'))
-        self.assertEqual(c['serial']['encoder_signs'],[-1,1,1,-1])
-        self.assertEqual(c['serial']['pwm_signs'],[-1,1,-1,-1])
+        self.assertEqual(c['serial']['encoder_signs'],[-1,1,-1,1])
+        self.assertEqual(c['serial']['pwm_signs'],[-1,1,1,1])
 if __name__=='__main__':unittest.main(verbosity=2)

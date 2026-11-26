@@ -1,6 +1,6 @@
 <launch>
   <!-- Operator-started field presets, reusing the existing navigation chain.
-       Default: fixed geographic map grid; field_sensors owns map -> odom.
+       Default: rolling geographic map grid; field_sensors owns map -> odom.
        geographic:=false is the local odom bootstrap. mapping:=true explicitly
        selects the retained Gmapping candidate instead of geographic navigation.
        Start field_sensors separately; neither branch starts a chassis driver.
@@ -9,6 +9,9 @@
   <arg name="geographic" default="true"/>
   <arg name="preparation" default="false"/>
   <arg name="enable_depth" default="false"/>
+  <arg name="continuity_weight" default="$(optenv SLICER_RTK_CONTINUITY_WEIGHT 4.0)"/>
+  <arg name="continuity_decay_m" default="$(optenv SLICER_RTK_CONTINUITY_DECAY_M 2.0)"/>
+  <arg name="continuity_obstacle_weight" default="$(optenv SLICER_RTK_CONTINUITY_OBSTACLE_WEIGHT 0.70)"/>
   <!-- RTK field defaults apply to odom bootstrap and geographic map navigation. -->
   <arg name="default_cruise_config" value="$(eval '' if arg('mapping') else dirname() + '/../config/' + ('dwa_registration.yaml' if arg('preparation') and not arg('geographic') else 'dwa_field.yaml'))"/>
   <arg name="cruise_config" default="$(arg default_cruise_config)"/>
@@ -66,18 +69,18 @@
             ns="ugv/move_base" file="$(arg cruise_config)"/>
   <rosparam if="$(eval not arg('mapping') and (arg('geographic') or not arg('preparation')))" ns="ugv/move_base">
     base_local_planner: slicer_navigation/DWAPlannerROS
-    GlobalPlanner:
-      continuity:
-        preferred_clearance: 0.45
     DWAPlannerROS:
       start_heading_rate: 0.45
       start_heading_tolerance: 0.12
       start_heading_settle: 0.25
       start_heading_timeout: 16.0
       start_heading_min_distance: 0.20
-      start_heading_lookahead: 0.20
+      start_heading_lookahead: 1.35
       start_heading_kp: 1.6
       start_heading_kd: 0.25
+  </rosparam>
+  <rosparam if="$(eval not arg('mapping') and arg('geographic'))" ns="ugv/move_base/DWAPlannerROS">
+    goal_approach_decel: 0.75
   </rosparam>
   <rosparam unless="$(arg mapping)" ns="ugv/move_base">
     base_global_planner: slicer_navigation/BSplineGlobalPlanner
@@ -85,31 +88,40 @@
       # Same provisional routing policy as NoRTK. The Guard still rejects
       # unobserved local footprint sweeps, and preparation validates its route.
       allow_unknown: true
-      # Continuous traceback starts turns earlier than grid-cell corners.
+      # Noetic Dijkstra consumes one private cost field, with gradient
+      # traceback and a checked grid-centre fallback for the same objective.
       use_grid_path: false
       old_navfn_behavior: true
-      # A .23 m centre-to-obstacle planning contour with the .14 m
-      # inscribed radius and 4.5/m inflation decay. Unknown stays provisional.
-      lethal_cost: 175
-      cost_factor: 0.65
+      lethal_cost: 254
+      neutral_cost: 50
+      cost_factor: 0.8
       smoothing:
-        max_cost: 173
         observed_prefix: true
-      continuity:
-        extra_cost: 0.35
-        join_distance: 0.30
+      continuity_cost:
+        enabled: true
+        obstacle_soft_radius_m: 0.60
+        deviation_cap_m: 1.0
+        min_clearance_m: 0.23
+        rejoin_distance_m: 0.30
     global_costmap:
       track_unknown_space: true
       always_send_full_costmap: true
-      obstacle_layer:
-        scan:
-          # Replan as soon as the local layer sees a new obstacle.
-          obstacle_range: 4.5
-          raytrace_range: 4.5
-      inflation_layer:
-        inflation_radius: 0.25
     local_costmap:
       inflation_layer:
         inflation_radius: 0.25
   </rosparam>
+  <!-- Geographic mode sets its global ranges and inflation in outdoor_map.yaml. -->
+  <rosparam if="$(eval not arg('mapping') and not arg('geographic'))" ns="ugv/move_base/global_costmap">
+    obstacle_layer:
+      scan:
+        obstacle_range: 4.5
+        raytrace_range: 4.5
+    inflation_layer:
+      inflation_radius: 0.25
+  </rosparam>
+  <group unless="$(arg mapping)" ns="ugv/move_base/GlobalPlanner/continuity_cost">
+    <param name="weight" value="$(arg continuity_weight)" type="double"/>
+    <param name="decay_length_m" value="$(arg continuity_decay_m)" type="double"/>
+    <param name="obstacle_weight" value="$(arg continuity_obstacle_weight)" type="double"/>
+  </group>
 </launch>

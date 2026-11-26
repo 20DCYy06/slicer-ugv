@@ -26,6 +26,15 @@ def load(name, arguments=()):
 
 
 class FieldLaunchTests(unittest.TestCase):
+    def test_continuity_cost_tuning_reaches_the_installed_planner(self):
+        config = load('slicer_field_navigation.launch', [
+            'continuity_weight:=2.0', 'continuity_decay_m:=1.0', 'continuity_obstacle_weight:=0.35'])
+        prefix = '/ugv/move_base/GlobalPlanner/continuity_cost/'
+        self.assertEqual(config.params[prefix + 'weight'].value, 2.)
+        self.assertEqual(config.params[prefix + 'decay_length_m'].value, 1.)
+        self.assertEqual(config.params[prefix + 'obstacle_weight'].value, .35)
+        self.assertEqual(config.params[prefix + 'min_clearance_m'].value, .23)
+
     def test_outdoor_rviz_has_no_default_map_or_camera_dependency(self):
         import yaml
         manager = yaml.safe_load((ROOT / 'src/ugv_bringup/rviz/outdoor_navigation.rviz').read_text())['Visualization Manager']
@@ -160,15 +169,20 @@ class FieldLaunchTests(unittest.TestCase):
         self.assertTrue(p[prefix + 'local_costmap/track_unknown_space'].value)
         self.assertEqual(p[prefix + 'base_global_planner'].value, 'slicer_navigation/BSplineGlobalPlanner')
         self.assertTrue(p['/slicer_nav_arc_guard/adaptive_forward_speed'].value)
-        self.assertEqual(p[prefix + 'GlobalPlanner/lethal_cost'].value, 175)
+        self.assertEqual(p[prefix + 'GlobalPlanner/lethal_cost'].value, 254)
         self.assertFalse(p[prefix + 'GlobalPlanner/use_grid_path'].value)
-        self.assertEqual(p[prefix + 'GlobalPlanner/smoothing/max_cost'].value, 173)
         self.assertTrue(p[prefix + 'GlobalPlanner/smoothing/observed_prefix'].value)
         self.assertEqual(p[prefix + 'DWAPlannerROS/vx_samples'].value, 9)
         self.assertEqual(p[prefix + 'DWAPlannerROS/start_heading_rate'].value, .45)
         self.assertEqual(p[prefix + 'DWAPlannerROS/start_heading_lookahead'].value, .20)
         self.assertEqual(p[prefix + 'DWAPlannerROS/start_heading_kp'].value, 1.6)
-        self.assertEqual(p[prefix + 'GlobalPlanner/continuity/preferred_clearance'].value, .45)
+        continuity = prefix + 'GlobalPlanner/continuity_cost/'
+        self.assertTrue(p[continuity + 'enabled'].value)
+        self.assertEqual(p[continuity + 'min_clearance_m'].value, .23)
+        self.assertEqual(p[continuity + 'weight'].value, 4.)
+        self.assertEqual(p[continuity + 'decay_length_m'].value, 2.)
+        self.assertEqual(p[continuity + 'obstacle_weight'].value, .70)
+        self.assertFalse(any(k.startswith(prefix + 'GlobalPlanner/continuity/') for k in p))
         self.assertEqual(p[prefix + 'DWAPlannerROS/vth_samples'].value, 21)
         self.assertFalse(p['/slicer_nav_arc_guard/registration_reverse'].value)
         for scope in ('global_costmap', 'local_costmap'):

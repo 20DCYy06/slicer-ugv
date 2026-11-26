@@ -9,6 +9,7 @@ STEPS = {
     'rtk': '1. 启动 RTK 与配准',
     'base': '2. 启动雷达与底盘',
     'navigation': '3. 启动导航',
+    'vision': '抓取',
     'air': '4. 飞机通信节点',
 }
 STATUS = {'red': '未启动', 'yellow': '进行中', 'green': '已就绪'}

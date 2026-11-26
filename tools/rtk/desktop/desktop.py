@@ -352,7 +352,7 @@ def run_desktop():
     board = Dashboard()
     map_display = MapDisplay()
     observer = Observer(board)
-    workflow = Workflow(board)
+    workflow = Workflow(board, ros_clock=lambda: rospy.Time.now().to_sec())
     executor = ThreadPoolExecutor(max_workers=2)
     dashboard = Readouts(workflow, observer.cancel_pending_goal, lambda: executor.submit(process_snapshot))
     dashboard.bind_waypoint_confirmation(observer)

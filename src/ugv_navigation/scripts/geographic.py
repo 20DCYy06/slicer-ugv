@@ -24,6 +24,7 @@ from navigation_preparation import PreparationClient
 from geographic_goal_core import (arrival_review, capture_sample, capture_target, finite, origin_record,
                                   quiet_odom_tail, registration_observation_problem,
                                   resolve_target, status_problem)
+from geographic_goal_core import preemptible_navigation_goal
 
 
 RETURN_TOPIC = '/geographic/registration_reverse'
@@ -112,6 +113,8 @@ def arguments(argv=None):
         target.add_argument('--yaw', type=number, help='radians CCW from input ENU East; omitted: approach bearing')
         target.add_argument('--timeout', type=positive, default=120.)
         target.add_argument('--output', type=Path, help='save result as a new JSON file')
+        if command == 'send':
+            target.add_argument('--request-stamp', type=positive, help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
     if args.command == 'initialize':
         if args.distance is None:
@@ -164,7 +167,7 @@ class GeographicClient:
         self.fix_age = rospy.get_param('/geographic/max_fix_age_s', 2.5)
         self.pose_gap = rospy.get_param('/geographic/max_odom_gap_s', .5)
         self.stop_window = rospy.get_param('/geographic/stop_window_s', 1.)
-        self.tolerance = rospy.get_param('/geographic/arrival_tolerance_m', .35)
+        self.tolerance = rospy.get_param('/geographic/arrival_tolerance_m', .20)
         self.buffer = tf2_ros.Buffer()
         self.listener = tf2_ros.TransformListener(self.buffer)
         self.status_sub = rospy.Subscriber('/geographic/status', String, self._status, queue_size=10)
@@ -178,10 +181,17 @@ class GeographicClient:
             self.Twist = Twist
             self.return_pub = rospy.Publisher(RETURN_TOPIC, Twist, queue_size=1, latch=False)
         self.action_sample, self.mux_sample = None, None
+        self.air_tasks = {}
         if args.command in ('send', 'initialize'):
             self.action_sub = rospy.Subscriber(args.action.rstrip('/') + '/status', GoalStatusArray,
                                                self._action_status, queue_size=1)
             self.mux_sub = rospy.Subscriber('/cup_nav/manual_state', String, self._mux_status, queue_size=1)
+            self.air_task_subs = [
+                rospy.Subscriber(topic, String, self._air_task, callback_args=stamp, queue_size=1)
+                for topic, stamp in (('/air_ground/state', 'updated_stamp'),
+                                     ('/air_ground/v2/state', 'updated_at'))
+            ]
+
         if args.command == 'capture':
             from sensor_msgs.msg import NavSatFix
             from diagnostic_msgs.msg import DiagnosticArray
@@ -193,8 +203,8 @@ class GeographicClient:
     def _action_status(self, message):
         expected = self.args.action.rstrip('/')
         if message._connection_header.get('callerid') == expected:
-            active = any(status.status in (0, 1, 6, 7) for status in message.status_list)
-            self.action_sample = time.monotonic(), message.header.stamp.to_sec(), active
+            active = tuple(status.goal_id.id for status in message.status_list if status.status in (0, 1, 6, 7))
+            self.action_sample = time.monotonic(), message.header.stamp.to_sec(), bool(active), active
 
     def _mux_status(self, message):
         header = message._connection_header
@@ -210,6 +220,16 @@ class GeographicClient:
         except (KeyError, TypeError, ValueError):
             pass
 
+    def _air_task(self, message, stamp_key):
+        try:
+            state = json.loads(message.data)
+            stamp = float(state[stamp_key])
+        except (ValueError, KeyError, TypeError):
+            return
+        active = bool(state.get('task_id') and state.get('phase') not in
+                      ('IDLE', 'COMPLETED', 'CANCELED', 'STOPPED', 'FAILED', 'SUCCEEDED'))
+        self.air_tasks[stamp_key] = stamp, active
+
     def check_action_idle(self):
         if getattr(self.args, 'command', None) not in ('send', 'initialize'):
             return
@@ -217,7 +237,12 @@ class GeographicClient:
         if (not sample or time.monotonic() - sample[0] > .6
                 or not -.1 <= self.ros.Time.now().to_sec() - sample[1] <= .6):
             raise ValueError('Action status unavailable or stale; no goal sent')
-        if sample[2] or self.preparation_active():
+        preemptible = self.args.command == 'send' and all(
+            preemptible_navigation_goal(goal) for goal in sample[3])
+        ros_now = self.ros.Time.now().to_sec()
+        protected = any(active and -.1 <= ros_now - stamp <= 2.5
+                        for stamp, active in tuple(self.air_tasks.values()))
+        if (sample[2] and not preemptible) or protected or self.preparation_active():
             raise ValueError('another task owns navigation; no goal sent')
         mux = self.mux_sample
         if not mux or time.monotonic() - mux[0] > .6 or mux[1]:
@@ -354,6 +379,23 @@ class GeographicClient:
         if problem:
             raise ValueError(problem)
         self.check_action_idle()
+        request_stamp = getattr(self.args, 'request_stamp', None)
+        if request_stamp is not None:
+            stamp = self.ros.Time.from_sec(request_stamp)
+            # A valid first request can wait through registration before
+            # reaching the new map Action server. Action ordering, rather than
+            # an age cutoff, rejects a delayed request when a newer goal exists.
+            if (stamp - self.ros.Time.now()).to_sec() > .1:
+                raise ValueError('operator goal request stamp in the future')
+            transport = self.client.action_client
+
+            def send_with_request_stamp(goal):
+                # Keep the request's time across subprocess startup and retries.
+                # SimpleActionServer rejects arrivals older than its current goal.
+                goal.goal_id.stamp = stamp
+                transport.pub_goal.publish(goal)
+
+            transport.manager.register_send_goal_fn(send_with_request_stamp)
         self.client.send_goal(self.MoveBaseGoal(target_pose=pose))
         self.owned = True
         deadline, reason = time.monotonic()+self.args.timeout, ''
@@ -616,17 +658,16 @@ class GeographicClient:
                 self.goal_record = dict(id=goal_id, original=intent, datum='WGS84',
                                         frame='wgs84', stamp=self.ros.Time.now().to_sec())
                 self.publish(self.goal_pub, self.goal_record)
-                # Wait briefly for the latched owner announcement in a fresh CLI process.
-                deadline = time.monotonic() + 1.
-                while not self.prepare_available() and time.monotonic() < deadline:
-                    time.sleep(.05)
-                if self.prepare_available():
-                    self.prepare_wait(goal_id, intent)
-                else:
-                    try:
-                        self.frame_check('map')
-                    except ValueError as error:
+                try:
+                    self.frame_check('map')
+                except ValueError as error:
+                    # Initial geographic preparation still needs the runtime owner.
+                    deadline = time.monotonic() + 1.
+                    while not self.prepare_available() and time.monotonic() < deadline:
+                        time.sleep(.05)
+                    if not self.prepare_available():
                         raise ValueError('start slicer_navigation_runtime.launch for automatic WGS84 preparation') from error
+                    self.prepare_wait(goal_id, intent)
             elif self.preparation_active():
                 raise ValueError('navigation preparation is active')
         elif self.preparation_active():
@@ -651,7 +692,10 @@ class GeographicClient:
             return result, 0 if plan.plan.poses else 1
         action = self.run_action(pose, target['generation'])
         since = time.monotonic()
-        self.quiet(since)
+        if action['state'] == 3:
+            self.quiet(since)
+        elif action['state'] in (2, 8) and not action['reason']:
+            action['reason'] = 'superseded or canceled'
         result = self.arrival_after_stop(target, action, since)
         result.update(command='send', move_base=action)
         return result, 0 if result['geographic']['confirmed'] and not action['reason'] else 1

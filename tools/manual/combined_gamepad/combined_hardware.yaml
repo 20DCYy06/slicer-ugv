@@ -8,13 +8,13 @@ serial:
   pwm_signs:
   - -1
   - 1
-  - -1
-  - -1
+  - 1
+  - 1
   encoder_signs:
   - -1
   - 1
-  - 1
   - -1
+  - 1
 control:
   publish_hz: 50
   telemetry_timeout_s: 1.0

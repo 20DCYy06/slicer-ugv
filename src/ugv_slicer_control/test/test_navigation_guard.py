@@ -17,6 +17,16 @@ class NavigationGuardTests(unittest.TestCase):
                max_vel_theta=.25, acc_lim_x=.2, acc_lim_trans=.2,
                acc_lim_theta=1.)
 
+    def test_commitment_hard_stop_distinguishes_unknown_and_unobserved_border(self):
+        from navigation_core import footprint_clear
+        shape = [(-.10, -.10), (.10, -.10), (.10, .10), (-.10, .10)]
+        grid = dict(width=4, height=4, resolution=.10, origin=(-.20, -.20, 0.), data=[-1]*16)
+        pose = (.15, .05, 0.)
+        self.assertFalse(footprint_clear(pose, shape, grid))
+        self.assertTrue(footprint_clear(pose, shape, grid, unknown=False, outside_is_blocked=False))
+        grid['data'][2*4+3] = 100
+        self.assertFalse(footprint_clear(pose, shape, grid, unknown=False, outside_is_blocked=False))
+
     def test_forward_speed_uses_checked_prefix_and_keeps_arc_curvature(self):
         pose = (0., 0., 0.)
         footprint = [(-.2, -.11), (.2, -.11), (.2, .11), (-.2, .11)]

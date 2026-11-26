@@ -22,9 +22,11 @@ from .paths import DEFAULT_CONFIG, DEVICE_CONFIGS, device_config
 
 
 class App:
-    def __init__(self,win,cfg,root,enabled,config_path=None):
+    def __init__(self,win,cfg,root,enabled,config_path=None, handoff=False):
         self.win,self.cfg,self.root,self.enabled=win,cfg,root,enabled
         self.config_path = config_path if config_path is not None else root / "config.json"
+        self.handoff = handoff
+        self.suspending = False
         self.messages=queue.Queue();self.cancel=threading.Event()
         self.busy=self.closing=self.closed=self.reconnecting=False
         self.stopping_pump=False
@@ -32,6 +34,8 @@ class App:
         self.last_camera_error=None;self.drag=self.selection=None
         self.camera=Camera(cfg['camera'],cfg['target'],root);self.camera.start()
         self.runtime=Runtime(cfg,root,self.camera,self.cancel,self.log)
+        if self.handoff:
+            self.runtime.load_recovery()
         win.title('Visual Grasp — 视觉对准抓取'+(' / 可执行' if enabled else ' / 只预览'))
         win.option_add('*Font','Sans 14')
         bar=tk.Frame(win);bar.pack(fill='x');self.buttons=[]
@@ -39,6 +43,10 @@ class App:
             button=tk.Button(bar,text=label,command=action,height=2)
             button.pack(side='left',fill='x',expand=True);self.buttons.append(button)
         self.stop_button=self.buttons[-1]
+        if self.handoff:
+            self.suspend_button = tk.Button(bar, text='挂起', command=self.suspend, height=2)
+            self.suspend_button.pack(side='left', fill='x', expand=True)
+            self.buttons.append(self.suspend_button)
         self.hint=tk.Label(win,font=('Sans',11),wraplength=750)
         self.hint.pack(fill='x')
         self.scale=min(1.,max(300,win.winfo_screenwidth()-290)/cfg['camera']['width'],max(220,win.winfo_screenheight()-140)/cfg['camera']['height'])
@@ -51,8 +59,9 @@ class App:
         tk.Label(win,text='右键保存吸嘴红点；Esc/空格立即停止并关闭抽气。',font=('Sans',11),fg='#a02020').pack()
         win.bind('<Escape>',lambda e:self.emergency_stop());win.bind('<space>',lambda e:self.emergency_stop())
         win.bind('<r>',lambda e:self.reconnect_camera());win.bind('<R>',lambda e:self.reconnect_camera())
-        win.protocol('WM_DELETE_WINDOW',self.close)
+        win.protocol('WM_DELETE_WINDOW', self.window_close)
         self.log('[READY] 移动并抓取 / 释放 / 立即停止；红点为吸嘴原点。')
+        self.report_handoff_state()
         self.refresh()
 
     def log(self,text):
@@ -65,7 +74,32 @@ class App:
         enabled=self.enabled and not self.closing and not self.stopping_pump
         for button in self.buttons:
             available=enabled and (button is self.stop_button or not (self.busy or self.reconnecting))
+            if self.handoff and button is self.suspend_button:
+                available = available and self.can_suspend()
             button.config(state='normal' if available else 'disabled')
+
+    def report_handoff_state(self):
+        if self.handoff:
+            state = 'busy' if self.busy else 'idle'
+            if not self.busy and self.runtime.needs_release:
+                state = 'held' if self.runtime.transport_ready else 'recovery'
+            self.log('GRASP_STATE ' + state)
+
+    def can_suspend(self):
+        if self.busy or self.reconnecting or self.stopping_pump or self.closing:
+            return False
+        return not self.runtime.needs_release or self.runtime.transport_ready
+
+    def suspend(self):
+        if self.handoff and self.can_suspend():
+            self.suspending = True
+            self.close()
+
+    def window_close(self):
+        if self.handoff and self.can_suspend():
+            self.suspend()
+        else:
+            self.close()
 
     def start_box(self,e):
         if not self.busy:
@@ -109,6 +143,7 @@ class App:
                 or not self.enabled):
             return False
         self.busy=True;self.cancel.clear()
+        self.report_handoff_state()
         def work():
             try:operation(self.runtime)
             except InterruptedError:self.log('[STOP] 动作已中断')
@@ -126,6 +161,8 @@ class App:
         """立即取消运动；气泵在其串口可用时独立关停。"""
         if not self.enabled or self.closing or self.stopping_pump:return
         self.stopping_pump=True;self.cancel.set()
+        if self.handoff:
+            self.log('GRASP_STOP')
         self.log('[STOP] 正在中断底盘、升降并关闭抽气')
         def work():
             try:
@@ -161,6 +198,8 @@ class App:
             if self.closing:
                 if (not self.busy and not self.reconnecting and not self.stopping_pump
                         and not self.camera.thread.is_alive()):
+                    if self.suspending:
+                        self.log('GRASP_SUSPENDED')
                     self.closed=True;self.win.destroy();return
                 if time.monotonic()-self.close_started>=3:os._exit(130)
             self.refresh_view()
@@ -173,8 +212,12 @@ class App:
     def refresh_view(self):
         while not self.messages.empty():
             kind,value=self.messages.get_nowait()
-            if kind=='finished':self.busy=False
-            elif kind=='pump_stopped':self.stopping_pump=False
+            if kind=='finished':
+                self.busy = False
+                self.report_handoff_state()
+            elif kind=='pump_stopped':
+                self.stopping_pump = False
+                self.report_handoff_state()
             elif kind=='camera_ready':
                 self.camera=self.runtime.camera=value;self.reconnecting=False;self.last_camera_error=None
                 if self.closing:self.camera.close(wait=False)
@@ -203,6 +246,9 @@ class App:
         if error:self.hint.config(text='相机错误：'+error)
         elif self.busy:self.hint.config(text='动作正在执行；Esc/空格停止')
         elif not self.enabled:self.hint.config(text='只预览；使用 run.sh --run 启用操作')
+        elif self.handoff and self.runtime.needs_release:
+            text = '已吸附并抬升；挂起保留吸附，释放将关闭气泵' if self.runtime.transport_ready else '抓取状态需恢复，请先处理释放与回升'
+            self.hint.config(text=text)
         elif obs.center is not None and obs.nozzle_center is not None:
             d=[obs.center[i]-obs.nozzle_center[i] for i in range(2)]
             self.hint.config(text='相对原点=(%.1f,%.1f)px；可见面7×10cm；正向对应画面朝下'%tuple(d))
@@ -223,8 +269,11 @@ def main():
     mode.add_argument('--check', action='store_true', help='仅检查依赖和配置，不打开相机/串口')
     mode.add_argument('--headless', action='store_true', help='通过标准输入执行 pick / release')
     parser.add_argument('--pick-on-start', action='store_true', help='仅在无窗口模式启动时抓取一次')
+    parser.add_argument('--desktop-handoff', action='store_true', help=argparse.SUPPRESS)
     parser.add_argument('--config', type=Path)
     args = parser.parse_args()
+    if args.desktop_handoff and (not args.run or args.headless or args.check):
+        parser.error('--desktop-handoff 需要 --run 窗口模式')
     if args.run and args.check:
         parser.error('--run 不能与 --check 同用')
     if args.pick_on_start and not args.headless:
@@ -270,7 +319,7 @@ def main():
         run(Runtime(cfg, path.parent, camera, threading.Event(), log), args.pick_on_start)
         return
     win = tk.Tk()
-    app = App(win, cfg, path.parent, args.run, config_path=path)
+    app = App(win, cfg, path.parent, args.run, config_path=path, handoff=args.desktop_handoff)
     def exit_signal(signum, frame):
         # 信号回调中不调用Tk、不打印、不获取锁，防止重入造成二次死锁。
         if app.signal_exit_requested:

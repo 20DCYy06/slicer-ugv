@@ -36,20 +36,20 @@ chassis:
   - C
   - D
   wheel_ports:
-    left_front: D
-    right_front: C
+    left_front: C
+    right_front: D
     left_rear: A
     right_rear: B
   encoder_signs:
   - -1
   - 1
-  - 1
   - -1
+  - 1
   pwm_signs:
   - -1
   - 1
-  - -1
-  - -1
+  - 1
+  - 1
   control_hz: 100
   telemetry_hz: 25
   firmware_watchdog_ms: 500

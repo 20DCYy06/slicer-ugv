@@ -5,7 +5,7 @@ max_alignment_residual_m: 0.5
 max_fix_age_s: 2.5          # 沿用接收链预算，同stamp质量消息必须同时存在。
 max_odom_gap_s: 0.5         # 只在有前后样本时插值，不外推。
 max_gnss_innovation_m: 3.0 # 大恢复跳变暂停纠偏、保留原点，人工检查/重新配准。
-arrival_tolerance_m: 0.35  # 原始RTK估计残差复核；不替代尺测真值。
+arrival_tolerance_m: 0.20  # 原始RTK估计残差复核；不替代尺测真值。
 status_max_age_s: 1.0
 stop_window_s: 1.0
 

@@ -11,8 +11,8 @@ ros_driver_pwm_limit_permille: 600
 pwm_signs:
 - -1
 - 1
-- -1
-- -1
+- 1
+- 1
 test_pwm_signs:
 - 1
 - -1
@@ -21,11 +21,11 @@ test_pwm_signs:
 encoder_signs:
 - -1
 - 1
-- 1
 - -1
+- 1
 wheel_ports:
-  left_front: D
-  right_front: C
+  left_front: C
+  right_front: D
   left_rear: A
   right_rear: B
 wheel_diameter: 0.065

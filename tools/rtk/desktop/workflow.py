@@ -7,7 +7,7 @@ import shlex
 import sys
 import time
 
-from dashboard_model import ACTIVE_ACTION_STATES, task_in_progress
+from dashboard_model import ACTIVE_ACTION_STATES, preemptible_navigation_goal, task_in_progress
 from owned_process import OwnedProcess as ProcessGroup
 from workflow_discovery import Graph, NAV_ACTION
 
@@ -28,7 +28,7 @@ SWITCH_MAP = ('rosservice', 'call', '/geographic/navigation_map')
 SWITCH_PREPARATION = ('rosservice', 'call', '/geographic/navigation_prepare')
 ROUNDTRIP = ('rosrun', 'ugv_navigation', 'geographic.py', 'initialize',
              '--distance', '2.0', '--return-to-start')
-VISUAL_GRASP = ('rosrun', 'slicer_visual_grasp', 'run.sh', '--run', '--headless')
+VISUAL_GRASP = ('rosrun', 'slicer_visual_grasp', 'run.sh', '--run', '--desktop-handoff')
 DRIVER_COMMAND = ('roslaunch', 'ugv_bringup', 'slicer_body_driver.launch')
 # The process runner escalates shutdown at 32 s. Allow another ROS graph poll.
 HANDOFF_TIMEOUT = 35.
@@ -44,20 +44,21 @@ class OwnedProcess(ProcessGroup):
                 argv = ('env', f'LD_LIBRARY_PATH={env["LD_LIBRARY_PATH"]}', *argv)
             argv = ('bash', '-c', 'source "$1" && shift && run_serial_tool "$@"',
                     'rtk-desktop', str(SERIAL_GROUP), *argv)
-        super().__init__(key, argv, env, log_prefix='rtk-desktop', stdin=key == 'vision')
+        super().__init__(key, argv, env, log_prefix='rtk-desktop', stdin=False)
 
 
 class Workflow:
-    def __init__(self, board, spawn=OwnedProcess, env=None, clock=time.monotonic):
+    def __init__(self, board, spawn=OwnedProcess, env=None, clock=time.monotonic, ros_clock=None):
         self.board = board
         self.spawn = spawn
         self.env = dict(os.environ if env is None else env)
         # The RViz input namespace stays private. The launched stack uses its existing names.
         self.env.pop('ROS_NAMESPACE', None)
         self.clock = clock
+        self.ros_clock = ros_clock
         self.graph = Graph()
         self.grasp_state = 'idle'
-        self.grasp_command = None
+        self.grasp_suspended = False
         self.grasp_recovery = False
         self.grasp_handoff = None
         self.grasp_mux = None
@@ -74,6 +75,7 @@ class Workflow:
         self.prepare_started = 0.
         self.odom_cruise = False
         self.stopping_all = False
+        self.pending_wgs84 = None
 
     def recent(self, key):
         return self.board.recent(key, self.clock(), 2.5)
@@ -222,18 +224,18 @@ class Workflow:
                 if self.grasp_state in ('held', 'recovery') or self.grasp_recovery:
                     text = '释放' + text
                 result[key] = ('yellow', text, False)
-            elif key == 'vision' and self.grasp_state == 'held' and owned:
-                result[key] = ('green', '抓取完成', self.grasp_handoff is None and not self.stopping_all)
             elif key == 'vision' and owned:
-                color, status = {
-                    'idle': ('red', '待抓取'), 'starting': ('yellow', '正在启动抓取'),
-                    'busy': ('yellow', '释放中' if self.grasp_command == 'release' else '抓取中'),
-                    'held': ('green', '抓取完成'), 'recovery': ('yellow', '需释放'), 'error': ('red', '抓取失败 · 重试'),
-                }[self.grasp_state]
-                result[key] = (color, status, self.grasp_state not in ('starting', 'busy')
-                               and not self.stopping_all)
+                text = {'idle': '窗口已打开', 'busy': '抓取窗口执行中', 'held': '已吸附 · 可挂起',
+                        'recovery': '请在窗口处理恢复', 'error': '抓取失败',
+                        'starting': '正在打开窗口'}[self.grasp_state]
+                result[key] = ('green' if self.grasp_state == 'held' else 'yellow', text, False)
+            elif key == 'vision' and self.grasp_handoff in ('to_driver', 'unparking'):
+                result[key] = ('yellow', '正在交还导航', False)
             elif key == 'vision' and not external and self.vision_driver_busy and 'driver' not in self.owned:
                 result[key] = ('yellow', '底盘由外部终端占用', not self.stopping_all)
+            elif key == 'vision' and not external and self.grasp_suspended:
+                text = '已挂起 · 保持吸附' if self.grasp_state == 'held' else '已挂起'
+                result[key] = ('green', text, not self.stopping_all)
             elif key == 'vision' and not external and self.grasp_recovery:
                 result[key] = ('yellow', '需释放', not self.stopping_all)
             elif self.ready(key):
@@ -261,26 +263,11 @@ class Workflow:
             result['base'] = ('red', '', not self.stopping_all)
         return result
 
-    def _grasp_click(self):
-        if self.grasp_state in ('starting', 'busy'):
-            return
-        command = 'release' if self.grasp_state in ('held', 'recovery') else 'pick'
-        try:
-            self.owned['vision'].send(command)
-        except (OSError, ValueError):
-            self.report('抓取进程无法接收命令，请检查运行日志。')
-        else:
-            self.grasp_state = 'busy'
-            self.grasp_command = command
-
     def _start_grasp(self):
-        argv = VISUAL_GRASP
-        if not self.grasp_recovery:
-            argv += ('--pick-on-start',)
-        if not self._start('vision', argv):
+        if not self._start('vision', VISUAL_GRASP):
             return False
+        self.grasp_suspended = False
         self.grasp_state = 'starting'
-        self.grasp_command = 'recover' if self.grasp_recovery else 'pick'
         return True
 
     def _request_grasp(self):
@@ -296,12 +283,12 @@ class Workflow:
             if self.nav_present:
                 self.report('请等待底盘驱动和导航就绪。')
             else:
-                self._run_grasp()
+                self._start_grasp()
             return
         if not self._grasp_still():
             self.report('等待底盘驱动就绪并确认车辆停稳。')
             return
-        self.grasp_mux = None
+        self.grasp_mux = self.grasp_unpark = None
         if self.nav_present:
             mux = self.mux
             instance, generation = self._mux_key(mux)
@@ -317,12 +304,6 @@ class Workflow:
             self.grasp_mux = instance, generation
         self._set_grasp_handoff('to_grasp')
         self._signal_stop('driver')
-
-    def _run_grasp(self):
-        if 'vision' in self.owned:
-            self._grasp_click()
-            return self.grasp_state == 'busy'
-        return self._start_grasp()
 
     def _grasp_still(self):
         now = self.clock()
@@ -381,7 +362,11 @@ class Workflow:
                 self._set_grasp_handoff('to_driver')
                 self.report('导航状态变化，已取消抓取，正在恢复底盘驱动。')
             elif not self.vision_driver_busy and not (self.present('vision') and 'vision' not in self.owned):
-                self._set_grasp_handoff('grasp' if self._run_grasp() else 'to_driver')
+                if self._start_grasp():
+                    self._set_grasp_handoff('grasp')
+                else:
+                    self.grasp_unpark = None
+                    self._set_grasp_handoff('to_driver')
             return
         if 'vision' in self.stopping or (self.present('vision') and 'vision' not in self.owned):
             return
@@ -403,32 +388,16 @@ class Workflow:
                                   '--expected-generation', str(generation)):
                 self.grasp_handoff = 'unparking'
 
-    def _grasp_log(self, lines, running):
+    def _grasp_log(self, lines):
         for line in lines:
-            marker, _, state = line.partition(' ')
-            if marker != 'GRASP_STATE' or state not in GRASP_STATES:
-                continue
-            self.grasp_state = state
-            if state in ('idle', 'recovery') and self.grasp_command == 'recover':
-                self.grasp_state = 'recovery'
-                if running and not self.stopping_all and 'vision' not in self.stopping:
-                    self._grasp_click()
-                continue
-            if state in ('held', 'recovery') and self.grasp_handoff == 'grasp':
-                # A headless result follows the motion and servo cleanup. Its idle
-                # process may stay alive to accept release without owning C30D.
-                self._set_grasp_handoff('to_driver')
-            if state == 'idle' and self.grasp_command == 'release':
-                self.grasp_recovery = False
-                self.exited['vision'] = '已释放'
-                if running:
-                    self._signal_stop('vision')
-            if state == 'error':
-                self.exited['vision'] = '抓取失败 · 重试'
-                if running:
-                    self._signal_stop('vision')
-            if state != 'busy':
-                self.grasp_command = None
+            if line == 'GRASP_SUSPENDED':
+                self.grasp_suspended = True
+            elif line == 'GRASP_STOP':
+                self.grasp_unpark = None
+            else:
+                marker, _, state = line.partition(' ')
+                if marker == 'GRASP_STATE' and state in GRASP_STATES:
+                    self.grasp_state = state
 
     def _start(self, key, argv):
         try:
@@ -450,6 +419,8 @@ class Workflow:
             self.report(f'正在停止 {key}')
 
     def stop(self, key):
+        if key == 'wgs84':
+            self.pending_wgs84 = None
         if key not in self.owned:
             if self.present(key):
                 self.report('该节点由外部终端启动，请在原终端停止。')
@@ -468,9 +439,11 @@ class Workflow:
         self._signal_stop(key)
 
     def stop_all(self):
+        self.pending_wgs84 = None
         if self.stopping_all:
             return
         self.grasp_handoff = None
+        self.grasp_suspended = False
         self.grasp_mux = self.grasp_unpark = None
         self.startup_calibration = None
         if self.idle:
@@ -605,17 +578,21 @@ class Workflow:
                 or self.startup_calibration == 'awaiting_map'
                 or any(key in self.owned for key in AUX)
                 or (self.present('vision') and 'vision' not in self.owned)
-                or self.grasp_state in ('starting', 'busy')):
+                or 'vision' in self.owned):
             return '等待当前流程结束'
         connected = self._navigation_connected() if self.runtime else self.ready('map')
-        if not connected or not self._nav_idle():
-            return '等待导航空闲'
+        actions = self.recent('action')
+        if (not connected or actions is None or self.runtime.get('busy')
+                or any(state in ACTIVE_ACTION_STATES and not preemptible_navigation_goal(goal)
+                       for goal, state in actions)
+                or any(task_in_progress(self.recent(mode)) for mode in ('v1', 'v2'))):
+            return '等待导航空闲或现有专用任务结束'
         return None
 
     def can_send_wgs84(self):
         return self._wgs84_block(self.board.fixed_position(self.clock())) is None
 
-    def send_wgs84(self, latitude, longitude):
+    def send_wgs84(self, latitude, longitude, *, issued=None):
         position = self.board.fixed_position(self.clock())
         blocked = self._wgs84_block(position)
         if blocked:
@@ -630,9 +607,17 @@ class Workflow:
             self.report('请检查 WGS84 经纬度范围。')
             return False
         altitude = position['altitude']
+        if issued is None and self.ros_clock is not None:
+            issued = self.ros_clock()
         command = ('rosrun', 'ugv_navigation', 'geographic.py', 'send',
                    '--latitude', str(latitude), '--longitude', str(longitude),
                    '--altitude-ellipsoid', str(altitude))
+        if issued is not None:
+            command += ('--request-stamp', str(issued))
+        if 'wgs84' in self.owned:
+            self.pending_wgs84 = (self.clock(), latitude, longitude, issued)
+            self._signal_stop('wgs84')
+            return True
         self.board.record('wgs84_failure', None, self.clock())
         self.board.record('wgs84', {'latitude': latitude, 'longitude': longitude}, self.clock())
         if self._start('wgs84', command):
@@ -691,8 +676,7 @@ class Workflow:
             return
         if key in self.owned and key != 'calibrate':
             if key == 'vision':
-                if self.grasp_state not in ('starting', 'busy'):
-                    self._request_grasp()
+                self.report('请在抓取窗口操作。')
             else:
                 self.stop(key)
             return
@@ -705,7 +689,7 @@ class Workflow:
             return
         if key in ('driver', 'navigation', 'map', 'calibrate') and (
                 self.grasp_handoff or (self.present('vision') and 'vision' not in self.owned)
-                or ('vision' in self.owned and self.grasp_state in ('starting', 'busy'))):
+                or 'vision' in self.owned):
             self.report('等待视觉抓取结束并交还底盘串口。')
             return
         if key == 'vision':
@@ -824,9 +808,11 @@ class Workflow:
             for sample in ('driver', 'wheel_odom', 'wheel_still'):
                 self.board.record(sample, None, self.clock())
         if key == 'vision':
-            if self.grasp_state != 'starting':
-                self.grasp_recovery = self.grasp_state in ('busy', 'held', 'recovery')
-            self.grasp_command = None
+            self.grasp_suspended = (self.grasp_suspended and status == 0
+                                    and not stopping and self.grasp_state in ('idle', 'held'))
+            self.grasp_recovery = self.grasp_state in ('busy', 'held', 'recovery')
+            if not self.grasp_suspended:
+                self.grasp_unpark = None
             if self.grasp_handoff == 'grasp':
                 self._set_grasp_handoff('to_driver')
         if key == 'grasp_hold' and self.grasp_handoff == 'parking':
@@ -845,6 +831,9 @@ class Workflow:
             if status != 0 and not stopping:
                 self.board.record('wgs84_failure', self.board.local_target(), self.clock())
             self.board.record('wgs84', None, self.clock())
+            pending, self.pending_wgs84 = self.pending_wgs84, None
+            if pending and not self.stopping_all and (self.recent('manual_goal_sent') or -1.) <= pending[0]:
+                self.send_wgs84(*pending[1:3], issued=pending[3])
         if key == 'calibrate':
             if self.startup_calibration == 'running':
                 self.startup_calibration = 'awaiting_map' if status == 0 and not stopping else 'failed'
@@ -879,7 +868,7 @@ class Workflow:
             if read_logs or status is not None:
                 lines = proc.lines()
                 if key == 'vision':
-                    self._grasp_log(lines, status is None)
+                    self._grasp_log(lines)
                 elif key in ('grasp_hold', 'calibration_hold'):
                     for line in lines:
                         if line.startswith('{'):

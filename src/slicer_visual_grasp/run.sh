@@ -13,7 +13,7 @@ export PYTHONDONTWRITEBYTECODE=1
 case "${1:-}" in
     --test)
         cd "$HERE/tests"
-        exec /usr/bin/python3 -s -m unittest -v test_visual_grasp test_two_point test_fixed_origin test_snapshot_move test_headless
+        exec /usr/bin/python3 -s -m unittest -v test_visual_grasp test_two_point test_fixed_origin test_snapshot_move test_headless test_handoff
         ;;
     --ui-test)
         cd "$HERE/tests"

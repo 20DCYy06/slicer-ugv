@@ -272,7 +272,7 @@ def intersect(a, b):
     return True
 
 
-def footprint_clear(pose, footprint, grid, threshold=100, unknown=True):
+def footprint_clear(pose, footprint, grid, threshold=100, unknown=True, outside_is_blocked=True):
     """网格字典的 origin=(x,y,yaw)，data 为行优先 OccupancyGrid。"""
     x, y, yaw = pose
     ox, oy, oa = grid['origin']
@@ -285,10 +285,10 @@ def footprint_clear(pose, footprint, grid, threshold=100, unknown=True):
                         (-sa * wx + ca * wy) / grid['resolution']))
     x0, x1 = math.floor(min(p[0] for p in polygon)), math.floor(max(p[0] for p in polygon))
     y0, y1 = math.floor(min(p[1] for p in polygon)), math.floor(max(p[1] for p in polygon))
-    if x0 < 0 or y0 < 0 or x1 >= grid['width'] or y1 >= grid['height']:
+    if outside_is_blocked and (x0 < 0 or y0 < 0 or x1 >= grid['width'] or y1 >= grid['height']):
         return False
-    for iy in range(y0, y1 + 1):
-        for ix in range(x0, x1 + 1):
+    for iy in range(max(y0, 0), min(y1 + 1, grid['height'])):
+        for ix in range(max(x0, 0), min(x1 + 1, grid['width'])):
             value = grid['data'][iy * grid['width'] + ix]
             if value >= threshold or (value < 0 and unknown):
                 cell = [(ix, iy), (ix + 1, iy), (ix + 1, iy + 1), (ix, iy + 1)]

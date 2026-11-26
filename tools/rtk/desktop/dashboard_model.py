@@ -4,6 +4,7 @@ from threading import Lock
 import time
 
 
+
 FIXES = {
     0: ('NO FIX', 'bad'), 1: ('SINGLE', 'warn'), 2: ('DGPS', 'warn'),
     4: ('FIXED', 'good'), 5: ('FLOAT', 'caution'),
@@ -217,6 +218,11 @@ ACTIVE_ACTION_STATES = (0, 1, 6, 7)
 ENDED_TASK_STATES = {'IDLE', 'COMPLETED', 'CANCELED', 'STOPPED', 'FAILED', 'SUCCEEDED'}
 
 
+def preemptible_navigation_goal(goal_id):
+    name = goal_id.rsplit('/', 1)[-1] if isinstance(goal_id, str) else ''
+    return name.startswith(('slicer_rtk_desktop-', 'slicer_geographic_client_'))
+
+
 def task_in_progress(value):
     return bool(value and value.get('task_id') and value.get('phase') not in ENDED_TASK_STATES)
 
@@ -256,7 +262,8 @@ def manual_goal_block(frame, driver, mux, statuses, geographic, tasks, desktop_g
         return '正在自动准备地理航行，等待配准或模式切换结束'
     if frame not in ('odom', 'map') or statuses is None:
         return '等待当前导航坐标系和 move_base 状态'
-    if any(status in ACTIVE_ACTION_STATES and goal not in desktop_goals for goal, status in statuses):
+    if any(status in ACTIVE_ACTION_STATES and goal not in desktop_goals
+           and not preemptible_navigation_goal(goal) for goal, status in statuses):
         return 'move_base 有其他控制端的目标，当前目标优先'
     if any(task_in_progress(task) for task in tasks):
         return '空地任务正在执行或等待恢复'

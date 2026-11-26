@@ -229,10 +229,14 @@ def run(protocol, interruption, logs, launch, odom_cruise=False, rear_blocked=Fa
                 assert abs(plant.velocity) < .001, evidence()
                 peak_at = min(range(len(trace)), key=lambda i: trace[i][1])
                 assert any(-.35 < row[1] < -.05 for row in trace[peak_at+1:]), evidence()
+                odom_mux = state['mux']['mux_instance_id']
                 switched = rospy.ServiceProxy('/geographic/navigation_map', Trigger)()
                 assert switched.success, switched
-                wait_until(lambda: state['runtime']['mode'] == 'map',
-                           'planner map handoff after return', 30., evidence)
+                wait_until(lambda: state['runtime']['mode'] == 'map'
+                           and not state['runtime']['busy'] and state['runtime']['phase'] == 'IDLE'
+                           and state['mux']['mux_instance_id'] != odom_mux
+                           and state['mux']['manual_hold'] is False,
+                           'map navigation ready with the new Mux released after return', 30., evidence)
                 result = dict(case='clear return', peak_reverse=peak, stopped_at=plant.pose()[0])
             print(f'PASS roundtrip: early map preview, {result}; evidence in {logs}', flush=True)
             return
